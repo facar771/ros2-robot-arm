@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot name="robot">
+    <group name="robot_arm">
+        <chain base_link="base_link" tip_link="link_6"/>
+    </group>
+    <group_state name="home" group="robot_arm">
+        <joint name="joint_1" value="0"/>
+        <joint name="joint_2" value="0"/>
+        <joint name="joint_3" value="0"/>
+        <joint name="joint_4" value="0"/>
+        <joint name="joint_5" value="0"/>
+        <joint name="joint_6" value="0"/>
+    </group_state>
+    <disable_collisions link1="base_link" link2="link_1" reason="Adjacent"/>
+</robot>
