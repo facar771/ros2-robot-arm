@@ -2,7 +2,7 @@
 # One image definition for CI and local development. Switch distro with --build-arg ROS_DISTRO=humble.
 ARG ROS_DISTRO=jazzy
 
-# ---- base: ROS 2 + MoveIt + ros2_control, no GUI (small, used by CI) ------------------------------
+# ---- base: ROS 2 + MoveIt + ros2_control + Gazebo (server), no GUI (used by CI) ------------------------------
 FROM ros:${ROS_DISTRO}-ros-base AS base
 ARG ROS_DISTRO
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -17,6 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-moveit-ros-planning-interface \
         ros-${ROS_DISTRO}-ros2-control \
         ros-${ROS_DISTRO}-ros2-controllers \
+        ros-${ROS_DISTRO}-ros-gz-sim \
+        ros-${ROS_DISTRO}-ros-gz-bridge \
+        ros-${ROS_DISTRO}-gz-ros2-control \
         ros-${ROS_DISTRO}-robot-state-publisher \
         ros-${ROS_DISTRO}-xacro \
         ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
