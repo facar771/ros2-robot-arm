@@ -2,6 +2,7 @@
 # docker compose run --rm selftest          -> headless end-to-end test, mock hardware (same as CI)
 # docker compose run --rm selftest-gazebo   -> same test on Gazebo physics (same as CI)
 # docker compose run --rm selftest-camera   -> Gazebo + RGB-D camera: motion test + sensor_check
+# docker compose run --rm selftest-perception -> Gazebo + camera + detector: perception_check
 services:
   dev:
     build:
@@ -47,3 +48,11 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-camera"]
+
+  selftest-perception:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-perception"]

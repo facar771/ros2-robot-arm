@@ -34,6 +34,11 @@ def test_objects_parsed_from_world(ws):
     assert {s.name for s in ws.shapes} == {'red_box', 'green_cylinder', 'blue_ball'}
 
 
+def test_shape_heights(ws):
+    assert {s.name: s.height for s in ws.shapes} == pytest.approx(
+        {'red_box': 0.06, 'green_cylinder': 0.10, 'blue_ball': 0.08})
+
+
 def test_camera_looks_toward_minus_x_and_down(ws):
     fx, fy, fz = ws.camera.pose.direction_to_world((1, 0, 0))
     assert (fx, fy, fz) == pytest.approx((-math.cos(0.9), 0.0, -math.sin(0.9)), abs=1e-9)

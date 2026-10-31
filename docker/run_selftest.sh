@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera]     (default: mock; or set SIM_MODE)
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception]   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
 # gazebo-camera = gazebo + workspace world with RGB-D camera (software rendering without a GPU);
 #                 also runs sensor_check
+# gazebo-perception = gazebo-camera + colour-object detector (perception:=true); runs only
+#                 perception_check (detected positions vs. the world file)
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -14,7 +16,8 @@ case "$MODE" in
     mock)   LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false); CTRL_TIMEOUT=60 ;;
     gazebo) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py); CTRL_TIMEOUT=120 ;;
     gazebo-camera) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace); CTRL_TIMEOUT=180 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera]"; exit 64 ;;
+    gazebo-perception) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true); CTRL_TIMEOUT=180 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -55,7 +58,11 @@ wait_for "move_group node" 90 bash -c 'ros2 node list 2>/dev/null | grep -q move
 wait_for "controllers active" "$CTRL_TIMEOUT" controllers_active
 
 STATUS=0
-timeout 180 ros2 run robot_controller selftest || STATUS=$?
+if [ "$MODE" = "gazebo-perception" ]; then
+    timeout 180 ros2 run robot_perception perception_check || STATUS=$?
+else
+    timeout 180 ros2 run robot_controller selftest || STATUS=$?
+fi
 if [ "$MODE" = "gazebo-camera" ]; then
     timeout 120 ros2 run robot_controller sensor_check || STATUS=$?
 fi

@@ -11,6 +11,7 @@ src/
   robot_controller/      ROS 2 adaptörleri + CLI'lar (cli_moveit, move_robot, selftest)
   robot_description/     URDF (görsel + çarpışma geometrisi)
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
+  robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
 compose.yaml             dev ve selftest servisleri
@@ -26,6 +27,7 @@ hazır pozlar URDF/SRDF'ten okunur, kodda sabit yazılmaz.
 docker compose run --rm selftest          # başsız uçtan uca test, sahte donanım (CI ile aynı)
 docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile aynı)
 docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket testi + sensor_check
+docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit edilen konum ↔ dünya dosyası
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
 colcon build --symlink-install && source install/setup.bash
@@ -56,6 +58,13 @@ Statik TF ve `sensor_check` beklentileri bu dosyadan türetilir (`robot_core.wor
 ışın izlemeyle hesaplanan derinliği (zemin, kutu, silindir, küre) kameranın ölçtüğüyle ve TF'i kamera
 pozuyla karşılaştırır. GPU yoksa görüntüleme yazılımla (Mesa) yapılır, bu yüzden CI'da yavaştır.
 
+## Algı (Aşama 2a)
+`perception:=true` ile başlatılınca `robot_perception` kameradan kırmızı/yeşil/mavi nesneleri bulur
+(HSV eşikleme → bağlı bileşenler → derinlikten 3B geri-izdüşüm → `camera_optical_frame` → `world`) ve
+`/perception/objects` yayınlar (ayrıntı: `docs/INTERFACES.md`). Mantık ROS'suz ve yalnızca numpy:
+`robot_core/perception.py`. `perception_check`, tespitleri `workspace.sdf`'teki gerçek konumlarla
+karşılaştırır (konum ≤ 2 cm, yükseklik ≤ 1.5 cm, kareler arası kararlılık).
+
 ## Testler
 ```bash
 pip install pytest ruff pyyaml numpy python-fcl
@@ -71,4 +80,4 @@ eksikliği, çarpışma matrisi eksikliği, YAML'da tekrarlanan anahtar, ölü i
 ## Notlar
 - URDF'teki kütle/atalet değerleri tahminidir; gerçek CAD değerleriyle değiştirilmeli.
 - `move_robot` doğrudan trajectory gönderir, **çarpışma kontrolü yoktur**.
-- Sonraki aşamalar: derinlik kamerası (Gazebo'da), veritabanı (metaveri + hata raporları).
+- Sonraki aşamalar: algı → MoveIt çarpışma nesnesi, veritabanı (metaveri + hata raporları), poz hedefli hareket.
