@@ -12,11 +12,11 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from robot_core.ports import NullEventSink
 from robot_core.scene_sync import Observation, SceneSynchronizer
 from visualization_msgs.msg import MarkerArray
 
 from robot_controller.adapters import BackgroundSpinner, PlanningSceneAdapter
+from robot_data import close_sink, event_sink_from_env
 
 TOPIC_OBJECTS = '/perception/objects'
 WORLD_FRAME = 'world'
@@ -60,8 +60,8 @@ def main(args=None):
     rclpy.init(args=args)
     node = Node('perception_scene_sync')
     inbox = DetectionInbox(node)
-    # TODO(PR-C): event_sink_from_env() once the data layer exists
-    sync = SceneSynchronizer(PlanningSceneAdapter(node), NullEventSink(), frame=WORLD_FRAME)
+    events = event_sink_from_env('perception_scene_sync')
+    sync = SceneSynchronizer(PlanningSceneAdapter(node), events, frame=WORLD_FRAME)
     spinner = BackgroundSpinner(node)
     spinner.start()
     node.get_logger().info('perception_scene_sync hazır: /perception/objects -> planlama sahnesi')
@@ -75,6 +75,7 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        close_sink(events)
         spinner.stop()
         node.destroy_node()
         rclpy.try_shutdown()

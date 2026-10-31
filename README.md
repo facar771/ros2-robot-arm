@@ -11,6 +11,7 @@ src/
   robot_controller/      ROS 2 adaptörleri + CLI'lar (cli_moveit, move_robot, selftest)
   robot_description/     URDF (görsel + çarpışma geometrisi)
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
+  robot_data/            ROS'suz veri katmanı: SQLAlchemy 2 + Alembic (SQLite testler, PostgreSQL üretim)
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
@@ -29,6 +30,7 @@ docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile
 docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket testi + sensor_check
 docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit edilen konum ↔ dünya dosyası
 docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
+docker compose run --rm selftest-db          # selftest olayları PostgreSQL'e yazılır (compose'taki db servisi)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
 colcon build --symlink-install && source install/setup.bash
@@ -73,10 +75,18 @@ onay, 2 s görülmeyince silme (`robot_core/scene_sync.py`, ayrıntı `docs/INTE
 `perception_scene_check` bunu uçtan uca doğrular (nesne belirir; içinden geçen hedef reddedilir;
 Gazebo'da taşınan nesnenin kutusu taşınır; kaldırılınca aynı hedef için plan başarılı olur).
 
+## Veri katmanı (Aşama 3)
+`ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
+(`motion_result`, `obstacle_added/removed`, `objects_changed`, `selftest_check`...) `runs` / `events` /
+`error_reports` tablolarına yazar. Ayarlı değilse hiçbir şey değişmez. Veritabanı kapalıyken robot
+etkilenmez (olay düşer, loglanır). `docker compose up -d db` PostgreSQL'i açar; `dev` kabuğunda
+`ROBOT_DB_URL` hazırdır. Özet: `python3 -m robot_data summary`. Şema ve olay sözleşmesi:
+`docs/INTERFACES.md`.
+
 ## Testler
 ```bash
-pip install pytest ruff pyyaml numpy python-fcl
-ruff check src && python -m pytest        # ROS gerektirmez
+pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic "psycopg[binary]>=3.1"
+ruff check src && python -m pytest        # ROS gerektirmez; PostgreSQL testleri için ROBOT_TEST_PG_URL ver
 ```
 Model bütünlük testleri, geçmişte yaşanan hataların geri dönmesini engeller (çarpışma geometrisi
 eksikliği, çarpışma matrisi eksikliği, YAML'da tekrarlanan anahtar, ölü ikinci SRDF).

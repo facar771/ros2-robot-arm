@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_data</name>
+  <version>0.1.0</version>
+  <description>ROS-independent data layer: runs, events and error reports in SQLite/PostgreSQL</description>
+  <maintainer email="facar7711@gmail.com">facar771</maintainer>
+  <license>Apache-2.0</license>
+
+  <!-- Python deps (pip, not rosdep: Ubuntu's python3-sqlalchemy is 1.4): sqlalchemy>=2, alembic,
+       psycopg[binary]>=3 (PostgreSQL only). See docker/Dockerfile. -->
+  <depend>robot_core</depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
