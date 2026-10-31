@@ -28,6 +28,7 @@ docker compose run --rm selftest          # başsız uçtan uca test, sahte dona
 docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile aynı)
 docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket testi + sensor_check
 docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit edilen konum ↔ dünya dosyası
+docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
 colcon build --symlink-install && source install/setup.bash
@@ -64,6 +65,13 @@ pozuyla karşılaştırır. GPU yoksa görüntüleme yazılımla (Mesa) yapılı
 `/perception/objects` yayınlar (ayrıntı: `docs/INTERFACES.md`). Mantık ROS'suz ve yalnızca numpy:
 `robot_core/perception.py`. `perception_check`, tespitleri `workspace.sdf`'teki gerçek konumlarla
 karşılaştırır (konum ≤ 2 cm, yükseklik ≤ 1.5 cm, kareler arası kararlılık).
+
+## Algı → MoveIt (Aşama 2b)
+`perception_scene:=true` (ve `perception:=true`) ile `perception_scene_sync` tespitleri MoveIt planlama
+sahnesine `obj_<renk>_<n>` çarpışma kutuları olarak yansıtır: kararlı kimlik, titreşim süzgeci, 3 kare
+onay, 2 s görülmeyince silme (`robot_core/scene_sync.py`, ayrıntı `docs/INTERFACES.md`).
+`perception_scene_check` bunu uçtan uca doğrular (nesne belirir; içinden geçen hedef reddedilir;
+Gazebo'da taşınan nesnenin kutusu taşınır; kaldırılınca aynı hedef için plan başarılı olur).
 
 ## Testler
 ```bash

@@ -3,6 +3,7 @@
 # docker compose run --rm selftest-gazebo   -> same test on Gazebo physics (same as CI)
 # docker compose run --rm selftest-camera   -> Gazebo + RGB-D camera: motion test + sensor_check
 # docker compose run --rm selftest-perception -> Gazebo + camera + detector: perception_check
+# docker compose run --rm selftest-scene     -> + detections in the MoveIt scene: perception_scene_check
 services:
   dev:
     build:
@@ -56,3 +57,11 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-perception"]
+
+  selftest-scene:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-scene"]
