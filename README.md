@@ -22,7 +22,8 @@ hazır pozlar URDF/SRDF'ten okunur, kodda sabit yazılmaz.
 
 ## Çalıştırma (Docker, önerilen)
 ```bash
-docker compose run --rm selftest      # başsız uçtan uca test (CI ile aynı)
+docker compose run --rm selftest          # başsız uçtan uca test, sahte donanım (CI ile aynı)
+docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile aynı)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
 colcon build --symlink-install && source install/setup.bash
@@ -30,6 +31,15 @@ ros2 launch robot_moveit_config demo.launch.py
 ros2 run robot_controller cli_moveit
 ```
 ROS sürümünü değiştirmek için: `docker compose build --build-arg ROS_DISTRO=humble`.
+
+## Simülasyon modları
+| Mod | Başlatma | Ne zaman |
+|---|---|---|
+| mock (varsayılan) | `ros2 launch robot_moveit_config demo.launch.py` | hızlı geliştirme, fizik yok |
+| Gazebo fiziği | `ros2 launch robot_moveit_config gazebo.launch.py` | fizik gerektiren her şey (başsız; GUI için `headless:=false`) |
+
+İkisi de aynı MoveIt yapılandırmasını, aynı denetleyicileri ve aynı `selftest`'i kullanır. Gazebo modu
+URDF'i `use_gazebo:=true` ile üretir (`mock_components` yerine `gz_ros2_control`).
 
 ## Testler
 ```bash
@@ -46,4 +56,4 @@ eksikliği, çarpışma matrisi eksikliği, YAML'da tekrarlanan anahtar, ölü i
 ## Notlar
 - URDF'teki kütle/atalet değerleri tahminidir; gerçek CAD değerleriyle değiştirilmeli.
 - `move_robot` doğrudan trajectory gönderir, **çarpışma kontrolü yoktur**.
-- Sonraki aşamalar: veritabanı (metaveri + hata raporları), simülatör (Gazebo), derinlik kamerası.
+- Sonraki aşamalar: derinlik kamerası (Gazebo'da), veritabanı (metaveri + hata raporları).

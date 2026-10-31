@@ -4,10 +4,14 @@
   <material name="orange"><color rgba="1.0 0.5 0.0 1.0"/></material>
   <material name="blue"><color rgba="0.0 0.5 1.0 1.0"/></material>
 
-  <!-- base_link: no <inertial> on purpose (KDL does not support an inertia on the root link) -->
+  <!-- base_link needs an <inertial>: without it Gazebo (sdformat) lumps the link into the world and
+       joint_1 loses its parent. KDL's "root link has inertia" warning cannot occur because the
+       xacro wrapper (robot_moveit_config) puts a massless `world` link above base_link. -->
   <link name="base_link">
     <visual><geometry><cylinder radius="0.12" length="0.08"/></geometry><material name="gray"/></visual>
     <collision><geometry><cylinder radius="0.12" length="0.08"/></geometry></collision>
+    <!-- placeholder mass/inertia (solid cylinder r=0.12 h=0.08 m=5); replace with real CAD values -->
+    <inertial><mass value="5.0"/><inertia ixx="0.020667" ixy="0" ixz="0" iyy="0.020667" iyz="0" izz="0.036"/></inertial>
   </link>
 
   <link name="link_1">

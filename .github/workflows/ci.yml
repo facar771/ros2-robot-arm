@@ -23,7 +23,7 @@ jobs:
       - run: python -m pytest
 
   ros:
-    name: Build workspace + headless selftest (Docker)
+    name: Build workspace + headless selftest, mock and Gazebo (Docker)
     needs: core
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -40,5 +40,7 @@ jobs:
           tags: ros2-robot-arm:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Run selftest against headless MoveIt
-        run: docker run --rm ros2-robot-arm:ci run_selftest
+      - name: Selftest - mock hardware
+        run: docker run --rm ros2-robot-arm:ci run_selftest mock
+      - name: Selftest - Gazebo physics (headless)
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo

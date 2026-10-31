@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
-# Starts MoveIt headless (no RViz), waits until it is really ready, runs the selftest, cleans up.
+# Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
+#   run_selftest [mock|gazebo]     (default: mock; or set SIM_MODE)
+# mock   = ros2_control mock_components (fast, no physics)
+# gazebo = Gazebo physics server (gz_ros2_control), no GUI/GPU
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
 
+MODE=${1:-${SIM_MODE:-mock}}
+case "$MODE" in
+    mock)   LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false); CTRL_TIMEOUT=60 ;;
+    gazebo) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py); CTRL_TIMEOUT=120 ;;
+    *) echo "usage: run_selftest [mock|gazebo]"; exit 64 ;;
+esac
+echo "[mode] $MODE"
+
 source "/opt/ros/${ROS_DISTRO}/setup.bash"
 source /workspace/install/setup.bash
 
-LOG=/tmp/demo_launch.log
+LOG=/tmp/sim_launch.log
 # setsid: own process group, so cleanup can stop launch *and* all nodes it started.
-setsid ros2 launch robot_moveit_config demo.launch.py use_rviz:=false >"$LOG" 2>&1 &
+setsid "${LAUNCH[@]}" >"$LOG" 2>&1 &
 LAUNCH_PID=$!
 cleanup() {
     kill -INT -- "-$LAUNCH_PID" 2>/dev/null   # graceful: launch shuts its nodes down
@@ -38,7 +49,7 @@ controllers_active() {
 }
 
 wait_for "move_group node" 90 bash -c 'ros2 node list 2>/dev/null | grep -q move_group'
-wait_for "controllers active" 60 controllers_active
+wait_for "controllers active" "$CTRL_TIMEOUT" controllers_active
 
 timeout 180 ros2 run robot_controller selftest
 STATUS=$?

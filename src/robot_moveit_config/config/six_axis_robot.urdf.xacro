@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="six_axis_robot">
     <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+    <!-- false: mock_components (no physics, default). true: Gazebo physics via gz_ros2_control. -->
+    <xacro:arg name="use_gazebo" default="false" />
 
     <!-- Import six_axis_robot urdf file -->
     <xacro:include filename="$(find robot_description)/urdf/robot.urdf" />
@@ -8,7 +10,26 @@
     <!-- Import control_xacro -->
     <xacro:include filename="six_axis_robot.ros2_control.xacro" />
 
+    <xacro:six_axis_robot_ros2_control name="FakeSystem"
+                                       initial_positions_file="$(arg initial_positions_file)"
+                                       use_gazebo="$(arg use_gazebo)"/>
 
-    <xacro:six_axis_robot_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+    <!-- base_link is fixed to the world in both modes (same joint name as the SRDF virtual joint).
+         Gazebo needs it, otherwise the arm falls over; it also keeps `world` (massless) as the
+         kinematic root, so KDL never sees an inertia on the root link. -->
+    <link name="world"/>
+    <joint name="masa" type="fixed">
+        <parent link="world"/>
+        <child link="base_link"/>
+    </joint>
+
+    <xacro:if value="$(arg use_gazebo)">
+        <gazebo>
+            <plugin filename="gz_ros2_control-system"
+                    name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+                <parameters>$(find robot_moveit_config)/config/ros2_controllers.yaml</parameters>
+            </plugin>
+        </gazebo>
+    </xacro:if>
 
 </robot>
