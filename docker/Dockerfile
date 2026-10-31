@@ -20,15 +20,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-ros-gz-sim \
         ros-${ROS_DISTRO}-ros-gz-bridge \
         ros-${ROS_DISTRO}-gz-ros2-control \
+        ros-${ROS_DISTRO}-tf2-ros \
         ros-${ROS_DISTRO}-robot-state-publisher \
         ros-${ROS_DISTRO}-xacro \
         ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
-        python3-pytest python3-yaml \
+        python3-pytest python3-yaml python3-numpy \
+        libgl1-mesa-dri libegl1 libegl-mesa0 libglx-mesa0 libgles2 libopengl0 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 
 # ---- ci: build the workspace and bake in the selftest runner -----------------------------------
 FROM base AS ci
+# No GPU in CI: render the simulated camera in software (Mesa llvmpipe).
+ENV LIBGL_ALWAYS_SOFTWARE=1
 COPY src /workspace/src
 COPY docker/run_selftest.sh /usr/local/bin/run_selftest
 RUN chmod +x /usr/local/bin/run_selftest \
