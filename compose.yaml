@@ -1,0 +1,31 @@
+# docker compose run --rm dev        -> interactive shell with RViz support (WSLg), repo mounted
+# docker compose run --rm selftest   -> headless end-to-end test (same as CI)
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: dev
+    image: ros2-robot-arm:dev
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}
+      - XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir
+      - PULSE_SERVER=/mnt/wslg/PulseServer
+      - QT_QPA_PLATFORM=xcb
+      - ROBOT_ROUTES=/workspace/data/routes.json
+    volumes:
+      - .:/workspace
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /mnt/wslg:/mnt/wslg
+
+  selftest:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
