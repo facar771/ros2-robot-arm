@@ -29,6 +29,10 @@ def max_error(state, joint_names, target):
     return max(abs(positions[j] - t) for j, t in zip(joint_names, target))
 
 
+def why(result):
+    return result.code_name or result.message or 'bilinmeyen neden'
+
+
 def run(config, state, scene, motion):
     results = []
 
@@ -49,8 +53,7 @@ def run(config, state, scene, motion):
         return results
 
     result = motion.move_to(home)
-    record("MoveIt home'a planlayıp gitti", result.ok,
-           '' if result.ok else f'-> {result.code_name}')
+    record("MoveIt home'a planlayıp gitti", result.ok, '' if result.ok else f'-> {why(result)}')
     if not result.ok:
         print("   İpucu: 'ros2 param get /move_group planning_pipelines' ve move_group "
               'loglarına bak.')
@@ -59,8 +62,7 @@ def run(config, state, scene, motion):
     result = motion.move_to(cnc)
     time.sleep(0.5)
     error = max_error(state, names, cnc.values)
-    record("MoveIt cnc'ye planlayıp gitti", result.ok,
-           '' if result.ok else f'-> {result.code_name}')
+    record("MoveIt cnc'ye planlayıp gitti", result.ok, '' if result.ok else f'-> {why(result)}')
     record('Robot gerçekten hareket etti (/joint_states)', error is not None and error < 0.05,
            f'(maks sapma {error:.3f} rad)' if error is not None else '')
 
@@ -71,15 +73,17 @@ def run(config, state, scene, motion):
     record('Engel sahneye eklendi', added)
     time.sleep(0.5)
     result = motion.move_to(cnc)
-    record('Kolun içine konan engel çarpışma olarak algılandı (plan REDDEDİLDİ)', not result.ok,
-           f'-> {result.code_name}' if not result.ok
+    # MoveIt must have *answered* with an error code; a timeout/missing server is not a detection.
+    record('Kolun içine konan engel çarpışma olarak algılandı (plan REDDEDİLDİ)',
+           not result.ok and result.code is not None,
+           f'-> {why(result)}' if not result.ok
            else '-> plan engele rağmen BAŞARILI: çarpışma kontrolü çalışmıyor')
 
     scene.remove_box(box.name)
     time.sleep(0.5)
     result = motion.move_to(cnc)
     record('Engel silinince plan tekrar başarılı', result.ok,
-           '' if result.ok else f'-> {result.code_name}')
+           '' if result.ok else f'-> {why(result)}')
     motion.move_to(home)
     return results
 

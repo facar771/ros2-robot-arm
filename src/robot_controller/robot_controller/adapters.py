@@ -55,7 +55,10 @@ class BackgroundSpinner:
         self._thread.start()
 
     def stop(self) -> None:
+        """Stop spinning and wait for the thread, so no callback is still running when the caller
+        destroys the node or calls rclpy.shutdown() (otherwise: 'terminate called ...' abort)."""
         self._executor.shutdown()
+        self._thread.join(timeout=5.0)
 
 
 class JointStateCache:
@@ -79,9 +82,10 @@ class PlanningSceneAdapter:
     """Implements ScenePort via /apply_planning_scene (synchronous, so MoveIt has the object
     before the next plan request)."""
 
-    def __init__(self, node: Node, timeout: float = 5.0):
+    def __init__(self, node: Node, timeout: float = 5.0, discovery_timeout: float = 10.0):
         self._node = node
         self._timeout = timeout
+        self._discovery_timeout = discovery_timeout
         self._client = node.create_client(ApplyPlanningScene, '/apply_planning_scene')
 
     def add_box(self, obstacle: BoxObstacle) -> bool:
@@ -106,7 +110,7 @@ class PlanningSceneAdapter:
         return self._apply(co)
 
     def _apply(self, collision_object: CollisionObject) -> bool:
-        if not self._client.wait_for_service(timeout_sec=2.0):
+        if not self._client.wait_for_service(timeout_sec=self._discovery_timeout):
             self._node.get_logger().error(
                 '/apply_planning_scene bulunamadı (move_group çalışıyor mu?)')
             return False
@@ -126,15 +130,16 @@ class MoveItMotion:
     """Implements MotionPort: plan + execute a joint goal through move_group."""
 
     def __init__(self, node: Node, config: RobotConfig, velocity_scale: float = 0.5,
-                 execution_timeout: float = 60.0):
+                 execution_timeout: float = 60.0, discovery_timeout: float = 15.0):
         self._node = node
+        self._discovery_timeout = discovery_timeout
         self._config = config
         self._velocity_scale = velocity_scale
         self._timeout = execution_timeout
         self._client = ActionClient(node, MoveGroup, 'move_action')
 
     def move_to(self, target: JointTarget) -> MotionResult:
-        if not self._client.wait_for_server(timeout_sec=3.0):
+        if not self._client.wait_for_server(timeout_sec=self._discovery_timeout):
             return MotionResult(False, message="MoveIt 'move_action' sunucusu bulunamadı "
                                                '(demo.launch.py çalışıyor mu?)')
         goal = MoveGroup.Goal()
