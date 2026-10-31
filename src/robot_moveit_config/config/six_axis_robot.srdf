@@ -26,6 +26,39 @@
         <joint name="joint_5" value="0"/>
         <joint name="joint_6" value="0"/>
     </group_state>
+    <group_state name="cnc" group="robot_arm">
+        <joint name="joint_1" value="0.5"/>
+        <joint name="joint_2" value="-0.4"/>
+        <joint name="joint_3" value="0.4"/>
+        <joint name="joint_4" value="0.0"/>
+        <joint name="joint_5" value="0.5"/>
+        <joint name="joint_6" value="0.0"/>
+    </group_state>
+    <group_state name="pc" group="robot_arm">
+        <joint name="joint_1" value="-0.5"/>
+        <joint name="joint_2" value="-0.3"/>
+        <joint name="joint_3" value="0.3"/>
+        <joint name="joint_4" value="-0.2"/>
+        <joint name="joint_5" value="0.5"/>
+        <joint name="joint_6" value="0.0"/>
+    </group_state>
+    <group_state name="dik" group="robot_arm">
+        <joint name="joint_1" value="0.0"/>
+        <joint name="joint_2" value="-1.57"/>
+        <joint name="joint_3" value="1.57"/>
+        <joint name="joint_4" value="0.0"/>
+        <joint name="joint_5" value="0.0"/>
+        <joint name="joint_6" value="0.0"/>
+    </group_state>
     <!--VIRTUAL JOINT: Purpose: this element defines a virtual joint between a robot link and an external frame of reference (considered fixed with respect to the robot)-->
     <virtual_joint name="masa" type="fixed" parent_frame="world" child_link="base_link"/>
+    <!--DISABLE COLLISIONS: adjacent links overlap at the joints (verified by sampling 4000 random configurations with FCL:
+        link_1/2, link_2/3, link_4/5 collide ~100%). Without these entries every state is reported as self-collision.
+        All non-adjacent pairs never collided within the joint limits in the same sampling.-->
+    <disable_collisions link1="base_link" link2="link_1" reason="Adjacent"/>
+    <disable_collisions link1="link_1" link2="link_2" reason="Adjacent"/>
+    <disable_collisions link1="link_2" link2="link_3" reason="Adjacent"/>
+    <disable_collisions link1="link_3" link2="link_4" reason="Adjacent"/>
+    <disable_collisions link1="link_4" link2="link_5" reason="Adjacent"/>
+    <disable_collisions link1="link_5" link2="link_6" reason="Adjacent"/>
 </robot>

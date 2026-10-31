@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+testpaths = ["src/robot_core/tests"]
+pythonpath = ["src/robot_core"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["src/robot_controller/test", "src/robot_moveit_config", "src/robot_description"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["B905"]

@@ -1,6 +1,5 @@
+
 from setuptools import setup
-import os
-from glob import glob
 
 package_name = 'robot_controller'
 
@@ -24,6 +23,7 @@ setup(
         'console_scripts': [
             'move_robot = robot_controller.move_robot:main',
             'cli_moveit = robot_controller.cli_moveit:main',
+            'selftest = robot_controller.selftest:main',
         ],
     },
 )
