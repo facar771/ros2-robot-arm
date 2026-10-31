@@ -86,6 +86,10 @@ def test_error_report_mapping():
         'component': 'selftest', 'code': 'a', 'message': 'd'}
     assert error_report_for('error', {'component': 'perception', 'message': 'm'})[
         'component'] == 'perception'
+    assert error_report_for('skill_result', {'skill': 'go_above', 'ok': True}) is None
+    assert error_report_for('skill_result', {'skill': 'go_above', 'ok': False,
+                                             'code_name': 'NO_IK_SOLUTION', 'message': 'm'}) == {
+        'component': 'skill', 'code': 'NO_IK_SOLUTION', 'message': 'm'}
     assert error_report_for('obstacle_added', {}) is None
 
 

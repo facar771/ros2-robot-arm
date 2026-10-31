@@ -57,3 +57,8 @@ def test_srdf_pose_missing_joint_is_rejected(tmp_path):
 def test_unknown_group_is_rejected():
     with pytest.raises(ConfigError, match='grubu yok'):
         RobotConfig.from_files(URDF, SRDF, planning_group='nope')
+
+
+def test_tip_link_is_the_end_of_the_chain(config):
+    assert config.tip_link == 'link_6'
+

@@ -27,6 +27,7 @@ setup(
             'sensor_check = robot_controller.sensor_check:main',
             'perception_scene_sync = robot_controller.perception_sync:main',
             'perception_scene_check = robot_controller.scene_check:main',
+            'pose_check = robot_controller.pose_check:main',
         ],
     },
 )

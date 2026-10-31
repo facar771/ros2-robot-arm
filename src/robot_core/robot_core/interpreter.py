@@ -7,6 +7,7 @@ from robot_core.config import RobotConfig
 from robot_core.errors import hint_for
 from robot_core.models import BoxObstacle
 from robot_core.ports import EventSink, MotionPort, NullEventSink, ScenePort, StatePort
+from robot_core.skills import Skills
 from robot_core.targets import TargetError, TargetParser
 
 HELP = """Komutlar:
@@ -17,25 +18,30 @@ HELP = """Komutlar:
   rmbox <ad>                    engeli sil
   clear                         eklenen tüm engelleri sil
   list                          eklenen engeller
+  objects                       algılanan nesneler (ad, renk, konum, boyut)
+  above <nesne> [yükseklik_m]   aleti nesnenin üstüne götür (varsayılan 0.10 m, alet aşağı bakar)
+  goto x y z                    aleti (x, y, z) noktasına götür, metre, world çerçevesi
   help | exit"""
 
 
 class CommandInterpreter:
     def __init__(self, config: RobotConfig, motion: MotionPort, scene: ScenePort,
                  state: StatePort, out: Callable[[str], None] = print,
-                 events: Optional[EventSink] = None):
+                 events: Optional[EventSink] = None, skills: Optional[Skills] = None):
         self._config = config
         self._motion = motion
         self._scene = scene
         self._state = state
         self._out = out
         self._events = events or NullEventSink()
+        self._skills = skills
         self._parser = TargetParser(config)
         self._obstacles: Set[str] = set()
         self._handlers = {
             'help': self._help, 'status': self._status, 'list': self._list,
             'clear': self._clear, 'move': self._move, 'addbox': self._addbox,
-            'rmbox': self._rmbox,
+            'rmbox': self._rmbox, 'objects': self._objects_cmd, 'above': self._above,
+            'goto': self._goto,
         }
 
     @property
@@ -149,3 +155,48 @@ class CommandInterpreter:
             self._events.emit('obstacle_removed', {'name': name})
         else:
             self._out(f'[-] Engel silinemedi: {name}')
+
+    # ---- skills (need a Skills instance) ----------------------------------
+    def _have_skills(self) -> bool:
+        if self._skills is None:
+            self._out('[-] Beceri katmanı bağlı değil (move_group + algı gerekir).')
+            return False
+        return True
+
+    def _report(self, result) -> None:
+        self._out(f"[{'+' if result.ok else '-'}] {result.message}")
+
+    def _objects_cmd(self, args) -> None:
+        if not self._have_skills():
+            return
+        objs = self._skills.list_objects()
+        if not objs:
+            self._out('[*] Bilinen nesne yok (algı çalışıyor mu? perception_scene:=true).')
+        for o in objs:
+            self._out('  {:<14} {:<6} konum ({:.3f}, {:.3f}, {:.3f})  '
+                      'boyut ({:.3f}, {:.3f}, {:.3f})'.format(
+                          o.name, o.label or '-', *o.position, *o.size))
+
+    def _above(self, args) -> None:
+        if not self._have_skills():
+            return
+        if len(args) not in (1, 2):
+            self._out('[-] Kullanım: above <nesne> [yükseklik_m]')
+            return
+        try:
+            height = float(args[1]) if len(args) == 2 else 0.10
+        except ValueError:
+            self._out(f"[-] Yükseklik sayı olmalı: '{args[1]}'")
+            return
+        self._report(self._skills.go_above(args[0], height))
+
+    def _goto(self, args) -> None:
+        if not self._have_skills():
+            return
+        try:
+            x, y, z = (float(a) for a in args)
+        except ValueError:
+            self._out('[-] Kullanım: goto x y z  (metre, sayı)')
+            return
+        self._report(self._skills.go_to_position(x, y, z))
+

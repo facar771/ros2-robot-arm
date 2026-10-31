@@ -71,6 +71,9 @@ def error_report_for(kind: str, payload: Dict[str, Any]) -> Optional[Dict[str, A
     if kind == 'selftest_check' and payload.get('ok') is False:
         return {'component': 'selftest', 'code': str(payload.get('name', ''))[:128],
                 'message': payload.get('detail') or str(payload.get('name', ''))}
+    if kind == 'skill_result' and payload.get('ok') is False:
+        return {'component': 'skill', 'code': payload.get('code_name') or payload.get('skill'),
+                'message': payload.get('message') or str(payload.get('skill', ''))}
     if kind == 'error':
         return {'component': str(payload.get('component', 'unknown')),
                 'code': payload.get('code'), 'message': str(payload.get('message', ''))}

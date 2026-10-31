@@ -5,6 +5,7 @@
 # docker compose run --rm selftest-camera   -> Gazebo + RGB-D camera: motion test + sensor_check
 # docker compose run --rm selftest-perception -> Gazebo + camera + detector: perception_check
 # docker compose run --rm selftest-scene     -> + detections in the MoveIt scene: perception_scene_check
+# docker compose run --rm selftest-skills    -> Skills layer: go_above etc., tool position measured from TF
 # docker compose run --rm selftest-db        -> selftest with its events written to PostgreSQL
 services:
   db:
@@ -87,6 +88,14 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-scene"]
+
+  selftest-skills:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-skills"]
 
   selftest-db:
     build:

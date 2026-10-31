@@ -30,6 +30,7 @@ docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile
 docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket testi + sensor_check
 docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit edilen konum ↔ dünya dosyası
 docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
+docker compose run --rm selftest-skills      # Skills: aleti nesnenin üstüne götür, uç konumu TF ile ölç
 docker compose run --rm selftest-db          # selftest olayları PostgreSQL'e yazılır (compose'taki db servisi)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
@@ -75,6 +76,14 @@ onay, 2 s görülmeyince silme (`robot_core/scene_sync.py`, ayrıntı `docs/INTE
 `perception_scene_check` bunu uçtan uca doğrular (nesne belirir; içinden geçen hedef reddedilir;
 Gazebo'da taşınan nesnenin kutusu taşınır; kaldırılınca aynı hedef için plan başarılı olur).
 
+## Poz hedefli hareket ve beceriler (Aşama 4)
+`MoveItMotion.move_to_pose` kartezyen hedefi (konum + yönelim kısıtı, KDL IK) planlayıp yürütür.
+`robot_core.skills.Skills` bunun üstünde LLM'in sonradan çağıracağı araç arayüzüdür: `list_objects`,
+`go_to_named_pose`, `go_to_position`, `go_above(nesne, yükseklik)`; hiçbiri exception fırlatmaz,
+hepsi `SkillResult` döner (ayrıntı, kısıtlar ve erişim sınırı: `docs/INTERFACES.md`).
+`cli_moveit` komutları: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`.
+`pose_check`, uç işlevcinin TF ile ölçülen konumunu hedefle ve dünya dosyasıyla karşılaştırır.
+
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
 (`motion_result`, `obstacle_added/removed`, `objects_changed`, `selftest_check`...) `runs` / `events` /
@@ -93,7 +102,7 @@ eksikliği, çarpışma matrisi eksikliği, YAML'da tekrarlanan anahtar, ölü i
 
 ## cli_moveit komutları
 `status`, `move <home|cnc|pc|dik>`, `move j1..j6` (radyan), `addbox ad x y z sx sy sz`,
-`rmbox ad`, `clear`, `list`
+`rmbox ad`, `clear`, `list`, `objects`, `above nesne [yükseklik]`, `goto x y z`
 
 ## Notlar
 - URDF'teki kütle/atalet değerleri tahminidir; gerçek CAD değerleriyle değiştirilmeli.

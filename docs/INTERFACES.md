@@ -72,9 +72,33 @@ Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. 
 | `obstacle_removed` | cli_moveit, perception_scene_sync | `name` |
 | `command_rejected` | cli_moveit | `line`, `reason` (isteğe bağlı) |
 | `objects_changed` | perception | `objects`: `[{label, index, position, size, pixels}]` — görünen nesne kümesi değişince (her karede DEĞİL) |
+| `skill_result` | cli_moveit (Skills) | `skill`, `args`, `ok`, `message`, `code_name` |
 | `selftest_check` | selftest | `name`, `ok`, `detail` |
 | `error` | herhangi | `component`, `code`, `message` |
 
 `error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`,
-`selftest_check` (`ok=false`), `error`.
+`selftest_check` (`ok=false`), `skill_result` (`ok=false`), `error`.
+
+## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
+Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
+imza ve açıklamayı düz veri olarak verir). Kurallar: **hiçbir beceri exception fırlatmaz**; her çağrı
+bir `SkillResult(ok, skill, message, code_name, data)` döner ve bir `skill_result` olayı üretir.
+Birimler metre/radyan, konumlar `world` çerçevesinde (taban orijinde, z yukarı).
+
+| Beceri | Açıklama |
+|---|---|
+| `list_objects()` | Bilinen nesneler: ad (`obj_red_1`), renk, merkez, boyut |
+| `go_to_named_pose(name)` | Robot tanımındaki hazır poz (`home`, `cnc`, ...) |
+| `go_to_position(x, y, z)` | Aleti (x,y,z)'ye götür, alet aşağı bakar |
+| `go_above(object_name, height=0.10)` | Aleti nesnenin üst yüzeyinin `height` m üstüne götür; ad ya da benzersiz renk (`red`) |
+
+Ulaşılamayan hedefte robot hareket etmez ve mesaj nedeni söyler: tabandan 1.5 m'den uzak hedefler
+MoveIt'e hiç sorulmadan reddedilir; MoveIt'in reddettiği hedeflerde hata kodu ve ipucu mesajdadır.
+**Erişim kısıtı:** eklem 3 limiti ±2.0 rad olduğundan alet, tabana yakın nesnelerde (mavi top, kırmızı
+kutu) düşük yükseklikte düz aşağı bakamaz; `go_above` bu durumda açık hatayla reddeder ve daha büyük
+`height` önerir. Poz hedefi MoveIt'e konum + yönelim kısıtı olarak verilir (IK: KDL,
+`kinematics_solver_timeout` 0.05 s); alet ekseni etrafındaki dönüş serbesttir.
+
+CLI: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`. Doğrulama:
+`ros2 run robot_controller pose_check`.
 
