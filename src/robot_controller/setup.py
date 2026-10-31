@@ -24,6 +24,7 @@ setup(
             'move_robot = robot_controller.move_robot:main',
             'cli_moveit = robot_controller.cli_moveit:main',
             'selftest = robot_controller.selftest:main',
+            'sensor_check = robot_controller.sensor_check:main',
         ],
     },
 )
