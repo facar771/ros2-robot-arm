@@ -1,4 +1,5 @@
-"""Read-only browser view of the robot (stdlib ``http.server`` only, no ROS).
+"""Browser view of the robot (stdlib ``http.server`` only, no ROS). Read-only unless the server is
+given a :class:`~robot_core.webcmd.CommandRunner`.
 
 The ROS node (``robot_viz.web_view``) only fills a :class:`Snapshot`; everything else lives here so
 it can be tested without ROS:
@@ -9,10 +10,21 @@ it can be tested without ROS:
     GET /frame/depth.png  depth colour map
     GET /api/state        JSON: objects (+ pixel boxes), joint angles, tool position, frame ages
 
-There is deliberately no endpoint that changes anything. Every other method gets ``405``.
+    POST /api/command     {"command": "above green 0.25"}: white-listed robot commands (see
+                          :mod:`robot_core.webcmd`); only with a CommandRunner, otherwise 403
+
+Without a CommandRunner nothing can change anything and every method except GET/HEAD gets ``405``.
 Requests whose ``Host`` header is not a loopback name get ``403`` (DNS-rebinding guard); bind to
 127.0.0.1 unless a container port mapping needs 0.0.0.0, and then restrict the *published* port to
 127.0.0.1 (see compose.yaml).
+
+POST /api/command is the only door to the robot and is guarded against other web pages in the
+user's browser (CSRF): ``Content-Type: application/json`` is required (a cross-site page cannot send
+that without a pre-flight, which is never answered), a foreign ``Origin`` or
+``Sec-Fetch-Site: cross-site`` gets ``403``, the body is limited to 512 bytes, the command is parsed
+by a strict white list, and only one command runs at a time (``409`` otherwise). Status codes:
+200 done, 400 invalid command, 403 forbidden/off, 405 wrong method, 409 busy, 411/413 body length,
+415 content type, 422 valid command the robot could not carry out, 500 internal error.
 """
 from __future__ import annotations
 
@@ -31,6 +43,7 @@ import numpy as np
 
 from robot_core.perception import Intrinsics, Transform
 from robot_core.viz import OverlayItem, box_to_pixels, depth_to_rgb, draw_overlay, encode_png
+from robot_core.webcmd import Busy, CommandError, CommandRunner, parse_command
 
 log = logging.getLogger('robot_core.webview')
 
@@ -86,7 +99,7 @@ def _finite_list(values: Sequence[float], digits: int = 4) -> list:
     return [round(float(v), digits) for v in values]
 
 
-def build_state(snap: Snapshot) -> Dict[str, Any]:
+def build_state(snap: Snapshot, runner: Optional[CommandRunner] = None) -> Dict[str, Any]:
     """The ``/api/state`` document. Always the same keys; missing data is ``null`` / ``[]``."""
     pixel_ok = snap.intrinsics is not None and snap.world_from_optical is not None
     objects = []
@@ -122,6 +135,10 @@ def build_state(snap: Snapshot) -> Dict[str, Any]:
         'objects_age_s': None if snap.objects_age_s is None else round(snap.objects_age_s, 3),
         'joints': joints,
         'tool': tool,
+        'commands': {'enabled': runner is not None,
+                     'allowed': runner.allowed if runner is not None else []},
+        'command': runner.status() if runner is not None else {
+            'running': False, 'name': None, 'log': [], 'last': None},
     }
 
 
@@ -155,6 +172,8 @@ def load_assets(directory: Path = WEB_DIR) -> Dict[str, Tuple[str, bytes]]:
             for path, (name, ctype) in ASSETS.items()}
 
 
+COMMAND_PATH = '/api/command'
+MAX_BODY = 512
 _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; "
         "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
@@ -164,8 +183,10 @@ class WebView:
 
     def __init__(self, source: ViewSource, host: str = '127.0.0.1', port: int = 8080,
                  depth_range: Tuple[float, float] = (0.5, 1.7),
-                 extra_allowed_hosts: Sequence[str] = ()):
+                 extra_allowed_hosts: Sequence[str] = (),
+                 commands: Optional[CommandRunner] = None):
         self.source = source
+        self.commands = commands
         self.depth_range = depth_range
         self.allowed_hosts = LOOPBACK_HOSTS | {h.lower() for h in extra_allowed_hosts}
         self._assets = load_assets()
@@ -178,7 +199,7 @@ class WebView:
         return self._server.server_address[1]
 
     def serve_forever(self) -> None:
-        self._server.serve_forever(poll_interval=0.2)
+        self._server.serve_forever(poll_interval=0.05)
 
     def start_background(self) -> None:
         self._thread = threading.Thread(target=self.serve_forever, daemon=True)
@@ -199,7 +220,7 @@ class WebView:
             ctype, body = self._assets[path]
             return 200, ctype, body
         if path == '/api/state':
-            body = json.dumps(build_state(self.source.snapshot())).encode()
+            body = json.dumps(build_state(self.source.snapshot(), self.commands)).encode()
             return 200, 'application/json', body
         if path in ('/frame/rgb.png', '/frame/depth.png'):
             snap = self.source.snapshot()
@@ -221,6 +242,7 @@ class _Handler(BaseHTTPRequestHandler):
     server: _Server
     server_version = 'robot-web-view'
     protocol_version = 'HTTP/1.1'
+    timeout = 30       # a client that stalls (or an idle keep-alive connection) is dropped
 
     def _host_allowed(self) -> bool:
         return host_name(self.headers.get('Host')) in self.server.view.allowed_hosts
@@ -243,8 +265,12 @@ class _Handler(BaseHTTPRequestHandler):
         if not self._host_allowed():
             self._send(403, 'application/json', b'{"error": "host izinli degil"}', head_only)
             return
+        path = urlsplit(self.path).path
+        if path == COMMAND_PATH:
+            self._not_allowed()               # POST only
+            return
         try:
-            status, ctype, body = self.server.view.respond(urlsplit(self.path).path)
+            status, ctype, body = self.server.view.respond(path)
         except Exception:    # noqa: BLE001 - a broken snapshot must not kill the server thread
             log.exception('istek islenemedi: %s', self.path)
             status, ctype, body = 500, 'application/json', b'{"error": "sunucu hatasi"}'
@@ -256,12 +282,92 @@ class _Handler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:    # noqa: N802
         self._get(head_only=True)
 
-    def _not_allowed(self) -> None:
-        self.close_connection = True      # the request body, if any, is never read
-        self._send(405, 'application/json', b'{"error": "salt okunur: yalnizca GET/HEAD"}',
-                   extra={'Allow': 'GET, HEAD', 'Connection': 'close'})
+    # ---- everything that is not GET/HEAD -----------------------------------------------------
+    def _json(self, status: int, payload: Dict[str, Any], close: bool = False,
+              extra: Optional[Dict[str, str]] = None) -> None:
+        headers = dict(extra or {})
+        if close:
+            self.close_connection = True     # the request body (if any) was not read
+            headers['Connection'] = 'close'
+        self._send(status, 'application/json', json.dumps(payload).encode(), extra=headers)
 
-    do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _not_allowed    # noqa: N815
+    def _not_allowed(self) -> None:
+        if urlsplit(self.path).path == COMMAND_PATH:
+            allow, why = 'POST', 'bu uç noktaya yalnızca POST yapılır'
+        else:
+            allow, why = 'GET, HEAD', 'salt okunur: yalnızca GET/HEAD'
+        self._json(405, {'error': why}, close=True, extra={'Allow': allow})
+
+    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _not_allowed    # noqa: N815
+
+    def _cross_site_reason(self) -> Optional[str]:
+        """Why this POST looks like it comes from another web page (None: it does not)."""
+        if (self.headers.get('Sec-Fetch-Site') or 'same-origin').lower() not in (
+                'same-origin', 'none'):
+            return 'başka bir siteden gelen istek (Sec-Fetch-Site)'
+        origin = self.headers.get('Origin')
+        if origin is not None:
+            parts = urlsplit(origin)
+            host = (self.headers.get('Host') or '').strip().lower()
+            if parts.scheme != 'http' or not host or parts.netloc.lower() != host:
+                return f'yabancı Origin: {origin[:60]}'
+        return None
+
+    def do_POST(self) -> None:    # noqa: N802
+        if urlsplit(self.path).path != COMMAND_PATH:
+            self._not_allowed()
+            return
+        view = self.server.view
+        runner = view.commands
+        if not self._host_allowed():
+            self._json(403, {'error': 'host izinli degil'}, close=True)
+            return
+        if runner is None:
+            self._json(403, {'error': 'komut ucu kapalı: web_view komutlar açık başlatılmadı '
+                                      '(commands:=true)'}, close=True)
+            return
+        reason = self._cross_site_reason()
+        if reason:
+            runner.reject('', reason)
+            self._json(403, {'error': reason}, close=True)
+            return
+        if (self.headers.get('Content-Type') or '').split(';')[0].strip().lower() != \
+                'application/json':
+            self._json(415, {'error': "Content-Type: application/json gerekli"}, close=True)
+            return
+        length = self.headers.get('Content-Length')
+        if length is None:
+            self._json(411, {'error': 'Content-Length gerekli'}, close=True)
+            return
+        if not length.isdigit() or int(length) > MAX_BODY:
+            self._json(413, {'error': f'gövde en fazla {MAX_BODY} bayt olabilir'}, close=True)
+            return
+        raw = self.rfile.read(int(length))
+        try:
+            body = json.loads(raw.decode('utf-8'))
+        except (UnicodeDecodeError, ValueError):
+            runner.reject('', 'JSON okunamadı')
+            self._json(400, {'error': 'gövde geçerli JSON değil', 'allowed': runner.allowed})
+            return
+        if not isinstance(body, dict) or set(body) != {'command'}:
+            runner.reject('', "gövde tam olarak {'command': ...} olmalı")
+            self._json(400, {'error': 'gövde yalnızca {"command": "..."} olmalı',
+                             'allowed': runner.allowed})
+            return
+        try:
+            command = parse_command(body['command'])
+        except CommandError as exc:
+            runner.reject(body['command'], str(exc))
+            self._json(400, {'error': str(exc), 'allowed': runner.allowed})
+            return
+        try:
+            outcome = runner.run(command)
+        except Busy as exc:
+            self._json(409, {'error': str(exc)})
+            return
+        status = 500 if outcome.internal_error else (200 if outcome.ok else 422)
+        self._json(status, {'ok': outcome.ok, 'command': command.line, 'message': outcome.message,
+                            'data': outcome.data, 'duration_s': outcome.duration_s})
 
     def log_message(self, format: str, *args: Any) -> None:    # noqa: A002
         log.debug('%s - %s', self.address_string(), format % args)

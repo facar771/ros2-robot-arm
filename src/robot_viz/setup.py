@@ -21,6 +21,7 @@ setup(
         'console_scripts': [
             'web_view = robot_viz.web_view:main',
             'viz_check = robot_viz.viz_check:main',
+            'cmd_check = robot_viz.cmd_check:main',
         ],
     },
 )

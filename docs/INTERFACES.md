@@ -40,11 +40,13 @@ Algı düğümü tamamen susarsa nesneler bayat kalır (boş liste yayımlandı�
 Doğrulama: `ros2 run robot_controller perception_scene_check`.
 
 ## Tarayıcı görünümü (`robot_viz` `web_view`, mantık `robot_core.webview` / `robot_core.viz`)
-Salt okunur HTTP sunucusu (yalnızca `http.server`). Başlatma: `ros2 launch robot_viz web_view.launch.py`
+HTTP sunucusu (yalnızca `http.server`); varsayılan **salt okunur**, `commands:=true` ile beyaz listeli
+komutlar açılır (aşağıda). Başlatma: `ros2 launch robot_viz web_view.launch.py`
 (`host:=127.0.0.1`, `port:=8080`; konteynerde `host:=0.0.0.0`, port yalnızca ana makinenin 127.0.0.1'ine
 yayımlanır). Abone olduğu konular: `/camera/{image,depth_image,camera_info}`, `/perception/objects`,
 `/joint_states`; TF: `world <- camera_optical_frame` (bindirme), `world <- link_6` (uç konum).
-Hiçbir şey yayımlamaz.
+Hiçbir şey yayımlamaz (komutlar açıksa hareketi MoveIt'e `cli_moveit` ile aynı Skills katmanı üstünden
+yaptırır).
 
 | Uç nokta | İçerik |
 |---|---|
@@ -52,9 +54,10 @@ Hiçbir şey yayımlamaz.
 | `GET /frame/rgb.png` | kamera karesi + algılanan her nesne için beyaz kutu, `+` işareti ve etiket (`red#0`) |
 | `GET /frame/depth.png` | derinlik renk haritası: sarı = yakın (`depth_near`, 0.5 m), mor = uzak (`depth_far`, 1.7 m), gri = ölçüm yok |
 | `GET /api/state` | JSON, aşağıda |
+| `POST /api/command` | beyaz listeli komut (aşağıda); `commands:=true` değilse `403` |
 
 Kare yoksa görüntü uç noktaları `503` döner; `/api/state` her zaman `200` ve aynı anahtarlarla gelir.
-`GET`/`HEAD` dışındaki yöntemler `405` (`Allow: GET, HEAD`); `Host` başlığı `localhost`, `127.0.0.1` veya
+Diğer yollarda `GET`/`HEAD` dışındaki yöntemler `405` (`Allow: GET, HEAD`; `/api/command` için `Allow: POST`); `Host` başlığı `localhost`, `127.0.0.1` veya
 `[::1]` değilse `403`; bilinmeyen yol `404`. Yanıtlar `Cache-Control: no-store`.
 
 `/api/state` alanları (veri yoksa `null` / `[]`):
@@ -67,9 +70,45 @@ Kare yoksa görüntü uç noktaları `503` döner; `/api/state` her zaman `200` 
 | `objects_age_s` | son `/perception/objects` mesajından beri geçen süre; 2 s'den eskiyse `objects` boş sayılır |
 | `joints[]` | `name`, `rad`, `deg` (robot tanımındaki sırayla; eksik eklem varsa `null`) |
 | `tool` | `link` (`link_6`), `position` [x,y,z] (TF, world) |
+| `commands` | `enabled` (komut ucu açık mı), `allowed` (beyaz liste, kapalıysa `[]`) |
+| `command` | `running`, `name` (çalışan komut), `log` (o komutun anlatımı, son 60 satır, canlı), `last` (`command`, `ok`, `message`, `finished_at`) |
 
 Piksel konumu, `robot_core.workspace.project` ile aynı kuralı kullanır (piksel *indeksi*, merkez +0.5).
-Doğrulama: `ros2 run robot_viz viz_check` (`run_selftest gazebo-viz`).
+Doğrulama: `ros2 run robot_viz viz_check` (`run_selftest gazebo-viz`, komutlar kapalı) ve
+`ros2 run robot_viz cmd_check` (`run_selftest gazebo-cmd`, komutlar açık).
+
+### `POST /api/command` (yalnızca `web_view commands:=true`)
+Gövde: `{"command": "<komut>"}` (başka anahtar yok, ≤ 512 bayt), `Content-Type: application/json`.
+Komut metni katı bir beyaz listeden geçer (`robot_core.webcmd.parse_command`; harf, rakam, boşluk,
+nokta, virgül, alt çizgi dışındaki karakter, ≤ 64 karakter); büyük/küçük harf fark etmez.
+
+| Komut | Anlam |
+|---|---|
+| `home` | `Skills.go_to_named_pose('home')` |
+| `objects` | `Skills.list_objects()`; `data.objects[]`: `name`, `label`, `position`, `size` |
+| `above <red\|green\|blue> [yükseklik_m]` | `Skills.go_above(renk, yükseklik)`, yükseklik 0-0.5 (varsayılan 0.10; `0,25` de olur); `kırmızı`, `yeşil`, `mavi` takma adları; `data.target` [x,y,z] |
+| `demo_scenario` | `home` → `above green 0.25` → `above red 0.30` → `home`; her adımdan sonra TF ile uç konum ölçülür: hedefe ≤ 1.5 cm, ikinci `home` birincisine ≤ 3 cm (kol yukarıda ~1 cm sallanır); ilk başarısız/doğrulanamayan adımda durur; `data.steps[]`: `step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm` |
+
+Yanıt: `{"ok", "command" (normalleştirilmiş), "message", "data", "duration_s"}`; komut **bitince**
+döner (planlama + yürütme birkaç saniye-dakika sürebilir; istemci zaman aşımını uzun tut).
+
+| Durum | Ne zaman |
+|---|---|
+| `200` | komut yapıldı (`ok: true`) |
+| `400` | beyaz liste dışı komut, geçersiz argüman, geçersiz/fazlalıklı JSON; gövdede `error` + `allowed`; robot oynamaz |
+| `403` | komut ucu kapalı; `Host` loopback değil; yabancı `Origin`; `Sec-Fetch-Site` ≠ same-origin/none |
+| `405` | `POST` dışı yöntem (`Allow: POST`) |
+| `409` | başka bir komut çalışıyor (aynı anda tek komut) |
+| `411` / `413` | `Content-Length` yok (ör. chunked) / geçersiz ya da 512 bayttan büyük |
+| `415` | `Content-Type` `application/json` değil |
+| `422` | komut geçerli ama robot yapamadı (erişilemeyen hedef, çarpışma, nesne yok...); `message` nedeni söyler, robot hareket etmedi |
+| `500` | iç hata (ayrıntı yalnızca sunucu günlüğünde) |
+
+Başka web sayfalarının (CSRF) kullanıcının tarayıcısı üzerinden komut göndermesine karşı: JSON içerik
+türü zorunlu (başka sitenin ön uçuşsuz gönderebileceği `text/plain`/form türleri `415`), yabancı
+`Origin` ve `Sec-Fetch-Site: cross-site` `403`, `Host` beyaz listesi (DNS rebinding). Kimlik doğrulama
+yoktur: erişim, portun yalnızca `127.0.0.1`'e yayımlanmasına dayanır (`compose.yaml`).
+Reddedilen istekler `command_rejected` olayı üretir (`ROBOT_DB_URL` varsa `error_reports`'a da düşer).
 
 ## Olaylar (`EventSink`) ve veritabanı (`robot_data`)
 Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. `ROBOT_DB_URL` yoksa
@@ -102,14 +141,15 @@ Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. 
 | `motion_result` | cli_moveit | `target` [rad], `label`, `ok`, `code`, `code_name`, `message` |
 | `obstacle_added` | cli_moveit, perception_scene_sync | `name`, `pose` [x,y,z], `size` [sx,sy,sz] (taşınan nesne için yeniden gönderilir) |
 | `obstacle_removed` | cli_moveit, perception_scene_sync | `name` |
-| `command_rejected` | cli_moveit | `line`, `reason` (isteğe bağlı) |
+| `command_rejected` | cli_moveit, web_view | `line`, `reason` (isteğe bağlı) |
 | `objects_changed` | perception | `objects`: `[{label, index, position, size, pixels}]` — görünen nesne kümesi değişince (her karede DEĞİL) |
-| `skill_result` | cli_moveit (Skills) | `skill`, `args`, `ok`, `message`, `code_name` |
+| `skill_result` | cli_moveit, web_view (Skills) | `skill`, `args`, `ok`, `message`, `code_name` |
+| `scenario_result` | cli_moveit, web_view (`demo_scenario`) | `name`, `ok`, `message`, `steps[]` (`step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm`) |
 | `selftest_check` | selftest | `name`, `ok`, `detail` |
 | `error` | herhangi | `component`, `code`, `message` |
 
 `error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`,
-`selftest_check` (`ok=false`), `skill_result` (`ok=false`), `error`.
+`selftest_check` (`ok=false`), `skill_result` (`ok=false`), `scenario_result` (`ok=false`), `error`.
 
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
@@ -131,6 +171,7 @@ kutu) düşük yükseklikte düz aşağı bakamaz; `go_above` bu durumda açık 
 `height` önerir. Poz hedefi MoveIt'e konum + yönelim kısıtı olarak verilir (IK: KDL,
 `kinematics_solver_timeout` 0.05 s); alet ekseni etrafındaki dönüş serbesttir.
 
-CLI: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`. Doğrulama:
+CLI: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`, `demo_scenario` (Skills üstünde, uç konum
+TF ile doğrulanır; ayrıntı yukarıdaki `POST /api/command` tablosunda). Doğrulama:
 `ros2 run robot_controller pose_check`.
 

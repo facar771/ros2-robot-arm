@@ -90,6 +90,10 @@ def test_error_report_mapping():
     assert error_report_for('skill_result', {'skill': 'go_above', 'ok': False,
                                              'code_name': 'NO_IK_SOLUTION', 'message': 'm'}) == {
         'component': 'skill', 'code': 'NO_IK_SOLUTION', 'message': 'm'}
+    assert error_report_for('scenario_result', {'name': 'demo_scenario', 'ok': True}) is None
+    assert error_report_for('scenario_result', {'name': 'demo_scenario', 'ok': False,
+                                                'message': '2. adımda durdu'}) == {
+        'component': 'scenario', 'code': 'demo_scenario', 'message': '2. adımda durdu'}
     assert error_report_for('obstacle_added', {}) is None
 
 

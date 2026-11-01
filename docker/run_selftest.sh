@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz]
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd]
 #   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
@@ -16,6 +16,9 @@
 # gazebo-viz    = same stack + the read-only browser view (robot_viz web_view on 127.0.0.1:8080);
 #                 runs only viz_check (page, JSON, PNGs and overlay vs. the world file, joints/tool
 #                 vs. /joint_states and TF, read-only guard, view follows a go_above move)
+# gazebo-cmd    = same stack + the browser with commands enabled (web_view commands:=true); runs only
+#                 cmd_check (white-listed POST /api/command: refusals, TF-measured moves, the demo
+#                 scenario with live narration, 409 while busy)
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -31,7 +34,9 @@ case "$MODE" in
     gazebo-skills) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true); CTRL_TIMEOUT=180 ;;
     gazebo-viz) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py); CTRL_TIMEOUT=180 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz]"; exit 64 ;;
+    gazebo-cmd) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -93,6 +98,8 @@ elif [ "$MODE" = "gazebo-skills" ]; then
     timeout 500 ros2 run robot_controller pose_check || STATUS=$?
 elif [ "$MODE" = "gazebo-viz" ]; then
     timeout 500 ros2 run robot_viz viz_check || STATUS=$?
+elif [ "$MODE" = "gazebo-cmd" ]; then
+    timeout 900 ros2 run robot_viz cmd_check || STATUS=$?
 else
     timeout 180 ros2 run robot_controller selftest || STATUS=$?
 fi

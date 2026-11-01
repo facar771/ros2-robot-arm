@@ -9,6 +9,7 @@ import threading
 import time
 from typing import Dict, Mapping, Optional
 
+import rclpy
 from geometry_msgs.msg import Pose
 from moveit_msgs.action import MoveGroup
 from moveit_msgs.msg import (
@@ -23,11 +24,13 @@ from moveit_msgs.msg import (
 )
 from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene
 from rclpy.action import ActionClient
+from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from robot_core.models import ObjectInfo, PoseTarget
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
+from tf2_ros import Buffer, TransformException
 
 from robot_core import BoxObstacle, JointTarget, MotionResult, RobotConfig
 
@@ -81,6 +84,24 @@ class JointStateCache:
     def joint_positions(self) -> Optional[Dict[str, float]]:
         with self._lock:
             return dict(self._positions) or None
+
+
+class TfToolPosition:
+    """Implements ToolPositionPort: where the tool link really is, measured from TF (robot_state_
+    publisher on the *simulated* joint states), not from what MoveIt believes. ``buffer`` must be
+    fed by a TransformListener on a node that is being spun."""
+
+    def __init__(self, buffer: Buffer, link: str, world: str = 'world', timeout: float = 0.5):
+        self._buffer, self._link, self._world, self._timeout = buffer, link, world, timeout
+
+    def tool_position(self):
+        try:
+            t = self._buffer.lookup_transform(
+                self._world, self._link, rclpy.time.Time(),
+                Duration(seconds=self._timeout)).transform.translation
+        except TransformException:
+            return None
+        return (t.x, t.y, t.z)
 
 
 class PlanningSceneAdapter:

@@ -6,7 +6,15 @@ from typing import Callable, Optional, Set
 from robot_core.config import RobotConfig
 from robot_core.errors import hint_for
 from robot_core.models import BoxObstacle
-from robot_core.ports import EventSink, MotionPort, NullEventSink, ScenePort, StatePort
+from robot_core.ports import (
+    EventSink,
+    MotionPort,
+    NullEventSink,
+    ScenePort,
+    StatePort,
+    ToolPositionPort,
+)
+from robot_core.scenario import run_demo_scenario
 from robot_core.skills import Skills
 from robot_core.targets import TargetError, TargetParser
 
@@ -21,13 +29,16 @@ HELP = """Komutlar:
   objects                       algılanan nesneler (ad, renk, konum, boyut)
   above <nesne> [yükseklik_m]   aleti nesnenin üstüne götür (varsayılan 0.10 m, alet aşağı bakar)
   goto x y z                    aleti (x, y, z) noktasına götür, metre, world çerçevesi
+  demo_scenario                 demo: home -> yeşilin üstü -> kırmızının üstü -> home; her adım
+                                anlatılır ve uç konum TF ile ölçülüp doğrulanır
   help | exit"""
 
 
 class CommandInterpreter:
     def __init__(self, config: RobotConfig, motion: MotionPort, scene: ScenePort,
                  state: StatePort, out: Callable[[str], None] = print,
-                 events: Optional[EventSink] = None, skills: Optional[Skills] = None):
+                 events: Optional[EventSink] = None, skills: Optional[Skills] = None,
+                 tool: Optional[ToolPositionPort] = None):
         self._config = config
         self._motion = motion
         self._scene = scene
@@ -35,13 +46,14 @@ class CommandInterpreter:
         self._out = out
         self._events = events or NullEventSink()
         self._skills = skills
+        self._tool = tool
         self._parser = TargetParser(config)
         self._obstacles: Set[str] = set()
         self._handlers = {
             'help': self._help, 'status': self._status, 'list': self._list,
             'clear': self._clear, 'move': self._move, 'addbox': self._addbox,
             'rmbox': self._rmbox, 'objects': self._objects_cmd, 'above': self._above,
-            'goto': self._goto,
+            'goto': self._goto, 'demo_scenario': self._demo_scenario,
         }
 
     @property
@@ -200,3 +212,14 @@ class CommandInterpreter:
             return
         self._report(self._skills.go_to_position(x, y, z))
 
+
+    def _demo_scenario(self, args) -> None:
+        if not self._have_skills():
+            return
+        if args:
+            self._out('[-] Kullanım: demo_scenario  (argüman almaz)')
+            return
+        if self._tool is None:
+            self._out('[-] Uç konum ölçümü (TF) bağlı değil, senaryo doğrulanamaz.')
+            return
+        run_demo_scenario(self._skills, self._tool, self._out, events=self._events)
