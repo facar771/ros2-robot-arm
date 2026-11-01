@@ -13,6 +13,7 @@ src/
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
   robot_data/            ROS'suz veri katmanı: SQLAlchemy 2 + Alembic (SQLite testler, PostgreSQL üretim)
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
+  robot_viz/             salt okunur tarayıcı görünümü: web_view düğümü + viz_check (mantık robot_core.viz / webview'de)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
 compose.yaml             dev ve selftest servisleri
@@ -31,7 +32,9 @@ docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket
 docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit edilen konum ↔ dünya dosyası
 docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
 docker compose run --rm selftest-skills      # Skills: aleti nesnenin üstüne götür, uç konumu TF ile ölç
+docker compose run --rm selftest-viz         # tarayıcı görünümü: sayfa, JSON, PNG'ler, bindirme ↔ dünya dosyası, eklem/TF, salt okunur
 docker compose run --rm selftest-db          # selftest olayları PostgreSQL'e yazılır (compose'taki db servisi)
+docker compose up demo                       # etkileşimli demo + tarayıcıda canlı görünüm (aşağıya bak)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
 colcon build --symlink-install && source install/setup.bash
@@ -83,6 +86,34 @@ Gazebo'da taşınan nesnenin kutusu taşınır; kaldırılınca aynı hedef içi
 hepsi `SkillResult` döner (ayrıntı, kısıtlar ve erişim sınırı: `docs/INTERFACES.md`).
 `cli_moveit` komutları: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`.
 `pose_check`, uç işlevcinin TF ile ölçülen konumunu hedefle ve dünya dosyasıyla karşılaştırır.
+
+## Tarayıcıda canlı görünüm (Aşama 5a)
+Sistemi gözle görmek için: kamera görüntüsü (algılanan nesneler kutu + etiketle işaretli), derinlik
+haritası, nesne tablosu, eklem açıları ve uç işlevci konumu, ~5 Hz canlı. Yalnızca standart kütüphane
+(`http.server`), ek kurulum yok. **Salt okunur**: robotu hareket ettiren hiçbir uç nokta yok.
+
+```bash
+# Terminal 1 — WSL'de (simülasyon + görünüm; ilk açılış 1-3 dk, "Hazır." yazısını bekle)
+cd ~/ros2-robot-arm
+docker compose up --build demo
+```
+Windows tarayıcında **http://localhost:8080** aç (WSL2 + Docker Desktop'ta `localhost` aynıdır).
+```bash
+# Terminal 2 — WSL'de (komut satırı; aynı çalışan konteynere bağlanır)
+cd ~/ros2-robot-arm
+./docker/cli.sh
+# moveit_cli> objects
+# moveit_cli> above green 0.25      -> tarayıcıda kolun hareket ettiğini izle
+# moveit_cli> move home
+```
+Durdurmak için Terminal 1'de **Ctrl-C** (süreçler sırayla kapanır, port serbest kalır). 8080 doluysa:
+`VIEW_PORT=8081 docker compose up demo` (WSL'de) ve `http://localhost:8081`.
+
+Güvenlik: konteyner içinde `0.0.0.0`'da dinler ama `compose.yaml` portu yalnızca ana makinenin
+`127.0.0.1`'ine yayımlar (ağdaki başka makineler erişemez); `Host` başlığı localhost değilse `403`,
+`GET`/`HEAD` dışındaki her yöntem `405`. Docker'sız (ör. `dev` kabuğunda):
+`ros2 launch robot_viz web_view.launch.py` (varsayılan `127.0.0.1:8080`). Uç noktalar ve JSON
+şeması: `docs/INTERFACES.md`.
 
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını

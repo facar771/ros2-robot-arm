@@ -39,6 +39,38 @@ Başlatma: `... gazebo.launch.py world:=workspace perception:=true perception_sc
 Algı düğümü tamamen susarsa nesneler bayat kalır (boş liste yayımlandığı sürece silinir).
 Doğrulama: `ros2 run robot_controller perception_scene_check`.
 
+## Tarayıcı görünümü (`robot_viz` `web_view`, mantık `robot_core.webview` / `robot_core.viz`)
+Salt okunur HTTP sunucusu (yalnızca `http.server`). Başlatma: `ros2 launch robot_viz web_view.launch.py`
+(`host:=127.0.0.1`, `port:=8080`; konteynerde `host:=0.0.0.0`, port yalnızca ana makinenin 127.0.0.1'ine
+yayımlanır). Abone olduğu konular: `/camera/{image,depth_image,camera_info}`, `/perception/objects`,
+`/joint_states`; TF: `world <- camera_optical_frame` (bindirme), `world <- link_6` (uç konum).
+Hiçbir şey yayımlamaz.
+
+| Uç nokta | İçerik |
+|---|---|
+| `GET /`, `/app.js`, `/style.css` | sayfa (RGB + bindirme, derinlik, nesne tablosu, eklemler, uç konum; ~5 Hz yeniler) |
+| `GET /frame/rgb.png` | kamera karesi + algılanan her nesne için beyaz kutu, `+` işareti ve etiket (`red#0`) |
+| `GET /frame/depth.png` | derinlik renk haritası: sarı = yakın (`depth_near`, 0.5 m), mor = uzak (`depth_far`, 1.7 m), gri = ölçüm yok |
+| `GET /api/state` | JSON, aşağıda |
+
+Kare yoksa görüntü uç noktaları `503` döner; `/api/state` her zaman `200` ve aynı anahtarlarla gelir.
+`GET`/`HEAD` dışındaki yöntemler `405` (`Allow: GET, HEAD`); `Host` başlığı `localhost`, `127.0.0.1` veya
+`[::1]` değilse `403`; bilinmeyen yol `404`. Yanıtlar `Cache-Control: no-store`.
+
+`/api/state` alanları (veri yoksa `null` / `[]`):
+
+| Alan | Anlam |
+|---|---|
+| `time` | sunucu zamanı (epoch s) |
+| `camera` | `width`, `height`, `rgb_age_s`, `depth_age_s` (son kareden beri geçen süre), `overlay` (bindirme çizilebiliyor mu) |
+| `objects[]` | `name` (`red#0`), `label`, `index`, `position` [x,y,z] ve `size` (world, m), `pixel`: `center` [u,v] (kutu merkezinin izdüşümü), `bbox` (8 köşenin izdüşüm zarfı), `rect` (PNG'de çizilen tam sayı kutu) |
+| `objects_age_s` | son `/perception/objects` mesajından beri geçen süre; 2 s'den eskiyse `objects` boş sayılır |
+| `joints[]` | `name`, `rad`, `deg` (robot tanımındaki sırayla; eksik eklem varsa `null`) |
+| `tool` | `link` (`link_6`), `position` [x,y,z] (TF, world) |
+
+Piksel konumu, `robot_core.workspace.project` ile aynı kuralı kullanır (piksel *indeksi*, merkez +0.5).
+Doğrulama: `ros2 run robot_viz viz_check` (`run_selftest gazebo-viz`).
+
 ## Olaylar (`EventSink`) ve veritabanı (`robot_data`)
 Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. `ROBOT_DB_URL` yoksa
 `NullEventSink` (kayıt yok); varsa `DatabaseEventSink`. URL örnekleri:

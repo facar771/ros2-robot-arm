@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot kolu - canlı görünüm</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header><h1>Robot kolu - canlı görünüm</h1><span id="status" class="badge">bağlanıyor...</span></header>
+<main>
+  <section class="panel"><h2>Kamera (algılanan nesneler işaretli)</h2>
+    <div class="frame"><img id="rgb" alt="RGB kare"><p id="rgb-msg" class="msg">kare yok</p></div></section>
+  <section class="panel"><h2>Derinlik (sarı yakın, mor uzak, gri ölçüm yok)</h2>
+    <div class="frame"><img id="depth" alt="Derinlik karesi"><p id="depth-msg" class="msg">kare yok</p></div></section>
+  <section class="panel"><h2>Algılanan nesneler (world, metre)</h2>
+    <table id="objects"><thead><tr><th>nesne</th><th>konum x, y, z</th><th>boyut x, y, z</th></tr></thead>
+    <tbody></tbody></table></section>
+  <section class="panel"><h2>Eklem açıları</h2>
+    <table id="joints"><thead><tr><th>eklem</th><th>rad</th><th>derece</th></tr></thead>
+    <tbody></tbody></table>
+    <h2>Uç işlevci (<span id="tool-link">-</span>)</h2><p id="tool" class="mono">-</p></section>
+</main>
+<footer>Salt okunur görünüm; bu sayfa robotu hareket ettiremez. Yenileme ~5 Hz.</footer>
+<script src="/app.js"></script>
+</body>
+</html>
