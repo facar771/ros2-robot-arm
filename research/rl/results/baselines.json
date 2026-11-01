@@ -1,0 +1,173 @@
+{
+ "reach|klasik-DLS-h\u0131z|dr0.0": {
+  "success": 0.83,
+  "safe_success": 0.83,
+  "n_coll": 0.0,
+  "final_dist": 0.11900939850792726,
+  "mean_dist": 0.3955332364504919,
+  "steps": 44.04,
+  "ret": -21.903495735790543,
+  "tail_success": 0.23675930644477833,
+  "wall_s_per_ep": 0.009058351516723634
+ },
+ "reach|klasik-DLS-h\u0131z|dr0.5": {
+  "success": 0.9,
+  "safe_success": 0.9,
+  "n_coll": 0.0,
+  "final_dist": 0.08006774207490633,
+  "mean_dist": 0.31737290259304074,
+  "steps": 34.28,
+  "ret": -14.12559786788826,
+  "tail_success": 0.28482455595632783,
+  "wall_s_per_ep": 0.007301802635192871
+ },
+ "reach|klasik-DLS-h\u0131z|dr1.0": {
+  "success": 0.9,
+  "safe_success": 0.9,
+  "n_coll": 0.0,
+  "final_dist": 0.07910000532397297,
+  "mean_dist": 0.3326136898803078,
+  "steps": 34.76,
+  "ret": -14.831236438301012,
+  "tail_success": 0.25585920509999693,
+  "wall_s_per_ep": 0.006749927997589111
+ },
+ "reach|klasik-IK+RRTConnect|dr0.0": {
+  "success": 1.0,
+  "safe_success": 1.0,
+  "n_coll": 0.0,
+  "final_dist": 0.015315526610119383,
+  "mean_dist": 0.4797653132004158,
+  "steps": 30.44,
+  "ret": -15.79889052348147,
+  "tail_success": 0.13864697288796765,
+  "wall_s_per_ep": 0.009990575313568116,
+  "last_plan_time": 0.0006988048553466797
+ },
+ "reach|klasik-IK+RRTConnect|dr0.5": {
+  "success": 1.0,
+  "safe_success": 1.0,
+  "n_coll": 0.0,
+  "final_dist": 0.017460021706230733,
+  "mean_dist": 0.38840527138938447,
+  "steps": 27.3,
+  "ret": -11.699331285676287,
+  "tail_success": 0.17128052125956653,
+  "wall_s_per_ep": 0.008805675506591797,
+  "last_plan_time": 0.015288352966308594
+ },
+ "reach|klasik-IK+RRTConnect|dr1.0": {
+  "success": 0.99,
+  "safe_success": 0.99,
+  "n_coll": 0.0,
+  "final_dist": 0.017720851251508914,
+  "mean_dist": 0.3925801384258273,
+  "steps": 28.93,
+  "ret": -12.256884018000722,
+  "tail_success": 0.15653178613402524,
+  "wall_s_per_ep": 0.00930532932281494,
+  "last_plan_time": 0.01599597930908203
+ },
+ "obstacle|klasik-DLS-h\u0131z|dr0.0": {
+  "success": 0.59,
+  "safe_success": 0.46,
+  "n_coll": 26.49,
+  "final_dist": 0.22974260552322734,
+  "mean_dist": 0.49388583205069636,
+  "steps": 75.61,
+  "ret": -67.66010091614538,
+  "tail_success": 0.1336408121505063,
+  "wall_s_per_ep": 0.015586507320404053
+ },
+ "obstacle|klasik-DLS-h\u0131z|dr0.5": {
+  "success": 0.6,
+  "safe_success": 0.34,
+  "n_coll": 32.52,
+  "final_dist": 0.22717612759525038,
+  "mean_dist": 0.47447020041846016,
+  "steps": 69.15,
+  "ret": -69.68146446043293,
+  "tail_success": 0.13438586062525112,
+  "wall_s_per_ep": 0.016309220790863038
+ },
+ "obstacle|klasik-DLS-h\u0131z|dr1.0": {
+  "success": 0.63,
+  "safe_success": 0.38,
+  "n_coll": 28.4,
+  "final_dist": 0.21732704887008,
+  "mean_dist": 0.48061180932419406,
+  "steps": 66.88,
+  "ret": -64.67065205051149,
+  "tail_success": 0.12046112301204351,
+  "wall_s_per_ep": 0.016120316982269286
+ },
+ "obstacle|klasik-IK+RRTConnect|dr0.0": {
+  "success": 1.0,
+  "safe_success": 1.0,
+  "n_coll": 0.0,
+  "final_dist": 0.016197577549898274,
+  "mean_dist": 0.5836868898777648,
+  "steps": 37.36,
+  "ret": -21.72662972126986,
+  "tail_success": 0.0874414472705051,
+  "wall_s_per_ep": 0.017314469814300536,
+  "last_plan_time": 0.006356477737426758
+ },
+ "obstacle|klasik-IK+RRTConnect|dr0.5": {
+  "success": 0.99,
+  "safe_success": 0.99,
+  "n_coll": 0.0,
+  "final_dist": 0.024022303433911586,
+  "mean_dist": 0.5418340693192931,
+  "steps": 37.01,
+  "ret": -20.302624212692084,
+  "tail_success": 0.08956917707625443,
+  "wall_s_per_ep": 0.016708972454071044,
+  "last_plan_time": 0.0169522762298584
+ },
+ "obstacle|klasik-IK+RRTConnect|dr1.0": {
+  "success": 0.99,
+  "safe_success": 0.99,
+  "n_coll": 0.0,
+  "final_dist": 0.0236960986101632,
+  "mean_dist": 0.5478320650286688,
+  "steps": 38.18,
+  "ret": -21.109402686603886,
+  "tail_success": 0.09032792200042092,
+  "wall_s_per_ep": 0.017542204856872558,
+  "last_plan_time": 0.016912221908569336
+ },
+ "track|klasik-DLS-h\u0131z|dr0.0": {
+  "success": 0.9,
+  "safe_success": 0.9,
+  "n_coll": 0.0,
+  "final_dist": 0.03891014635367917,
+  "mean_dist": 0.08434883634909904,
+  "steps": 200.0,
+  "ret": -18.34476857080682,
+  "tail_success": 0.9042000000000001,
+  "wall_s_per_ep": 0.0411111307144165
+ },
+ "track|klasik-DLS-h\u0131z|dr0.5": {
+  "success": 0.89,
+  "safe_success": 0.89,
+  "n_coll": 0.0,
+  "final_dist": 0.052365502372893794,
+  "mean_dist": 0.09064434686332869,
+  "steps": 200.0,
+  "ret": -19.82221541008373,
+  "tail_success": 0.8835999999999999,
+  "wall_s_per_ep": 0.046657652854919435
+ },
+ "track|klasik-DLS-h\u0131z|dr1.0": {
+  "success": 0.86,
+  "safe_success": 0.86,
+  "n_coll": 0.0,
+  "final_dist": 0.04748107156364438,
+  "mean_dist": 0.09579496268234942,
+  "steps": 200.0,
+  "ret": -20.940641843104153,
+  "tail_success": 0.8797,
+  "wall_s_per_ep": 0.04146371603012085
+ }
+}

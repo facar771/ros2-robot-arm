@@ -1,0 +1,10 @@
+# Python 3.13'te test edildi (bulut sandbox, CPU). Torch: PyPI'daki sürüm CPU'da çalışır (CUDA tekerleği ama GPU gerekmez);
+# GPU'suz makinede daha küçük kurulum için: pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.5
+gymnasium>=1.0
+stable-baselines3>=2.4
+mujoco>=3.2
+numpy
+scipy
+pandas
+matplotlib
