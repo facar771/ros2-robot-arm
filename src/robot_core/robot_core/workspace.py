@@ -87,6 +87,14 @@ class Shape:
     kind: str                      # 'sphere' | 'box' | 'cylinder'
     center: Vec
     dims: Tuple[float, ...]        # sphere: (r,)  box: (sx, sy, sz)  cylinder: (r, length)
+    color: Optional[Tuple[float, float, float]] = None   # visual diffuse RGB (0-1), if given
+
+    @property
+    def height(self) -> float:
+        """Vertical extent (the shapes are axis-aligned and unrotated)."""
+        if self.kind == 'sphere':
+            return 2 * self.dims[0]
+        return self.dims[2] if self.kind == 'box' else self.dims[1]
 
 
 @dataclass(frozen=True)
@@ -138,21 +146,30 @@ def load_workspace(sdf_path: Union[str, Path]) -> Workspace:
             raise WorldError(f'{name}: <collision><geometry> yok')
         if model_pose.roll or model_pose.pitch or model_pose.yaw:
             raise WorldError(f'{name}: dönük nesneler desteklenmiyor')
-        shapes.append(_shape(name, model_pose.position, geom))
+        shapes.append(_shape(name, model_pose.position, geom, _diffuse(link)))
     if camera is None:
         raise WorldError('world içinde rgbd_camera yok')
     return Workspace(camera=camera, shapes=tuple(shapes))
 
 
-def _shape(name: str, center: Vec, geom: ET.Element) -> Shape:
+def _diffuse(link: ET.Element) -> Optional[Tuple[float, float, float]]:
+    elem = link.find('visual/material/diffuse')
+    if elem is None:
+        return None
+    r, g, b = _floats(elem.text, '')[:3]
+    return (r, g, b)
+
+
+def _shape(name: str, center: Vec, geom: ET.Element,
+           color: Optional[Tuple[float, float, float]] = None) -> Shape:
     if geom.find('sphere') is not None:
-        return Shape(name, 'sphere', center, (float(geom.find('sphere/radius').text),))
+        return Shape(name, 'sphere', center, (float(geom.find('sphere/radius').text),), color)
     if geom.find('box') is not None:
-        return Shape(name, 'box', center, tuple(_floats(geom.find('box/size').text, '')))
+        return Shape(name, 'box', center, tuple(_floats(geom.find('box/size').text, '')), color)
     if geom.find('cylinder') is not None:
         c = geom.find('cylinder')
         return Shape(name, 'cylinder', center,
-                     (float(c.find('radius').text), float(c.find('length').text)))
+                     (float(c.find('radius').text), float(c.find('length').text)), color)
     raise WorldError(f'{name}: desteklenmeyen geometri')
 
 

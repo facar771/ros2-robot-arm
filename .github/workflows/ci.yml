@@ -46,3 +46,5 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo
       - name: Selftest - Gazebo + RGB-D camera (software rendering)
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-camera
+      - name: Selftest - perception (detected object positions vs. world file)
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-perception

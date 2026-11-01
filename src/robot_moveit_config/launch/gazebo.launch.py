@@ -5,11 +5,15 @@
     ros2 launch robot_moveit_config gazebo.launch.py use_rviz:=true
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace # objects + RGB-D camera
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace camera_points:=true
+    ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true
 
 world:=workspace adds the world from robot_sim, bridges /camera/{image,depth_image,camera_info}
 (and /camera/points with camera_points:=true) and publishes the static TF world -> camera_link
 -> camera_optical_frame, all derived from worlds/workspace.sdf. Headless rendering is software
 (Mesa) when no GPU is present.
+
+perception:=true (with world:=workspace) also starts robot_perception's colour-object detector,
+which publishes /perception/objects.
 
 The robot description is generated with use_gazebo:=true, which swaps mock_components for
 gz_ros2_control and anchors base_link to the world.
@@ -41,6 +45,7 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration('use_rviz')
     world = LaunchConfiguration('world')
     camera_points = LaunchConfiguration('camera_points')
+    perception = LaunchConfiguration('perception')
     workspace_world = os.path.join(get_package_share_directory('robot_sim'), 'worlds',
                                    'workspace.sdf')
     camera = load_workspace(workspace_world).camera
@@ -54,6 +59,8 @@ def generate_launch_description():
                               description="'empty' (physics only) or 'workspace' (objects + camera)"),
         DeclareLaunchArgument('camera_points', default_value='false',
                               description='also bridge /camera/points (large; off by default)'),
+        DeclareLaunchArgument('perception', default_value='false',
+                              description='start the colour-object detector (needs world:=workspace)'),
         # Gazebo runs on simulated time; every node started below must follow /clock.
         SetParameter(name='use_sim_time', value=True),
     ])
@@ -84,6 +91,11 @@ def generate_launch_description():
         condition=IfCondition(PythonExpression(
             ["'", world, "' == 'workspace' and '", camera_points, "' == 'true'"])),
         arguments=['/camera/points@sensor_msgs/msg/PointCloud2[gz.msgs.PointCloudPacked']))
+
+    ld.add_action(Node(
+        package='robot_perception', executable='perception_node', output='screen',
+        condition=IfCondition(PythonExpression(
+            ["'", world, "' == 'workspace' and '", perception, "' == 'true'"]))))
 
     pose = camera.pose
 
