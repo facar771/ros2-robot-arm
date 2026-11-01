@@ -166,9 +166,11 @@ Birimler metre/radyan, konumlar `world` çerçevesinde (taban orijinde, z yukar�
 
 Ulaşılamayan hedefte robot hareket etmez ve mesaj nedeni söyler: tabandan 1.5 m'den uzak hedefler
 MoveIt'e hiç sorulmadan reddedilir; MoveIt'in reddettiği hedeflerde hata kodu ve ipucu mesajdadır.
-**Erişim kısıtı:** eklem 3 limiti ±2.0 rad olduğundan alet, tabana yakın nesnelerde (mavi top, kırmızı
-kutu) düşük yükseklikte düz aşağı bakamaz; `go_above` bu durumda açık hatayla reddeder ve daha büyük
-`height` önerir. Poz hedefi MoveIt'e konum + yönelim kısıtı olarak verilir (IK: KDL,
+**Erişim kısıtı:** alet düz aşağı bakarken eklem 3 (±2.0) ve eklem 5 (±1.57) limitleri, her nesne için
+yalnızca dar bir yükseklik *penceresi* bırakır: çok alçak da çok yüksek de ulaşılamaz (tabana ~0.30 m
+uzaktaki bir hedef için hiç pencere yoktur; mavi top bu yüzden x=0.45'e taşındı). `workspace.sdf`'teki
+pencereler (nesne üstünden, m): mavi ≈0.08-0.42, kırmızı ≈0.30-0.42, yeşil ≈0.20-0.40; **0.30 üçü için de
+çalışır** (arayüz varsayılanı). `go_above` pencere dışında açık hatayla reddeder, robot oynamaz. Poz hedefi MoveIt'e konum + yönelim kısıtı olarak verilir (IK: KDL,
 `kinematics_solver_timeout` 0.05 s); alet ekseni etrafındaki dönüş serbesttir.
 
 CLI: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`, `demo_scenario` (Skills üstünde, uç konum

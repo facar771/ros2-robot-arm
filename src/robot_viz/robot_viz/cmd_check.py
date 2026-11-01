@@ -41,9 +41,14 @@ JSON = {'Content-Type': 'application/json'}
 LABELS = {'red', 'green', 'blue'}
 
 
-def joint_snapshot(state: JointStateCache, names) -> dict:
-    now = state.joint_positions() or {}
-    return {n: now.get(n, float('nan')) for n in names}
+def joint_snapshot(state: JointStateCache, names, wait_s: float = 30.0) -> dict:
+    """Joint positions; waits for the first /joint_states so a start-up race cannot yield nan."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        now = state.joint_positions() or {}
+        if all(n in now for n in names) or time.monotonic() >= deadline:
+            return {n: now.get(n, float('nan')) for n in names}
+        time.sleep(0.2)
 
 
 def moved(before: dict, after: dict) -> float:
@@ -157,7 +162,8 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer) -> list:
     home_ref = tool_from_tf(buffer, config.tip_link)
     record('home -> 200', status == 200 and body['ok'] and home_ref is not None,
            f'(durum {status}, uç konum {home_ref})')
-    for line in ('above green 0.25', 'above red 0.3'):
+    # 0.3 = the page's default height: every colour button must work out of the box
+    for line in ('above green 0.25', 'above red 0.3', 'above green 0.3', 'above blue 0.3'):
         status, _, body = http_.post(line)
         time.sleep(1.5)
         tool = tool_from_tf(buffer, config.tip_link)

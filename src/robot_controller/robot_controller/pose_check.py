@@ -14,11 +14,10 @@ from MoveIt's own report:
 3. an unknown object gives an error that lists the known ones, without any motion.
 Exit code 0 only if every check passed.
 
-Reachability is a property of the arm, not of the code: the objects in workspace.sdf are close to
-the base, and with joint_3 limited to +-2.0 rad the tool cannot point straight down at low
-clearance there. So the clearance is chosen per object (the lowest that this arm reaches
-reliably); for the blue ball nothing is demanded beyond the invariant that every request ends
-either at the target or in an explicit refusal with no motion.
+Reachability is a property of the arm, not of the code: with the tool pointing straight down,
+joint_3 (+-2.0 rad) and joint_5 (+-1.57 rad) only allow a *window* of clearances per object, and
+none at all for a target ~0.30 m from the base (the blue ball used to sit there; it is now at
+x=0.45). So the clearance is chosen per object, inside its window (see tests/test_reach.py).
 """
 import math
 import sys
@@ -42,7 +41,7 @@ from robot_controller.config_loader import load_robot_config
 
 WAIT_S = 90.0
 # Clearance above the object top (m) and whether this arm must reach it (see module docstring).
-CASES = (('green', 0.25, True), ('red', 0.30, True), ('blue', 0.10, False))
+CASES = (('green', 0.25, True), ('red', 0.30, True), ('blue', 0.20, True))
 POSITION_TOLERANCE = 0.01  # m, tool vs target (planner tolerance is 5 mm)
 TRUTH_TOLERANCE = 0.02     # m, tool vs the same point from the world file (perception error)
 TOOL_DOWN_MIN_DOT = 0.97   # cos of ~14 degrees; the planner tolerance is 0.15 rad

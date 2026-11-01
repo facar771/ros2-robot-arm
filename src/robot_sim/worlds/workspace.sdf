@@ -67,7 +67,7 @@
     </model>
     <model name="blue_ball">
       <static>true</static>
-      <pose>0.30 0.0 0.04 0 0 0</pose>
+      <pose>0.45 0.0 0.04 0 0 0</pose>
       <link name="link">
         <collision name="collision"><geometry><sphere><radius>0.04</radius></sphere></geometry></collision>
         <visual name="visual">
