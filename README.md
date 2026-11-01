@@ -125,7 +125,7 @@ Tarayıcıdan komut ve demo senaryosu için aşağıdaki bölüme bak. Güvenlik
 | `home` | robot `home` pozuna |
 | `objects` | bilinen nesneleri (ad, renk, konum, boyut) listeler |
 | `above <red\|green\|blue> [yükseklik_m]` | aleti o renkteki nesnenin üstüne götürür (varsayılan 0.10 m, en çok 0.5 m); `kırmızı/yeşil/mavi` de olur |
-| `demo_scenario` | `home` → yeşil silindirin 25 cm üstü → kırmızı kutunun 30 cm üstü → `home`; her adım Türkçe anlatılır, her hareketten sonra uç konum **TF ile ölçülüp** hedefle karşılaştırılır (≤ 1.5 cm; `home` tekrarı ≤ 3 cm), ilk başarısız adımda durur |
+| `demo_scenario` | `home` → yeşil silindirin 25 cm üstü → kırmızı kutunun 35 cm üstü → `home`; her adım Türkçe anlatılır, her hareketten sonra uç konum **TF ile ölçülüp** hedefle karşılaştırılır (≤ 1.5 cm; `home` tekrarı ≤ 3 cm), ilk başarısız adımda durur |
 
 Anlatım sayfada canlı akar; aynı komutu komut satırında `demo_scenario` yazarak da çalıştırabilirsin.
 Aynı anda tek komut çalışır (ikincisi `409`). Erişilemeyen hedef (ör. tabana yakın nesnede çok alçak
@@ -138,6 +138,19 @@ türü `415`, başka bir sitenin isteği `403`. Ayrıntı ve durum kodları: `do
 curl -s localhost:8080/api/command -H 'Content-Type: application/json' -d '{"command": "above green 0.25"}'
 curl -s localhost:8080/api/command -H 'Content-Type: application/json' -d '{"command": "demo_scenario"}'
 ```
+
+**ACİL DUR.** Sayfanın üstündeki kırmızı **ACİL DUR** düğmesi (ya da `POST /api/stop`) çalışan hareketi
+iptal eder, komutları kilitler (`423`) ve kolun gerçekten durduğunu eklem hızlarından doğrular;
+**Sıfırla** (`POST /api/reset`) kol duruyorken kilidi açar. Hub/otomasyon için sürümlü sözleşme
+(`api_version: 1`, `robot.state`, `moving`, ...): `docs/INTERFACES.md` → "Robot API v1".
+
+```bash
+# WSL'de (komutlar açık simülasyon çalışırken)
+curl -s -X POST localhost:8080/api/stop                       # acil dur
+curl -s localhost:8080/api/state | python3 -c 'import json,sys; print(json.load(sys.stdin)["robot"])'
+curl -s localhost:8080/api/reset -H 'Content-Type: application/json' -d '{}'   # kilidi aç
+```
+Otomatik doğrulama (kolun hareket ortasında durması ölçülür): `docker compose run --rm selftest-stop`.
 Docker'sız: `ros2 launch robot_viz web_view.launch.py commands:=true`. Otomatik test (WSL'de):
 `docker compose run --rm selftest-cmd` (reddedilmesi gerekenler, TF ile ölçülen hareketler, canlı
 anlatım, meşgulken `409`).

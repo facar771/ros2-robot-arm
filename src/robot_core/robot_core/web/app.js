@@ -56,6 +56,21 @@ async function sendCommand(line) {
   refreshState();
 }
 
+async function postEmpty(path, body) {
+  const msg = $('estop-msg');
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body });
+    const j = await r.json();
+    msg.className = r.ok ? 'msg' : 'msg err';
+    msg.textContent = j.message || j.error || ('HTTP ' + r.status);
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'sunucuya ulaşılamadı'; }
+  refreshState();
+}
+$('estop').addEventListener('click', () => postEmpty('/api/stop', JSON.stringify({ reason: 'web sayfası' })));
+$('reset').addEventListener('click', () => postEmpty('/api/reset', '{}'));
+
+const STATE_TEXT = { idle: 'hazır', busy: 'çalışıyor', estopped: 'ACİL DUR', error: 'hata' };
+
 document.querySelectorAll('[data-cmd]').forEach((b) =>
   b.addEventListener('click', () => sendCommand(b.dataset.cmd)));
 document.querySelectorAll('[data-above]').forEach((b) =>
@@ -72,6 +87,13 @@ async function refreshState() {
     $('tool').textContent = s.tool ? 'x, y, z = ' + fmt(s.tool.position) + ' m' : 'TF yok';
     const enabled = s.commands.enabled;
     $('commands').hidden = !enabled;
+    $('estop-bar').hidden = !enabled;
+    if (enabled && s.robot) {
+      const st = s.robot.state;
+      $('robot-state').textContent = (STATE_TEXT[st] || st) + (s.robot.moving ? ' - hareket ediyor' : '');
+      $('robot-state').className = 'badge ' + (st === 'idle' ? 'ok' : 'bad');
+      $('reset').disabled = st !== 'estopped' && st !== 'error';
+    }
     $('footer').textContent = enabled ? FOOTER_COMMANDS : FOOTER_READ_ONLY;
     if (enabled) {
       setBusy(s.command.running);

@@ -105,7 +105,7 @@ class Skills:
         data = dict(result.data, object=obj.name, target=[x, y, z])
         message = (f'{obj.name} üzerinde {height:.3f} m yükseklikte' if result.ok else
                    result.message + ' Alet aşağı bakarken ulaşılabilir yükseklik aralığı dardır '
-                                     '(çok alçak da çok yüksek de olmaz): 0.30-0.40 dene.')
+                                     '(çok alçak da çok yüksek de olmaz): 0.35 dene.')
         result = SkillResult(result.ok, skill, message, result.code_name, data)
         return self._done(skill, args, result)
 

@@ -30,6 +30,7 @@ from rclpy.node import Node
 from robot_core.models import ObjectInfo, PoseTarget
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
+from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException
 
 from robot_core import BoxObstacle, JointTarget, MotionResult, RobotConfig
@@ -70,20 +71,36 @@ class BackgroundSpinner:
 
 
 class JointStateCache:
-    """Implements StatePort."""
+    """Implements StatePort and the supervisor's VelocityPort."""
+
+    VELOCITY_MAX_AGE_S = 1.0
 
     def __init__(self, node: Node):
         self._lock = threading.Lock()
         self._positions: Dict[str, float] = {}
+        self._velocities: Dict[str, float] = {}
+        self._velocity_stamp: Optional[float] = None
         node.create_subscription(JointState, '/joint_states', self._on_message, 10)
 
     def _on_message(self, msg: JointState) -> None:
         with self._lock:
             self._positions.update(zip(msg.name, msg.position))
+            if len(msg.velocity) == len(msg.name):
+                self._velocities.update(zip(msg.name, msg.velocity))
+                self._velocity_stamp = time.monotonic()
 
     def joint_positions(self) -> Optional[Dict[str, float]]:
         with self._lock:
             return dict(self._positions) or None
+
+    def joint_velocities(self) -> Optional[Dict[str, float]]:
+        """Latest velocities (rad/s); None when none arrived or the newest is over 1 s old, so a
+        silent joint_states topic can never look like "standing still"."""
+        with self._lock:
+            if self._velocity_stamp is None or \
+                    time.monotonic() - self._velocity_stamp > self.VELOCITY_MAX_AGE_S:
+                return None
+            return dict(self._velocities)
 
 
 class TfToolPosition:
@@ -156,8 +173,12 @@ class MoveItMotion:
     """Implements MotionPort (joint goals) and PosePort (Cartesian goals) through move_group."""
 
     def __init__(self, node: Node, config: RobotConfig, velocity_scale: float = 0.5,
-                 execution_timeout: float = 60.0, discovery_timeout: float = 15.0):
+                 execution_timeout: float = 60.0, discovery_timeout: float = 15.0, estop=None):
         self._node = node
+        self._estop = estop                    # robot_core.supervisor.EStop (None: no e-stop)
+        self._handle_lock = threading.Lock()
+        self._handle = None                    # goal handle of the running move_action goal
+        self._event_pub = node.create_publisher(String, '/trajectory_execution_event', 10)
         self._discovery_timeout = discovery_timeout
         self._config = config
         self._velocity_scale = velocity_scale
@@ -224,11 +245,45 @@ class MoveItMotion:
         handle = send_future.result()
         if not handle.accepted:
             return MotionResult(False, message='Hedef MoveIt tarafından reddedildi')
-        result_future = handle.get_result_async()
-        if not wait_future(result_future, self._timeout):
-            return MotionResult(False, message='Sonuç zaman aşımı (planlama/yürütme bitmedi)')
+        with self._handle_lock:
+            self._handle = handle
+        try:
+            result_future = handle.get_result_async()
+            if not self._wait_result(result_future, handle):
+                return MotionResult(False, message='Sonuç zaman aşımı (planlama/yürütme bitmedi)')
+        finally:
+            with self._handle_lock:
+                self._handle = None
         code = result_future.result().result.error_code.val
         return MotionResult(code == MoveItErrorCodes.SUCCESS, code, error_name(code))
+
+    def _wait_result(self, result_future, handle) -> bool:
+        """Poll for the result; while the e-stop is latched keep cancelling the goal (so a stop
+        that raced the goal's acceptance cannot be lost)."""
+        deadline = time.monotonic() + self._timeout
+        last_cancel = 0.0
+        while not result_future.done():
+            now = time.monotonic()
+            if self._estop is not None and self._estop.is_set and now - last_cancel > 0.5:
+                handle.cancel_goal_async()
+                self._publish_stop()
+                last_cancel = now
+            if now > deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def _publish_stop(self) -> None:
+        self._event_pub.publish(String(data='stop'))
+
+    def stop(self) -> None:
+        """Implements the supervisor's StopPort: stop trajectory execution now and cancel the
+        running goal. Safe from any thread, repeatable."""
+        self._publish_stop()
+        with self._handle_lock:
+            handle = self._handle
+        if handle is not None:
+            handle.cancel_goal_async()
 
 
 class PlanningSceneReader:
