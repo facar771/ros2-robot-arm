@@ -41,7 +41,7 @@ from robot_controller.config_loader import load_robot_config
 
 WAIT_S = 90.0
 # Clearance above the object top (m) and whether this arm must reach it (see module docstring).
-CASES = (('green', 0.25, True), ('red', 0.30, True), ('blue', 0.20, True))
+CASES = (('green', 0.25, True), ('red', 0.35, True), ('blue', 0.20, True))
 POSITION_TOLERANCE = 0.01  # m, tool vs target (planner tolerance is 5 mm)
 TRUTH_TOLERANCE = 0.02     # m, tool vs the same point from the world file (perception error)
 TOOL_DOWN_MIN_DOT = 0.97   # cos of ~14 degrees; the planner tolerance is 0.15 rad

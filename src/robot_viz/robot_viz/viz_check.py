@@ -58,7 +58,8 @@ JOINT_TOLERANCE = 0.01         # rad
 TOOL_TOLERANCE = 0.015         # m
 TARGET_TOLERANCE = 0.02        # m
 MOVE_CASE = ('green', 0.25)    # reached reliably by this arm (see pose_check)
-STATE_KEYS = {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool', 'commands', 'command'}
+STATE_KEYS = {'api_version', 'time', 'robot', 'camera', 'objects', 'objects_age_s', 'joints',
+              'tool', 'commands', 'command'}
 
 
 class Http:
@@ -246,8 +247,13 @@ def run(base: str, config, ws, skills: Skills, state: JointStateCache, buffer: B
     reported = {j['name']: j['rad'] for j in (s['joints'] or [])}
     record('eklem adları robot tanımıyla aynı sırada',
            [j['name'] for j in (s['joints'] or [])] == names)
-    now = state.joint_positions()
-    err = max((abs(reported.get(n, 1e9) - now[n]) for n in names), default=1e9)
+    now = {}
+    for _ in range(150):               # the check's own subscription may not have data yet
+        now = state.joint_positions() or {}
+        if all(n in now for n in names):
+            break
+        time.sleep(0.2)
+    err = max((abs(reported.get(n, 1e9) - now.get(n, -1e9)) for n in names), default=1e9)
     record(f'eklem açıları /joint_states ile <= {JOINT_TOLERANCE} rad', err <= JOINT_TOLERANCE,
            f'(en büyük fark {err:.4f} rad)')
     tf_tool = tool_from_tf(buffer, config.tip_link)

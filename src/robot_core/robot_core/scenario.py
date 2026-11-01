@@ -31,7 +31,7 @@ DEFAULT_STEPS: Tuple[ScenarioStep, ...] = (
     ScenarioStep("Başlangıç: robotu 'home' pozuna götürüyorum.", ('home',)),
     ScenarioStep('Yeşil silindirin 25 cm üstüne gidiyorum; alet aşağı bakıyor.',
                  ('above', 'green', 0.25)),
-    ScenarioStep('Şimdi kırmızı kutunun 30 cm üstüne geçiyorum.', ('above', 'red', 0.30)),
+    ScenarioStep('Şimdi kırmızı kutunun 35 cm üstüne geçiyorum.', ('above', 'red', 0.35)),
     ScenarioStep("İş bitti: 'home' pozuna dönüyorum.", ('home',)),
 )
 TOLERANCE_M = 0.015      # tool vs target (the planner's own tolerance is 5 mm)

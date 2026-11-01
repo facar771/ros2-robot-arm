@@ -116,7 +116,8 @@ def test_unexpected_exception_is_an_internal_error_without_details():
 
 def test_status_log_and_last():
     runner, _, _ = make_runner()
-    assert runner.status() == {'running': False, 'name': None, 'log': [], 'last': None}
+    assert runner.status() == {'running': False, 'name': None, 'job': None, 'log': [], 'last': None,
+                               'last_error': None}
     runner.run(parse_command('above green 0.25'))
     status = runner.status()
     assert status['running'] is False and status['name'] is None

@@ -9,7 +9,7 @@ from tests.fakes import FakeSkills, FakeTool, RecordingSink
 
 HOME = (0.0, 0.0, 1.24)
 GREEN_TARGET = (0.40, -0.10, 0.35)       # top of the fake green cylinder (0.10) + 0.25
-RED_TARGET = (0.35, 0.15, 0.36)          # top of the fake red box (0.06) + 0.30
+RED_TARGET = (0.35, 0.15, 0.41)          # top of the fake red box (0.06) + 0.35
 
 
 def run(tool_positions, skills=None, **kw):
@@ -28,7 +28,7 @@ def test_all_four_steps_pass_and_are_narrated_in_turkish():
     result, skills, lines, slept, sink = run(good_positions())
     assert result.ok and len(result.steps) == 4 and all(s.ok for s in result.steps)
     assert skills.calls == [('go_to_named_pose', 'home'), ('go_above', 'green', 0.25),
-                            ('go_above', 'red', 0.30), ('go_to_named_pose', 'home')]
+                            ('go_above', 'red', 0.35), ('go_to_named_pose', 'home')]
     assert [line[:5] for line in lines if line.startswith('[')][:4] == [
         '[1/4]', '[2/4]', '[3/4]', '[4/4]']
     text = '\n'.join(lines)
@@ -55,7 +55,7 @@ def test_tool_too_far_from_target_stops_the_scenario():
     result, skills, lines, _, sink = run([HOME, off, RED_TARGET, HOME])
     assert not result.ok and len(result.steps) == 2 and not result.steps[1].ok
     assert '2. adımda' in result.message and '3.0 cm' in result.message
-    assert ('go_above', 'red', 0.30) not in skills.calls     # never sent on to the next step
+    assert ('go_above', 'red', 0.35) not in skills.calls     # never sent on to the next step
     assert 'TOLERANS AŞILDI' in '\n'.join(lines)
     assert sink.events[-1][1]['ok'] is False
 
@@ -77,7 +77,7 @@ def test_failed_skill_stops_with_its_message():
     result, skills, *_ = run(good_positions(), skills=FailsOnRed())
     assert not result.ok and len(result.steps) == 3
     assert '3. adımda' in result.message and 'robot hareket etmedi' in result.message
-    assert skills.calls[-1] == ('go_above', 'red', 0.30)     # the final home was not attempted
+    assert skills.calls[-1] == ('go_above', 'red', 0.35)     # the final home was not attempted
 
 
 def test_unreadable_tf_is_a_failure_not_a_pass():

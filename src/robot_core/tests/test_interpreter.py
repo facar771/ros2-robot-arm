@@ -167,7 +167,7 @@ def test_demo_scenario_command_runs_and_narrates(config, monkeypatch):
     monkeypatch.setattr(scenario, 'SETTLE_S', 0.0)
     monkeypatch.setattr('robot_core.interpreter.run_demo_scenario',
                         lambda *a, **k: scenario.run_demo_scenario(*a, sleep=lambda _: None, **k))
-    tool = FakeTool((0.0, 0.0, 1.24), (0.40, -0.10, 0.35), (0.35, 0.15, 0.36), (0.0, 0.0, 1.24))
+    tool = FakeTool((0.0, 0.0, 1.24), (0.40, -0.10, 0.35), (0.35, 0.15, 0.41), (0.0, 0.0, 1.24))
     sink = RecordingSink()
     cli, skills, out = _scenario_cli(config, tool, sink)
     cli.execute('demo_scenario')
