@@ -52,10 +52,12 @@ yok saymalıdır. Hata yanıtları her zaman JSON'dur ve `error` (Türkçe, insa
 | Uç nokta | Durum | Anlam |
 |---|---|---|
 | `GET /api/state` | **var** | tüm durum (aşağıda); `robot` bloğu Hub'ın birincil okuması |
-| `POST /api/command` | **var** (PR-6b'de *kullanımdan kaldırılacak*, kalkmayacak) | komutu çalıştırır, **bitince** döner (bloklar) |
+| `POST /api/command` | **var, KULLANIMDAN KALDIRILDI** (çalışmaya devam eder) | komutu çalıştırır, **bitince** döner (bloklar); yanıtta `Deprecation: true` başlığı ve `deprecated` alanı; içeride bir iş olarak çalışır (kimliği `/api/jobs`'ta görünür) |
 | `POST /api/stop` | **var** (PR-6a) | ACİL DUR, hiçbir şey tarafından engellenmez |
 | `POST /api/reset` | **var** (PR-6a) | kilidi açar (kol duruyorken) |
-| `POST /api/jobs`, `GET /api/jobs/<id>`, `POST /api/jobs/<id>/cancel` | **PLANLANAN, PR-6b** | bloklamayan işler; ayrıntı o PR'da; v1'e eklemeli girer, yukarıdaki uç noktaları bozmaz |
+| `POST /api/jobs` | **var** (PR-6b) | işi başlatır, **hemen** `202` döner |
+| `GET /api/jobs`, `GET /api/jobs/<id>` | **var** (PR-6b) | son işler (en yeni önce, ≤ 50 tutulur) / tek iş belgesi |
+| `POST /api/jobs/<id>/cancel` | **var** (PR-6b) | çalışan işi iptal eder (kilitlemez) |
 
 ### `robot` bloğu (`GET /api/state` → `robot`; her zaman aynı anahtarlar)
 | Alan | Anlam |
@@ -67,6 +69,7 @@ yok saymalıdır. Hata yanıtları her zaman JSON'dur ve `error` (Türkçe, insa
 | `last_error` | son başarısız komut: `command`, `message`, `time`, `internal` (iç hata mı); yoksa `null` |
 | `moving` | herhangi bir eklem hızı > 0.05 rad/s ise `true`; hız verisi yoksa ya da 1 s'den eskiyse `null` ("bilmiyorum", asla "duruyor" sayılmaz) |
 | `estop` | `tripped`, `reason`, `since` (epoch s) |
+| `safety` | `zone` (`frame`, `box` {x,y,z: [alt, üst]} m), `max_velocity_scale`, `velocity_scale` (MoveIt'e gerçekten istenen = min(0.5, tavan)); `web_view` komutsuz başlatıldıysa `null` |
 
 Öncelik: `estopped` > `busy` > `error` > `idle`. Her şey bilgi amaçlıdır; kararı sunucu verir
 (`423` / `409` yanıtları).
@@ -99,7 +102,50 @@ duruyorken**: komut çalışıyorsa (kilitliyse sonlanması için ≤ 3 s beklen
 ise `409` + `error` (kilit korunur). Zaten hazırsa `200` + `"changed": false`. Yanıt:
 `{"ok", "changed", "message", "state"}`.
 
-### Durum kodları (`/api/command`; v1)
+### İşler: `POST /api/jobs` (Hub/otomasyonun asıl kapısı)
+Gövde (`Content-Type: application/json`): `{"command": "above green 0.35", "timeout_s": 60}`; komut aynı
+beyaz listeden geçer (`home`, `objects`, `above <renk> [m]`, `demo_scenario`), `timeout_s` isteğe bağlı
+(1-600 s; varsayılan: home 90, objects 30, above 120, demo_scenario 300). **Aynı anda tek iş.**
+
+| Durum | Anlam |
+|---|---|
+| `202` | iş başladı; gövde iş belgesi, `Location: /api/jobs/<id>` |
+| `400` | geçersiz komut/gövde/`timeout_s` (iş açılmaz) |
+| `409` | başka iş çalışıyor: `{"error", "job_id"}` |
+| `423` | acil dur kilitli |
+| `403`/`411`/`413`/`415` | `/api/command` ile aynı |
+
+İş belgesi (`GET /api/jobs/<id>`; bilinmeyen kimlik `404`):
+
+| Alan | Anlam |
+|---|---|
+| `id`, `command` | `j7`, normalleştirilmiş komut |
+| `state` | `running` · `done` (komut başardı) · `failed` (robot yapamadı, iç hata ya da zaman aşımı; neden `error`) · `cancelled` (`cancelled_by`: `user` ya da `estop`) |
+| `created_at`, `finished_at`, `elapsed_s`, `timeout_s` | zamanlar (epoch s) ve süreler |
+| `cancel_requested`, `cancelled_by`, `timed_out` | iptal/zaman aşımı bilgisi |
+| `progress` | `step`/`steps` (senaryonun `[k/n]` anlatımından; diğer komutlarda `null`), `say` (son anlatım), `log` (komutun canlı anlatımı) |
+| `result` | iş bitince `{ok, message, data, duration_s}` (`/api/command` yanıtıyla aynı `data`); öncesinde `null` |
+| `error` | `failed`/`cancelled` için Türkçe neden, aksi halde `null` |
+
+**İptal:** `POST /api/jobs/<id>/cancel` (gövde `{}`): çalışan MoveIt hedefi iptal edilir (kol durur),
+senaryo bir sonraki adıma geçmez, iş `cancelled` olur; yanıt işin bitmesini ≤ 3 s bekler (`200`,
+`{"ok", "job"}`). **Kilitlemez**: `state` `idle` olur ve yeni iş hemen kabul edilir (acil durdaki
+`reset` gerekmez). Bitmiş iş için `409`, bilinmeyen iş `404`. **Zaman aşımı** aynı yolu kullanır ve
+işi `failed` (`timed_out: true`) yapar. **Acil dur** (`/api/stop`) çalışan işi `cancelled` +
+`cancelled_by: "estop"` ile bitirir. Dürüst sınır: `cancel` ve zaman aşımı kolun durduğunu *hız
+doğrulamasıyla* kanıtlamaz (bunu yalnızca `/api/stop` yapar); `moving` alanını izle.
+
+### Güvenli çalışma kutusu ve hız tavanı (`robot_moveit_config/config/safe_zone.yaml`)
+`Skills`, **hedef noktası** kutunun dışında kalan her kartezyen hareketi (`go_to_position`,
+`go_above`) açık hatayla (`code_name: SAFE_ZONE`, "hedef güvenli çalışma kutusunun dışında (z=...,
+izin verilen aralık [...]), robot hareket etmedi") reddeder; robot oynamaz. Yalnızca hedef denetlenir,
+yol MoveIt'in çarpışma denetimindedir; adlandırılmış eklem pozları (`home`) denetlenmez. Varsayılan
+kutu (m, world): x [0.05, 0.75], y [-0.5, 0.5], z [0.02, 0.70]; `max_velocity_scale` (0.5) MoveIt'e
+istenebilecek hız/ivme ölçeğinin üst sınırıdır. Dosya eksik/bozuksa `web_view` ve `cli_moveit`
+**başlamaz** ("sınırsız" varsayılmaz). Yol `ROBOT_SAFETY` ortam değişkeniyle değiştirilir. Geçerli
+değerler `/api/state` → `robot.safety`'de görünür.
+
+### Durum kodları (`/api/command` ve `/api/jobs`; v1)
 `200` yapıldı · `400` geçersiz/beyaz liste dışı · `403` kapalı/yabancı Origin-Host · `405` yöntem ·
 `409` başka komut çalışıyor · `411/413` gövde uzunluğu · `415` içerik türü · `422` geçerli komut, robot
 yapamadı (neden `message`'da) · **`423` acil dur kilitli: komut hiç çalışmadı, gövde

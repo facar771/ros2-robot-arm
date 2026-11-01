@@ -12,6 +12,9 @@ it can be tested without ROS:
 
     POST /api/command     {"command": "above green 0.25"}: white-listed robot commands (see
                           :mod:`robot_core.webcmd`); only with a CommandRunner, otherwise 403
+    POST /api/jobs        {"command": "...", "timeout_s": 60}: start a command, answers 202 at once
+    GET  /api/jobs[/<id>] job documents (running|done|failed|cancelled, progress, result)
+    POST /api/jobs/<id>/cancel   stop the running job (no latch; the e-stop is /api/stop)
     POST /api/stop        EMERGENCY STOP: cancel the running goal, latch "estopped", verify from the
                           joint velocities that the arm stopped (never blocked by a running command)
     POST /api/reset       clear the latch (only while the arm stands still)
@@ -35,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -45,6 +49,7 @@ from urllib.parse import urlsplit
 
 import numpy as np
 
+from robot_core.jobs import BadTimeout, JobBusy, JobManager, JobNotFound, check_timeout
 from robot_core.perception import Intrinsics, Transform
 from robot_core.supervisor import API_VERSION, MOVING_SPEED, EStopped, Supervisor, max_speed
 from robot_core.viz import OverlayItem, box_to_pixels, depth_to_rgb, draw_overlay, encode_png
@@ -117,7 +122,7 @@ def robot_document(snap: Snapshot, supervisor: Optional[Supervisor], mode: str,
             'state': 'busy' if status.get('running') else 'idle',
             'current_job': status.get('job'), 'last_error': status.get('last_error'),
             'moving': None if speed is None else speed > MOVING_SPEED,
-            'estop': {'tripped': False, 'reason': None, 'since': None}}
+            'estop': {'tripped': False, 'reason': None, 'since': None}, 'safety': None}
 
 
 def build_state(snap: Snapshot, runner: Optional[CommandRunner] = None,
@@ -201,7 +206,10 @@ _RESPONDED = object()      # sentinel: the handler already answered the request
 COMMAND_PATH = '/api/command'
 STOP_PATH = '/api/stop'
 RESET_PATH = '/api/reset'
-POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH)
+JOBS_PATH = '/api/jobs'
+POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH)
+_JOB_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})$')
+_CANCEL_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})/cancel$')
 MAX_BODY = 512
 MAX_REASON = 64
 _CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; "
@@ -215,10 +223,13 @@ class WebView:
                  depth_range: Tuple[float, float] = (0.5, 1.7),
                  extra_allowed_hosts: Sequence[str] = (),
                  commands: Optional[CommandRunner] = None,
-                 supervisor: Optional[Supervisor] = None, mode: str = 'gazebo'):
+                 supervisor: Optional[Supervisor] = None, mode: str = 'gazebo',
+                 jobs: Optional[JobManager] = None):
         self.source = source
         self.commands = commands
         self.supervisor = supervisor
+        self.jobs = jobs or (JobManager(commands, estop=supervisor.estop if supervisor else None)
+                             if commands is not None else None)
         self.mode = mode
         self.depth_range = depth_range
         self.allowed_hosts = LOOPBACK_HOSTS | {h.lower() for h in extra_allowed_hosts}
@@ -300,8 +311,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, 'application/json', b'{"error": "host izinli degil"}', head_only)
             return
         path = urlsplit(self.path).path
-        if path in POST_PATHS:
+        if path in (COMMAND_PATH, STOP_PATH, RESET_PATH):
             self._not_allowed()               # POST only
+            return
+        if path == JOBS_PATH or _JOB_PATH.match(path):
+            self._get_jobs(path, head_only)
+            return
+        if _CANCEL_PATH.match(path):
+            self._not_allowed()
             return
         try:
             status, ctype, body = self.server.view.respond(path)
@@ -309,6 +326,18 @@ class _Handler(BaseHTTPRequestHandler):
             log.exception('istek islenemedi: %s', self.path)
             status, ctype, body = 500, 'application/json', b'{"error": "sunucu hatasi"}'
         self._send(status, ctype, body, head_only)
+
+    def _get_jobs(self, path: str, head_only: bool) -> None:
+        jobs = self.server.view.jobs
+        if jobs is None:
+            self._send(403, 'application/json', b'{"error": "komut ucu kapali"}', head_only)
+            return
+        if path == JOBS_PATH:
+            status, payload = 200, {'jobs': jobs.recent()}
+        else:
+            doc = jobs.get(_JOB_PATH.match(path).group(1))
+            status, payload = (200, doc) if doc is not None else (404, {'error': 'iş bulunamadı'})
+        self._send(status, 'application/json', json.dumps(payload).encode(), head_only)
 
     def do_GET(self) -> None:    # noqa: N802
         self._get(head_only=False)
@@ -326,8 +355,11 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(status, 'application/json', json.dumps(payload).encode(), extra=headers)
 
     def _not_allowed(self) -> None:
-        if urlsplit(self.path).path in POST_PATHS:
+        path = urlsplit(self.path).path
+        if path in (COMMAND_PATH, STOP_PATH, RESET_PATH) or _CANCEL_PATH.match(path):
             allow, why = 'POST', 'bu uç noktaya yalnızca POST yapılır'
+        elif path == JOBS_PATH:
+            allow, why = 'GET, HEAD, POST', 'GET (liste) ya da POST (iş başlat)'
         else:
             allow, why = 'GET, HEAD', 'salt okunur: yalnızca GET/HEAD'
         self._json(405, {'error': why}, close=True, extra={'Allow': allow})
@@ -392,7 +424,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:    # noqa: N802
         path = urlsplit(self.path).path
-        if path not in POST_PATHS:
+        cancel = _CANCEL_PATH.match(path)
+        if path not in POST_PATHS and not cancel:
             self._not_allowed()
             return
         runner = self._guard_post()
@@ -402,6 +435,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_stop()
         elif path == RESET_PATH:
             self._post_reset(runner)
+        elif path == JOBS_PATH:
+            self._post_job(runner)
+        elif cancel:
+            self._post_cancel(runner, cancel.group(1))
         else:
             self._post_command(runner)
 
@@ -466,18 +503,70 @@ class _Handler(BaseHTTPRequestHandler):
             runner.reject(body['command'], str(exc))
             self._json(400, {'error': str(exc), 'allowed': runner.allowed})
             return
+        jobs = self.server.view.jobs
         try:
-            outcome = runner.run(command)
+            outcome = jobs.run_sync(command) if jobs is not None else runner.run(command)
         except EStopped as exc:
             runner.reject(command.line, 'acil dur etkin')
             self._json(423, {'error': str(exc), 'state': 'estopped'})
             return
         except Busy as exc:
-            self._json(409, {'error': str(exc)})
+            self._json(409, {'error': str(exc), **({'job_id': exc.job_id}
+                                                    if isinstance(exc, JobBusy) else {})})
             return
         status = 500 if outcome.internal_error else (200 if outcome.ok else 422)
         self._json(status, {'ok': outcome.ok, 'command': command.line, 'message': outcome.message,
-                            'data': outcome.data, 'duration_s': outcome.duration_s})
+                            'data': outcome.data, 'duration_s': outcome.duration_s,
+                            'deprecated': 'POST /api/jobs kullan (bloklamaz, iptal edilebilir)'},
+                   extra={'Deprecation': 'true'})
+
+    def _post_job(self, runner: CommandRunner) -> None:
+        body = self._read_json_body(runner)
+        if body is _RESPONDED:
+            return
+        if not isinstance(body, dict) or 'command' not in body or set(body) - {'command',
+                                                                               'timeout_s'}:
+            runner.reject('', "gövde {'command': ..., 'timeout_s': ...(isteğe bağlı)} olmalı")
+            self._json(400, {'error': 'gövde {"command": "...", "timeout_s": 60} olmalı '
+                                      '(timeout_s isteğe bağlı)', 'allowed': runner.allowed})
+            return
+        try:
+            command = parse_command(body['command'])
+            timeout = check_timeout(body['timeout_s']) if 'timeout_s' in body else None
+        except (CommandError, BadTimeout) as exc:
+            runner.reject(body['command'], str(exc))
+            self._json(400, {'error': str(exc), 'allowed': runner.allowed})
+            return
+        try:
+            job = self.server.view.jobs.submit(command, timeout)
+        except EStopped as exc:
+            runner.reject(command.line, 'acil dur etkin')
+            self._json(423, {'error': str(exc), 'state': 'estopped'})
+            return
+        except JobBusy as exc:
+            self._json(409, {'error': str(exc), 'job_id': exc.job_id})
+            return
+        doc = self.server.view.jobs.get(job.id)
+        self._json(202, doc, extra={'Location': f'{JOBS_PATH}/{job.id}'})
+
+    def _post_cancel(self, runner: CommandRunner, job_id: str) -> None:
+        body = self._read_json_body(runner)
+        if body is _RESPONDED:
+            return
+        if body != {}:
+            self._json(400, {'error': 'gövde boş bir JSON nesnesi {} olmalı'})
+            return
+        jobs = self.server.view.jobs
+        try:
+            _job, was_running = jobs.cancel(job_id)
+        except JobNotFound:
+            self._json(404, {'error': 'iş bulunamadı'})
+            return
+        doc = jobs.get(job_id)
+        if not was_running:
+            self._json(409, {'error': 'iş zaten bitti', 'job': doc})
+            return
+        self._json(200, {'ok': True, 'job': doc})
 
     def log_message(self, format: str, *args: Any) -> None:    # noqa: A002
         log.debug('%s - %s', self.address_string(), format % args)

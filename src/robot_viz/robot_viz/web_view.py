@@ -29,10 +29,11 @@ from robot_controller.adapters import (
     PlanningSceneReader,
     TfToolPosition,
 )
-from robot_controller.config_loader import load_robot_config
+from robot_controller.config_loader import load_robot_config, load_safety_config
+from robot_core.jobs import JobManager
 from robot_core.perception import Intrinsics, Transform
 from robot_core.skills import Skills
-from robot_core.supervisor import EStop, GuardedMotion, Supervisor
+from robot_core.supervisor import CancelFlag, EStop, GuardedMotion, Supervisor
 from robot_core.webcmd import CommandRunner
 from robot_core.webview import SceneObject, Snapshot, WebView
 from robot_perception.images import depth_array, rgb_array
@@ -90,16 +91,22 @@ class WebViewNode(Node):
         self.events = None
         self.runner = None
         self.supervisor = None
+        self.jobs = None
         if bool(self.get_parameter('commands').value):
             self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
-            estop = EStop()
-            motion = MoveItMotion(self, config, estop=estop)
-            guarded = GuardedMotion(motion, estop)           # refuses new goals while latched
-            skills = Skills(config, guarded, guarded, PlanningSceneReader(self), self.events)
+            safety = load_safety_config()                    # missing/bad file: refuse to start
+            estop, cancel = EStop(), CancelFlag()
+            motion = MoveItMotion(self, config, estop=estop, cancel=cancel,
+                                  max_velocity_scale=safety.max_velocity_scale)
+            guarded = GuardedMotion(motion, estop, cancel)   # no new goals while latched/cancelling
+            skills = Skills(config, guarded, guarded, PlanningSceneReader(self), self.events,
+                            zone=safety.zone)
             self.runner = CommandRunner(
                 skills, TfToolPosition(self._tf, self._tip, self._world), self.events, estop=estop)
+            self.jobs = JobManager(self.runner, cancel, estop)
             self.supervisor = Supervisor(estop, self._joints, self._joint_names, stop_port=motion,
-                                         runner=self.runner, mode=self.mode, events=self.events)
+                                         runner=self.runner, mode=self.mode, events=self.events,
+                                         safety=safety.as_dict(motion.velocity_scale))
 
     @property
     def depth_range(self) -> Tuple[float, float]:
@@ -181,7 +188,8 @@ def main(args=None):
     port = int(node.get_parameter('port').value)
     try:
         view = WebView(node, host=host, port=port, depth_range=node.depth_range,
-                       commands=node.runner, supervisor=node.supervisor, mode=node.mode)
+                       commands=node.runner, supervisor=node.supervisor, mode=node.mode,
+                       jobs=node.jobs)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()

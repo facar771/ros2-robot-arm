@@ -168,15 +168,20 @@ class CommandRunner:
         with self._lock:
             self._log.append(text)
 
-    def run(self, command: Command) -> CommandOutcome:
+    def new_job_id(self) -> str:
+        with self._lock:
+            self._job_count += 1
+            return f'j{self._job_count}'
+
+    def run(self, command: Command, job_id: Optional[str] = None) -> CommandOutcome:
         if self._estop is not None and self._estop.is_set:
             raise EStopped(ESTOP_MESSAGE)
         if not self._gate.acquire(blocking=False):
             raise Busy(f"başka bir komut çalışıyor: {self.status()['name']}")
         started = self._clock()
+        job_id = job_id or self.new_job_id()
         with self._lock:
-            self._job_count += 1
-            self._running = {'id': f'j{self._job_count}', 'command': command.line,
+            self._running = {'id': job_id, 'command': command.line,
                              'started_at': self._wall(), 'started_mono': started}
             self._log.clear()
         self._say(f'> {command.line}')

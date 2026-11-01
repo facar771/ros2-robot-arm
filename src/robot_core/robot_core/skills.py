@@ -27,9 +27,12 @@ from robot_core.models import (
     SkillResult,
 )
 from robot_core.ports import EventSink, MotionPort, NullEventSink, ObjectsPort, PosePort
+from robot_core.safezone import SafeZone
 
 # Tool pointing straight down: link z axis = world -z (a half turn about y), quaternion (x,y,z,w).
 TOOL_DOWN: Tuple[float, float, float, float] = (0.0, 1.0, 0.0, 0.0)
+# Failures that say nothing about reachability: no "try another height" hint for them.
+NO_REACH_HINT = ('', 'SAFE_ZONE', 'PREEMPTED', 'TIMED_OUT')
 SKILLS = ('list_objects', 'go_to_named_pose', 'go_to_position', 'go_above')
 
 
@@ -37,9 +40,10 @@ class Skills:
     def __init__(self, config: RobotConfig, motion: MotionPort, poses: PosePort,
                  objects: ObjectsPort, events: Optional[EventSink] = None, *,
                  world_frame: str = 'world', max_height: float = 0.5,
-                 workspace_radius: float = 1.5):
+                 workspace_radius: float = 1.5, zone: Optional[SafeZone] = None):
         """``max_height``: largest accepted clearance for go_above. ``workspace_radius``: goals
-        farther than this from the base (m) are refused before asking MoveIt."""
+        farther than this from the base (m) are refused before asking MoveIt. ``zone``: safe
+        working box; a tool goal whose target is outside it is refused and the robot stays put."""
         self._config = config
         self._motion = motion
         self._poses = poses
@@ -48,6 +52,7 @@ class Skills:
         self._frame = world_frame
         self._max_height = max_height
         self._radius = workspace_radius
+        self._zone = zone
 
     # ---- skills ---------------------------------------------------------------------------
     def list_objects(self) -> List[ObjectInfo]:
@@ -103,9 +108,13 @@ class Skills:
         z = obj.top_z + float(height)
         result = self._pose_move(skill, args, x, y, z)
         data = dict(result.data, object=obj.name, target=[x, y, z])
-        message = (f'{obj.name} üzerinde {height:.3f} m yükseklikte' if result.ok else
-                   result.message + ' Alet aşağı bakarken ulaşılabilir yükseklik aralığı dardır '
-                                     '(çok alçak da çok yüksek de olmaz): 0.35 dene.')
+        if result.ok:
+            message = f'{obj.name} üzerinde {height:.3f} m yükseklikte'
+        elif result.code_name not in NO_REACH_HINT:                       # MoveIt said no
+            message = (result.message + ' Alet aşağı bakarken ulaşılabilir yükseklik aralığı '
+                                        'dardır (çok alçak da çok yüksek de olmaz): 0.35 dene.')
+        else:
+            message = result.message
         result = SkillResult(result.ok, skill, message, result.code_name, data)
         return self._done(skill, args, result)
 
@@ -151,6 +160,10 @@ class Skills:
             return SkillResult(False, skill, (
                 f'hedef ({x:.2f}, {y:.2f}, {z:.2f}) tabandan {distance:.2f} m uzakta; erişim '
                 f'alanı dışında (en fazla {self._radius:.2f} m), robot hareket etmedi'))
+        if self._zone is not None:
+            outside = self._zone.check((x, y, z))
+            if outside:
+                return SkillResult(False, skill, outside, 'SAFE_ZONE', {'target': [x, y, z]})
         target = PoseTarget(x, y, z, self._frame, TOOL_DOWN)
         try:
             result = self._poses.move_to_pose(target)

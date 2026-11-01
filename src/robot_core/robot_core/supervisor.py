@@ -84,21 +84,46 @@ class EStop:
                     'since': None if self._since is None else round(self._since, 3)}
 
 
-class GuardedMotion:
-    """MotionPort + PosePort that refuse new goals while the e-stop is latched."""
+class CancelFlag:
+    """Set while the running job is being cancelled (job cancel, or its timeout). Unlike the
+    e-stop it does not lock anything: the job manager clears it when the job has ended."""
 
-    def __init__(self, motion: Any, estop: EStop):
-        self._motion, self._estop = motion, estop
+    def __init__(self):
+        self._event = threading.Event()
+
+    def set(self) -> None:
+        self._event.set()
+
+    def clear(self) -> None:
+        self._event.clear()
+
+    @property
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+
+CANCEL_MESSAGE = 'iş iptal ediliyor: yeni hareket başlatılmadı'
+
+
+class GuardedMotion:
+    """MotionPort + PosePort that refuse new goals while the e-stop is latched or the running job
+    is being cancelled (so a scenario ends at its next step)."""
+
+    def __init__(self, motion: Any, estop: EStop, cancel: Optional[CancelFlag] = None):
+        self._motion, self._estop, self._cancel = motion, estop, cancel
+
+    def _refusal(self) -> Optional[MotionResult]:
+        if self._estop.is_set:
+            return MotionResult(False, message=ESTOP_MESSAGE)
+        if self._cancel is not None and self._cancel.is_set:
+            return MotionResult(False, message=CANCEL_MESSAGE)
+        return None
 
     def move_to(self, target: JointTarget) -> MotionResult:
-        if self._estop.is_set:
-            return MotionResult(False, message=ESTOP_MESSAGE)
-        return self._motion.move_to(target)
+        return self._refusal() or self._motion.move_to(target)
 
     def move_to_pose(self, target: PoseTarget) -> MotionResult:
-        if self._estop.is_set:
-            return MotionResult(False, message=ESTOP_MESSAGE)
-        return self._motion.move_to_pose(target)
+        return self._refusal() or self._motion.move_to_pose(target)
 
 
 def max_speed(velocities: Optional[Dict[str, float]], names: Sequence[str]) -> Optional[float]:
@@ -139,7 +164,8 @@ class Supervisor:
 
     def __init__(self, estop: EStop, velocities: VelocityPort, joint_names: Sequence[str],
                  stop_port: Optional[StopPort] = None, runner: Any = None, mode: str = 'gazebo',
-                 events: Optional[EventSink] = None, *, clock: Callable[[], float] = time.monotonic,
+                 events: Optional[EventSink] = None, safety: Optional[Dict[str, Any]] = None, *,
+                 clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, moving_speed: float = MOVING_SPEED,
                  quiet_s: float = QUIET_S, stop_timeout_s: float = STOP_TIMEOUT_S):
         if mode not in MODES:
@@ -149,6 +175,7 @@ class Supervisor:
         self._velocities, self._names = velocities, tuple(joint_names)
         self._stop_port, self._runner = stop_port, runner
         self._events = events or NullEventSink()
+        self._safety = safety
         self._clock, self._sleep = clock, sleep
         self._moving_speed, self._quiet_s = moving_speed, quiet_s
         self._stop_timeout_s = stop_timeout_s
@@ -176,7 +203,7 @@ class Supervisor:
         status = self._runner.status() if self._runner is not None else {}
         return {'api_version': API_VERSION, 'mode': self.mode, 'state': self.state(),
                 'current_job': status.get('job'), 'last_error': status.get('last_error'),
-                'moving': self.moving(), 'estop': self.estop.info()}
+                'moving': self.moving(), 'estop': self.estop.info(), 'safety': self._safety}
 
     # ---- stop / reset -----------------------------------------------------------------------
     def _emit(self, kind: str, payload: Dict[str, Any]) -> None:

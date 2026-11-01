@@ -151,6 +151,19 @@ curl -s localhost:8080/api/state | python3 -c 'import json,sys; print(json.load(
 curl -s localhost:8080/api/reset -H 'Content-Type: application/json' -d '{}'   # kilidi aç
 ```
 Otomatik doğrulama (kolun hareket ortasında durması ölçülür): `docker compose run --rm selftest-stop`.
+
+**Asenkron işler** (Hub/otomasyon için; `/api/command` kullanımdan kalktı): `POST /api/jobs` hemen `202`
+döner, `GET /api/jobs/<id>` ilerlemeyi ve sonucu verir, `POST /api/jobs/<id>/cancel` kolu durdurur
+(kilitlemeden). **Güvenli çalışma kutusu** (`robot_moveit_config/config/safe_zone.yaml`): dışındaki kartezyen
+hedefler açık hatayla reddedilir, robot oynamaz.
+
+```bash
+# WSL'de (komutlar açık simülasyon çalışırken)
+curl -s localhost:8080/api/jobs -H 'Content-Type: application/json' -d '{"command": "demo_scenario"}'
+curl -s localhost:8080/api/jobs/j1 | python3 -m json.tool
+curl -s localhost:8080/api/jobs/j1/cancel -H 'Content-Type: application/json' -d '{}'
+```
+Otomatik doğrulama: `docker compose run --rm selftest-jobs`.
 Docker'sız: `ros2 launch robot_viz web_view.launch.py commands:=true`. Otomatik test (WSL'de):
 `docker compose run --rm selftest-cmd` (reddedilmesi gerekenler, TF ile ölçülen hareketler, canlı
 anlatım, meşgulken `409`).

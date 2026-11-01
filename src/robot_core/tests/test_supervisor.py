@@ -166,7 +166,7 @@ def test_robot_document_always_has_the_same_keys():
     sup, *_ = make(mode='mock')
     doc = sup.document()
     assert set(doc) == {'api_version', 'mode', 'state', 'current_job', 'last_error', 'moving',
-                        'estop'}
+                        'estop', 'safety'}
     assert doc['api_version'] == API_VERSION == 1 and doc['mode'] == 'mock'
     assert doc['state'] == 'idle' and doc['current_job'] is None and doc['last_error'] is None
 

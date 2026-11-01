@@ -23,6 +23,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 input[type=number] { width: 5rem; background: #14171c; color: #e6e8eb; border: 1px solid #2c333c; border-radius: 4px; padding: .2rem; }
 pre.mono { white-space: pre-wrap; max-height: 16rem; overflow: auto; background: #14171c; padding: .5rem; border-radius: 6px; margin: 0; min-height: 3rem; }
 .msg.err { color: #e08080; }
+button.cancel { background: #8a5a1c; }
+button.cancel:hover:not(:disabled) { background: #a8721f; }
 #estop-bar { display: flex; flex-wrap: wrap; gap: .8rem; align-items: center; padding: .6rem 1rem; background: #231a1a; }
 #estop-bar[hidden] { display: none; }
 button.estop { background: #c0262d; font-weight: 700; font-size: 1.1rem; padding: .6rem 1.6rem; letter-spacing: .05em; }

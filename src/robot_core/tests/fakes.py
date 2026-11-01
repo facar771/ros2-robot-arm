@@ -161,3 +161,31 @@ class FakeArm:
             raise self.raises
         if self.stop_calls >= self.stops_needed and self.speed is not None:
             self.speed = 0.0
+
+
+class CancelAwareSkills(FakeSkills):
+    """go_above runs until ``release`` is set; it ends early (failing) when the cancel flag or the
+    e-stop is set, like a motion adapter that cancels the running MoveIt goal."""
+
+    def __init__(self, cancel=None, estop=None, steps=500):
+        super().__init__()
+        self.cancel, self.estop = cancel, estop
+        self.release = None
+        self.steps = steps
+
+    def go_above(self, object_name, height=0.10):
+        import time as _time
+
+        from robot_core.models import SkillResult
+        self.calls.append(('go_above', object_name, height))
+        if self.entered is not None:
+            self.entered.set()
+        for _ in range(self.steps):
+            if self.release is not None and self.release.is_set():
+                return SkillResult(True, 'go_above', 'hedefe ulaşıldı', 'SUCCESS',
+                                   {'target': [0.4, -0.1, 0.35]})
+            if (self.cancel is not None and self.cancel.is_set) or \
+                    (self.estop is not None and self.estop.is_set):
+                return SkillResult(False, 'go_above', 'hareket iptal edildi', 'PREEMPTED')
+            _time.sleep(0.01)
+        return SkillResult(False, 'go_above', 'bitmedi', 'TIMED_OUT')

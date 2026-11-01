@@ -13,7 +13,7 @@ from robot_controller.adapters import (
     PlanningSceneReader,
     TfToolPosition,
 )
-from robot_controller.config_loader import load_robot_config
+from robot_controller.config_loader import load_robot_config, load_safety_config
 from robot_core import CommandInterpreter
 from robot_data import close_sink, event_sink_from_env
 
@@ -24,9 +24,10 @@ def main(args=None):
     config = load_robot_config()
     state = JointStateCache(node)
     scene = PlanningSceneAdapter(node)
-    motion = MoveItMotion(node, config)
+    safety = load_safety_config()
+    motion = MoveItMotion(node, config, max_velocity_scale=safety.max_velocity_scale)
     events = event_sink_from_env('cli_moveit')    # ROBOT_DB_URL yoksa: kayıt yok
-    skills = Skills(config, motion, motion, PlanningSceneReader(node), events)
+    skills = Skills(config, motion, motion, PlanningSceneReader(node), events, zone=safety.zone)
     buffer = Buffer()
     TransformListener(buffer, node)
     tool = TfToolPosition(buffer, config.tip_link)

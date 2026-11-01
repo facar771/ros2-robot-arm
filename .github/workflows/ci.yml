@@ -86,6 +86,8 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-cmd
       - name: Selftest - emergency stop (arm measured to stop mid-motion, 423 while latched, reset rules)
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-stop
+      - name: Selftest - async jobs (202, progress, cancel / timeout / e-stop mid-motion, safety limits)
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-jobs
       - name: Data layer - selftest events end up in SQLite
         run: >-
           docker run --rm -e ROBOT_DB_URL=sqlite:////tmp/robot.db ros2-robot-arm:ci

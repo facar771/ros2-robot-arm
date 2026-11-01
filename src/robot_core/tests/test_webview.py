@@ -92,9 +92,9 @@ def test_index_and_static_assets(view):
 
 def test_page_posts_only_to_the_robot_api_endpoints(view):
     js = request(view, path='/app.js')[2].decode()
-    assert js.count("method: 'POST'") == 2           # sendCommand + the stop/reset helper
-    assert js.count("'/api/command'") == 1 and js.count("'/api/stop'") == 1
-    assert js.count("'/api/reset'") == 1
+    assert js.count("method: 'POST'") == 3       # start a job, cancel it, the stop/reset helper
+    assert js.count("'/api/jobs'") == 1 and js.count("'/api/stop'") == 1
+    assert js.count("'/api/reset'") == 1 and '/api/command' not in js   # deprecated door unused
     assert 'PUT' not in js and 'DELETE' not in js
 
 

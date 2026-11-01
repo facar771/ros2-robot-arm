@@ -37,7 +37,7 @@ from robot_controller.adapters import (
     MoveItMotion,
     PlanningSceneReader,
 )
-from robot_controller.config_loader import load_robot_config
+from robot_controller.config_loader import load_robot_config, load_safety_config
 
 WAIT_S = 90.0
 # Clearance above the object top (m) and whether this arm must reach it (see module docstring).
@@ -129,14 +129,26 @@ def run(config, ws, skills: Skills, state: JointStateCache, buffer: Buffer) -> l
            not result.ok and 'erişim alanı dışında' in result.message and moved < 0.01,
            f'(-> {result.message}; eklem değişimi {moved:.4f} rad)')
 
-    # Inside the nominal radius but beyond the arm: MoveIt itself must say no, and clearly.
-    result = skills.go_to_position(1.25, 0.0, 0.3)
+    # Inside the nominal radius but outside the safe working box: refused by the box, explicitly.
+    for point in ((1.25, 0.0, 0.3), (0.4, 0.8, 0.3), (0.4, 0.0, 0.01), (0.4, 0.0, 0.9)):
+        result = skills.go_to_position(*point)
+        time.sleep(0.5)
+        after = state.joint_positions()
+        moved = max(abs(after[j] - before[j]) for j in config.joint_names)
+        record(f'güvenli kutu dışı hedef {point} açık hatayla reddedildi, robot hareket etmedi',
+               not result.ok and result.code_name == 'SAFE_ZONE'
+               and 'güvenli çalışma kutusunun dışında' in result.message and moved < 0.01,
+               f'(-> {result.message}; eklem değişimi {moved:.4f} rad)')
+
+    # Inside the box but unreachable with the tool pointing down: MoveIt itself says no, clearly.
+    result = skills.go_above('red', 0.25)
     time.sleep(1.0)
     after = state.joint_positions()
     moved = max(abs(after[j] - before[j]) for j in config.joint_names)
-    record('kola göre uzak ama yarıçap içindeki hedefi MoveIt reddetti, mesaj açık',
-           not result.ok and bool(result.code_name) and 'Robot hareket etmedi' in result.message
-           and moved < 0.01, f'(-> {result.message}; eklem değişimi {moved:.4f} rad)')
+    record('kutu içinde ama alet aşağı bakarak ulaşılamayan hedefi MoveIt reddetti, mesaj açık',
+           not result.ok and bool(result.code_name) and result.code_name != 'SAFE_ZONE'
+           and 'Robot hareket etmedi' in result.message and moved < 0.01,
+           f'(-> {result.message}; eklem değişimi {moved:.4f} rad)')
 
     result = skills.go_above('mor_inek')
     record('bilinmeyen nesne: bilinenleri sayan hata, hareket yok',
@@ -151,8 +163,9 @@ def main(args=None):
     config = load_robot_config()
     ws = load_workspace(f"{get_package_share_directory('robot_sim')}/worlds/workspace.sdf")
     state = JointStateCache(node)
-    motion = MoveItMotion(node, config)
-    skills = Skills(config, motion, motion, PlanningSceneReader(node))
+    safety = load_safety_config()
+    motion = MoveItMotion(node, config, max_velocity_scale=safety.max_velocity_scale)
+    skills = Skills(config, motion, motion, PlanningSceneReader(node), zone=safety.zone)
     buffer = Buffer()
     TransformListener(buffer, node)
     spinner = BackgroundSpinner(node)

@@ -28,6 +28,7 @@ from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from robot_core.models import ObjectInfo, PoseTarget
+from robot_core.safezone import effective_velocity_scale
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import String
@@ -173,15 +174,17 @@ class MoveItMotion:
     """Implements MotionPort (joint goals) and PosePort (Cartesian goals) through move_group."""
 
     def __init__(self, node: Node, config: RobotConfig, velocity_scale: float = 0.5,
-                 execution_timeout: float = 60.0, discovery_timeout: float = 15.0, estop=None):
+                 execution_timeout: float = 60.0, discovery_timeout: float = 15.0, estop=None,
+                 cancel=None, max_velocity_scale: Optional[float] = None):
         self._node = node
         self._estop = estop                    # robot_core.supervisor.EStop (None: no e-stop)
+        self._cancel = cancel                  # CancelFlag of the running job (None: no jobs)
+        self.velocity_scale = effective_velocity_scale(velocity_scale, max_velocity_scale)
         self._handle_lock = threading.Lock()
         self._handle = None                    # goal handle of the running move_action goal
         self._event_pub = node.create_publisher(String, '/trajectory_execution_event', 10)
         self._discovery_timeout = discovery_timeout
         self._config = config
-        self._velocity_scale = velocity_scale
         self._timeout = execution_timeout
         self._client = ActionClient(node, MoveGroup, 'move_action')
 
@@ -234,8 +237,8 @@ class MoveItMotion:
         goal.request.group_name = self._config.planning_group
         goal.request.allowed_planning_time = 5.0
         goal.request.num_planning_attempts = 10
-        goal.request.max_velocity_scaling_factor = self._velocity_scale
-        goal.request.max_acceleration_scaling_factor = self._velocity_scale
+        goal.request.max_velocity_scaling_factor = self.velocity_scale
+        goal.request.max_acceleration_scaling_factor = self.velocity_scale
         goal.planning_options.plan_only = False
         goal.request.goal_constraints.append(constraints)
 
@@ -258,13 +261,13 @@ class MoveItMotion:
         return MotionResult(code == MoveItErrorCodes.SUCCESS, code, error_name(code))
 
     def _wait_result(self, result_future, handle) -> bool:
-        """Poll for the result; while the e-stop is latched keep cancelling the goal (so a stop
-        that raced the goal's acceptance cannot be lost)."""
+        """Poll for the result; while the e-stop is latched or the job is being cancelled keep
+        cancelling the goal (so a stop that raced the goal's acceptance cannot be lost)."""
         deadline = time.monotonic() + self._timeout
         last_cancel = 0.0
         while not result_future.done():
             now = time.monotonic()
-            if self._estop is not None and self._estop.is_set and now - last_cancel > 0.5:
+            if self._abort_requested() and now - last_cancel > 0.5:
                 handle.cancel_goal_async()
                 self._publish_stop()
                 last_cancel = now
@@ -272,6 +275,10 @@ class MoveItMotion:
                 return False
             time.sleep(0.01)
         return True
+
+    def _abort_requested(self) -> bool:
+        return bool((self._estop is not None and self._estop.is_set)
+                    or (self._cancel is not None and self._cancel.is_set))
 
     def _publish_stop(self) -> None:
         self._event_pub.publish(String(data='stop'))
