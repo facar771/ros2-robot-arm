@@ -104,8 +104,8 @@ class Skills:
         result = self._pose_move(skill, args, x, y, z)
         data = dict(result.data, object=obj.name, target=[x, y, z])
         message = (f'{obj.name} üzerinde {height:.3f} m yükseklikte' if result.ok else
-                   result.message + ' Nesne tabana çok yakın olabilir: daha büyük bir height '
-                                    '(örn. 0.25) dene.')
+                   result.message + ' Alet aşağı bakarken ulaşılabilir yükseklik aralığı dardır '
+                                     '(çok alçak da çok yüksek de olmaz): 0.30-0.40 dene.')
         result = SkillResult(result.ok, skill, message, result.code_name, data)
         return self._done(skill, args, result)
 
