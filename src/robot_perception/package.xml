@@ -9,6 +9,7 @@
 
   <depend>rclpy</depend>
   <depend>robot_core</depend>
+  <depend>robot_data</depend>
   <depend>ament_index_python</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>

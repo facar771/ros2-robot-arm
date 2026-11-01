@@ -21,6 +21,7 @@ from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
+from robot_data import close_sink, event_sink_from_env
 from robot_perception.images import depth_array, rgb_array
 
 TOPIC_OBJECTS = '/perception/objects'
@@ -49,6 +50,7 @@ class PerceptionNode(Node):
         self._last_key = None
         self._last_run = 0.0
         self._last_summary = None
+        self._events = event_sink_from_env('perception')
         self._tf = Buffer()
         self._tf_listener = TransformListener(self._tf, self)
         self._pub = self.create_publisher(MarkerArray, TOPIC_OBJECTS, 10)
@@ -105,6 +107,9 @@ class PerceptionNode(Node):
         summary = sorted((d.label, d.index) for d in detections)
         if summary != self._last_summary:
             self._last_summary = summary
+            self._events.emit('objects_changed', {'objects': [
+                {'label': d.label, 'index': d.index, 'position': list(d.position),
+                 'size': list(d.size), 'pixels': d.pixels} for d in detections]})
             text = ', '.join(f'{d.label}#{d.index} ({d.position[0]:.3f}, {d.position[1]:.3f}, '
                              f'{d.position[2]:.3f})' for d in detections) or 'hiçbir nesne'
             self.get_logger().info(f'görünen nesneler: {text}')
@@ -136,6 +141,7 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        close_sink(node._events)
         node.destroy_node()
         rclpy.try_shutdown()
 

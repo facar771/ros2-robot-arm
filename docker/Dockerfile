@@ -24,9 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-robot-state-publisher \
         ros-${ROS_DISTRO}-xacro \
         ros-${ROS_DISTRO}-rmw-cyclonedds-cpp \
-        python3-pytest python3-yaml python3-numpy \
+        python3-pytest python3-yaml python3-numpy python3-pip \
         libgl1-mesa-dri libegl1 libegl-mesa0 libglx-mesa0 libgles2 libopengl0 \
     && rm -rf /var/lib/apt/lists/*
+# Data layer (robot_data). pip, not apt: Ubuntu's python3-sqlalchemy is 1.4, we need 2.x.
+RUN pip3 install --no-cache-dir --break-system-packages \
+        "sqlalchemy>=2.0" alembic "psycopg[binary]>=3.1"
 WORKDIR /workspace
 
 # ---- ci: build the workspace and bake in the selftest runner -----------------------------------
@@ -49,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-moveit-setup-assistant \
         ros-${ROS_DISTRO}-rviz2 \
         ros-${ROS_DISTRO}-joint-state-publisher-gui \
-        python3-pip git nano \
+        git nano \
     && rm -rf /var/lib/apt/lists/*
 RUN echo ". /opt/ros/${ROS_DISTRO}/setup.bash" >> /root/.bashrc \
     && echo "[ -f /workspace/install/setup.bash ] && . /workspace/install/setup.bash" >> /root/.bashrc

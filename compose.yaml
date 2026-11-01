@@ -1,10 +1,28 @@
+# docker compose up -d db             -> PostgreSQL for runs/events/error reports (localhost:5432)
 # docker compose run --rm dev        -> interactive shell with RViz support (WSLg), repo mounted
 # docker compose run --rm selftest          -> headless end-to-end test, mock hardware (same as CI)
 # docker compose run --rm selftest-gazebo   -> same test on Gazebo physics (same as CI)
 # docker compose run --rm selftest-camera   -> Gazebo + RGB-D camera: motion test + sensor_check
 # docker compose run --rm selftest-perception -> Gazebo + camera + detector: perception_check
 # docker compose run --rm selftest-scene     -> + detections in the MoveIt scene: perception_scene_check
+# docker compose run --rm selftest-db        -> selftest with its events written to PostgreSQL
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: robot
+      POSTGRES_PASSWORD: robot
+      POSTGRES_DB: robot
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U robot -d robot"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
   dev:
     build:
       context: .
@@ -22,10 +40,14 @@ services:
       - PULSE_SERVER=/mnt/wslg/PulseServer
       - QT_QPA_PLATFORM=xcb
       - ROBOT_ROUTES=/workspace/data/routes.json
+      - ROBOT_DB_URL=postgresql://robot:robot@localhost:5432/robot
     volumes:
       - .:/workspace
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /mnt/wslg:/mnt/wslg
+    depends_on:
+      db:
+        condition: service_healthy
 
   selftest:
     build:
@@ -65,3 +87,19 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-scene"]
+
+  selftest-db:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    environment:
+      - ROBOT_DB_URL=postgresql://robot:robot@db:5432/robot
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["bash", "-c", ". /workspace/install/setup.bash && run_selftest mock && python3 -m robot_data summary --min-events 6"]
+
+volumes:
+  pgdata:
