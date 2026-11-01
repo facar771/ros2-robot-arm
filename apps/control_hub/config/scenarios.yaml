@@ -1,0 +1,55 @@
+# Robot senaryoları = arayüzdeki butonlar. Yeni senaryo eklemek bu dosyaya bir blok eklemektir.
+# Adım türleri:  robot: <komut>   (home | objects | above <red|green|blue> [yükseklik_m])
+#                wait: <saniye>   (0-60)
+# Her adımda isteğe bağlı  say:  (adım başında arayüzde gösterilen anlatım).
+scenarios:
+  - id: home
+    label: Eve dön
+    icon: "🏠"
+    color: "#4f8cff"
+    description: Robotu 'home' pozuna götürür.
+    steps:
+      - say: "Robotu home pozuna götürüyorum."
+        robot: home
+
+  - id: above_green
+    label: Yeşil nesne
+    icon: "🟢"
+    color: "#2ea043"
+    description: Aleti yeşil silindirin 25 cm üstüne götürür.
+    steps:
+      - say: "Yeşil silindirin 25 cm üstüne gidiyorum."
+        robot: above green 0.25
+
+  - id: above_red
+    label: Kırmızı nesne
+    icon: "🔴"
+    color: "#f85149"
+    description: Aleti kırmızı kutunun 30 cm üstüne götürür.
+    steps:
+      - say: "Kırmızı kutunun 30 cm üstüne gidiyorum."
+        robot: above red 0.30
+
+  - id: above_blue
+    label: Mavi nesne
+    icon: "🔵"
+    color: "#58a6ff"
+    description: Aleti mavi topun 30 cm üstüne götürür.
+    steps:
+      - say: "Mavi topun 30 cm üstüne gidiyorum."
+        robot: above blue 0.30
+
+  - id: demo_tour
+    label: Demo turu
+    icon: "🎬"
+    color: "#a371f7"
+    description: Eve dön, yeşil, kırmızı, eve dön.
+    steps:
+      - say: "Başlangıç: robotu 'home' pozuna götürüyorum."
+        robot: home
+      - say: "Yeşil silindirin 25 cm üstüne gidiyorum."
+        robot: above green 0.25
+      - say: "Şimdi kırmızı kutunun 30 cm üstüne geçiyorum."
+        robot: above red 0.30
+      - say: "İş bitti: 'home' pozuna dönüyorum."
+        robot: home

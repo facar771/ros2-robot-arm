@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1117">
+  <meta name="color-scheme" content="dark">
+  <title>Robot Kontrol Merkezi</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body data-estop-pos="bottom">
+  <header class="top">
+    <h1 id="title">Robot Kontrol Merkezi</h1>
+    <div class="pills">
+      <span class="pill" id="pill-conn" data-state="connecting">Bağlanıyor…</span>
+      <span class="pill" id="pill-mode" hidden></span>
+      <button class="link" id="btn-logout" hidden>Çıkış</button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <!-- ACİL DUR üst konumdaysa buraya taşınır (ui.config.json: layout.estop.position) -->
+  <div id="estop-top-slot"></div>
+
+  <main id="main" hidden>
+    <div id="sections"></div>
+    <div id="panels"></div>
+  </main>
+
+  <section class="login" id="login" hidden>
+    <form id="login-form" class="card" autocomplete="off">
+      <h2>Giriş</h2>
+      <p class="muted">Bilgisayarda (terminal ya da masaüstü uygulaması) gösterilen PIN'i gir.</p>
+      <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="12"
+             autocomplete="one-time-code" placeholder="PIN" aria-label="PIN" required>
+      <button class="primary" type="submit">Giriş yap</button>
+      <p class="error" id="login-error" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- ACİL DUR: her ekranda sabit; giriş ekranında da görünür (oturumsuz çalışır) -->
+  <div class="estop-bar" id="estop-bar" data-pos="bottom">
+    <button id="btn-estop" class="estop" type="button">
+      <span class="estop-icon" aria-hidden="true">⛔</span>
+      <span id="estop-label">ACİL DUR</span>
+    </button>
+    <button id="btn-reset" class="reset" type="button" hidden>Kilidi aç</button>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

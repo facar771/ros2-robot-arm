@@ -11,6 +11,7 @@
 # docker compose run --rm selftest-cmd      -> browser commands: white list, refusals, demo scenario (cmd_check)
 # docker compose up demo                     -> interactive demo, browser view + buttons at http://localhost:8080
 #                                               (second terminal: ./docker/cli.sh)
+# docker compose up hub-fake                 -> control hub with a FAKE robot (no ROS), http://localhost:8765
 services:
   db:
     image: postgres:16-alpine
@@ -130,6 +131,18 @@ services:
     ports:
       - "127.0.0.1:${VIEW_PORT:-8080}:8080"
     command: ["run_demo"]
+
+  # Control Hub with a fake robot (apps/control_hub). No ROS. Published on all host interfaces ON PURPOSE so a phone
+  # on the same Wi-Fi can reach it (PIN-protected; the PIN is printed in the logs). Set HUB_PIN=123456 to fix it.
+  hub-fake:
+    build:
+      context: apps/control_hub
+    image: control-hub:dev
+    init: true
+    environment:
+      - HUB_PIN=${HUB_PIN:-}
+    ports:
+      - "${HUB_PORT:-8765}:8765"
 
   selftest-db:
     build:
