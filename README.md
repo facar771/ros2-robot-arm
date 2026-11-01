@@ -115,6 +115,59 @@ Güvenlik: konteyner içinde `0.0.0.0`'da dinler ama `compose.yaml` portu yalnı
 `ros2 launch robot_viz web_view.launch.py` (varsayılan `127.0.0.1:8080`). Uç noktalar ve JSON
 şeması: `docs/INTERFACES.md`.
 
+## Görsel çalıştırma: RViz + Gazebo penceresi (Aşama 5b)
+Tarayıcı görünümü (yukarıda) en kolay yoldur. RViz ve Gazebo penceresi WSLg ister ve `dev` kabuğunda
+çalışır (`compose.yaml`: ana makinenin ağını ve WSLg ekranını kullanır).
+
+```bash
+# Terminal 1 — WSL'de
+cd ~/ros2-robot-arm
+docker compose run --rm dev
+```
+```bash
+# Terminal 1'de açılan dev kabuğunda (konteyner içi)
+colcon build --symlink-install && source install/setup.bash
+ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true \
+    perception_scene:=true use_rviz:=true rviz_config:=robot_demo.rviz
+# Gazebo penceresi de istersen sona ekle:  headless:=false
+```
+```bash
+# Terminal 2 — WSL'de (aynı ağı kullanır, Terminal 1'deki düğümleri görür)
+cd ~/ros2-robot-arm
+docker compose run --rm dev
+# açılan kabukta:
+ros2 run robot_controller cli_moveit     # moveit_cli> objects / above green 0.25 / move home
+```
+`rviz_config` varsayılanı `moveit.rviz`'dir (eski davranış); `robot_demo.rviz` ya da mutlak yol
+verilebilir. `robot_demo.rviz` (Fixed Frame `world`) şunları gösterir: **Kamera (RGB)** ve **Kamera
+(derinlik)** panelleri (`/camera/image`, `/camera/depth_image`), **Algılanan nesneler**
+(`/perception/objects`, yarı saydam renkli kutular), **TF** (`world`, `base_link`, `link_6`,
+`camera_link`, `camera_optical_frame`), **MotionPlanning** (robot + planlama sahnesindeki `obj_*`
+engelleri, `Scene Geometry` açık). Kamera panelleri ilk açılışta küçüktür: kenarlarından sürükleyip
+büyüt. `MoveGroup ... /recognize_objects not available` satırı zararsızdır.
+
+**Çalışmazsa şu çıktıları yapıştır:**
+```bash
+# WSL'de (konteyner dışı)
+docker compose version; docker version --format '{{.Server.Version}}'; echo $DISPLAY $WAYLAND_DISPLAY; ls /mnt/wslg
+```
+```powershell
+# PowerShell'de
+wsl --version; wsl --status
+```
+```bash
+# dev kabuğunda (konteyner içi), simülasyon çalışırken
+echo "DISPLAY=$DISPLAY WAYLAND_DISPLAY=$WAYLAND_DISPLAY XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"; ls /mnt/wslg /tmp/.X11-unix
+ros2 topic list | grep -E "camera|perception|monitored_planning_scene"
+timeout 8 ros2 topic hz /camera/image            # ~10 Hz olmalı
+ros2 topic echo /perception/objects --once | head -30
+timeout 5 ros2 run tf2_ros tf2_echo world camera_optical_frame
+```
+Ayrıca Terminal 1'in ilk 60 ve son 40 satırını, RViz'de **Displays** panelinde kırmızı/sarı
+(Error/Warning) görünen ekranın adını ve altındaki mesajı ekle. Pencere hiç açılmıyorsa (dev
+kabuğunda) `ros2 run rviz2 rviz2` ve `LIBGL_ALWAYS_SOFTWARE=1 ros2 launch ... headless:=false ...`
+komutlarını ayrı ayrı dene ve çıktılarını yapıştır.
+
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
 (`motion_result`, `obstacle_added/removed`, `objects_changed`, `selftest_check`...) `runs` / `events` /

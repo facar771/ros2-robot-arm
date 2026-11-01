@@ -3,6 +3,8 @@
     ros2 launch robot_moveit_config gazebo.launch.py                  # headless server (CI default)
     ros2 launch robot_moveit_config gazebo.launch.py headless:=false  # with the Gazebo GUI
     ros2 launch robot_moveit_config gazebo.launch.py use_rviz:=true
+    ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true \\
+        perception_scene:=true use_rviz:=true rviz_config:=robot_demo.rviz   # camera + objects in RViz
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace # objects + RGB-D camera
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace camera_points:=true
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true
@@ -19,6 +21,10 @@ which publishes /perception/objects. perception_scene:=true (needs perception:=t
 robot_controller's perception_scene_sync, which mirrors the detections into MoveIt's planning scene
 as obj_<colour>_<n> collision boxes.
 
+rviz_config:=<name or absolute path> picks the RViz layout (default moveit.rviz = the old behaviour;
+robot_demo.rviz adds the camera images, /perception/objects and TF, Fixed Frame world). It only
+matters with use_rviz:=true.
+
 The robot description is generated with use_gazebo:=true, which swaps mock_components for
 gz_ros2_control and anchors base_link to the world.
 """
@@ -27,15 +33,21 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, RegisterEventHandler
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+    RegisterEventHandler,
+)
 from launch.conditions import IfCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, SetParameter
 from launch_ros.substitutions import FindPackageShare
 from moveit_configs_utils import MoveItConfigsBuilder
 
+from robot_core.rviz_config import resolve_rviz_config
 from robot_core.workspace import load_workspace
 
 
@@ -60,6 +72,9 @@ def generate_launch_description():
         DeclareLaunchArgument('headless', default_value='true',
                               description='true: gz server only (no GUI, no GPU needed)'),
         DeclareLaunchArgument('use_rviz', default_value='false'),
+        DeclareLaunchArgument('rviz_config', default_value='moveit.rviz',
+                              description='RViz layout: file name in robot_moveit_config/config '
+                                          '(moveit.rviz, robot_demo.rviz) or an absolute path'),
         DeclareLaunchArgument('world', default_value='empty',
                               description="'empty' (physics only) or 'workspace' (objects + camera)"),
         DeclareLaunchArgument('camera_points', default_value='false',
@@ -160,11 +175,17 @@ def generate_launch_description():
             'monitor_dynamics': False,
         }]))
 
-    ld.add_action(Node(
-        package='rviz2', executable='rviz2', output='log', condition=IfCondition(use_rviz),
-        arguments=['-d', PathJoinSubstitution(
-            [FindPackageShare('robot_moveit_config'), 'config', 'moveit.rviz'])],
-        parameters=[moveit_config.robot_description, moveit_config.robot_description_semantic,
-                    moveit_config.planning_pipelines, moveit_config.robot_description_kinematics,
-                    moveit_config.joint_limits]))
+    def rviz_node(context):
+        if not IfCondition(use_rviz).evaluate(context):
+            return []
+        layout = resolve_rviz_config(
+            LaunchConfiguration('rviz_config').perform(context),
+            os.path.join(get_package_share_directory('robot_moveit_config'), 'config'))
+        return [Node(
+            package='rviz2', executable='rviz2', output='log', arguments=['-d', str(layout)],
+            parameters=[moveit_config.robot_description, moveit_config.robot_description_semantic,
+                        moveit_config.planning_pipelines, moveit_config.robot_description_kinematics,
+                        moveit_config.joint_limits])]
+
+    ld.add_action(OpaqueFunction(function=rviz_node))
     return ld
