@@ -6,6 +6,8 @@
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace # objects + RGB-D camera
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace camera_points:=true
     ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true
+    ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true \\
+        perception_scene:=true
 
 world:=workspace adds the world from robot_sim, bridges /camera/{image,depth_image,camera_info}
 (and /camera/points with camera_points:=true) and publishes the static TF world -> camera_link
@@ -13,7 +15,9 @@ world:=workspace adds the world from robot_sim, bridges /camera/{image,depth_ima
 (Mesa) when no GPU is present.
 
 perception:=true (with world:=workspace) also starts robot_perception's colour-object detector,
-which publishes /perception/objects.
+which publishes /perception/objects. perception_scene:=true (needs perception:=true) also starts
+robot_controller's perception_scene_sync, which mirrors the detections into MoveIt's planning scene
+as obj_<colour>_<n> collision boxes.
 
 The robot description is generated with use_gazebo:=true, which swaps mock_components for
 gz_ros2_control and anchors base_link to the world.
@@ -46,6 +50,7 @@ def generate_launch_description():
     world = LaunchConfiguration('world')
     camera_points = LaunchConfiguration('camera_points')
     perception = LaunchConfiguration('perception')
+    perception_scene = LaunchConfiguration('perception_scene')
     workspace_world = os.path.join(get_package_share_directory('robot_sim'), 'worlds',
                                    'workspace.sdf')
     camera = load_workspace(workspace_world).camera
@@ -61,6 +66,9 @@ def generate_launch_description():
                               description='also bridge /camera/points (large; off by default)'),
         DeclareLaunchArgument('perception', default_value='false',
                               description='start the colour-object detector (needs world:=workspace)'),
+        DeclareLaunchArgument('perception_scene', default_value='false',
+                              description='mirror detections into the MoveIt planning scene '
+                                          '(needs perception:=true)'),
         # Gazebo runs on simulated time; every node started below must follow /clock.
         SetParameter(name='use_sim_time', value=True),
     ])
@@ -96,6 +104,12 @@ def generate_launch_description():
         package='robot_perception', executable='perception_node', output='screen',
         condition=IfCondition(PythonExpression(
             ["'", world, "' == 'workspace' and '", perception, "' == 'true'"]))))
+
+    ld.add_action(Node(
+        package='robot_controller', executable='perception_scene_sync', output='screen',
+        condition=IfCondition(PythonExpression(
+            ["'", world, "' == 'workspace' and '", perception, "' == 'true' and '",
+             perception_scene, "' == 'true'"]))))
 
     pose = camera.pose
 
