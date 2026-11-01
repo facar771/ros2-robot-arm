@@ -18,9 +18,37 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest ruff pyyaml numpy python-fcl
+      - run: pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic
       - run: ruff check src
       - run: python -m pytest
+
+  data:
+    name: Data layer on PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: robot
+          POSTGRES_PASSWORD: robot
+          POSTGRES_DB: robot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U robot -d robot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest pyyaml numpy "sqlalchemy>=2.0" alembic "psycopg[binary]>=3.1"
+      - name: robot_data tests (SQLite + PostgreSQL)
+        run: python -m pytest src/robot_data/tests
+        env:
+          ROBOT_TEST_PG_URL: postgresql+psycopg://robot:robot@localhost:5432/robot
 
   ros:
     name: Build workspace + headless selftest, mock and Gazebo (Docker)
@@ -48,3 +76,12 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-camera
       - name: Selftest - perception (detected object positions vs. world file)
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-perception
+      - name: Selftest - perception -> planning scene (collision objects from detections)
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-scene
+      - name: Selftest - Cartesian goals and Skills (go_above, explicit errors)
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-skills
+      - name: Data layer - selftest events end up in SQLite
+        run: >-
+          docker run --rm -e ROBOT_DB_URL=sqlite:////tmp/robot.db ros2-robot-arm:ci
+          bash -c '. /workspace/install/setup.bash && run_selftest mock
+          && python3 -m robot_data summary --min-events 6'

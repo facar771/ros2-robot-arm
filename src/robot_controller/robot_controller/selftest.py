@@ -20,6 +20,7 @@ from robot_controller.adapters import (
 )
 from robot_controller.config_loader import load_robot_config
 from robot_core import BoxObstacle, JointTarget
+from robot_data import close_sink, event_sink_from_env
 
 
 def max_error(state, joint_names, target):
@@ -33,11 +34,13 @@ def why(result):
     return result.code_name or result.message or 'bilinmeyen neden'
 
 
-def run(config, state, scene, motion):
+def run(config, state, scene, motion, events=None):
     results = []
 
     def record(name, ok, detail=''):
         results.append(ok)
+        if events is not None:
+            events.emit('selftest_check', {'name': name, 'ok': bool(ok), 'detail': detail})
         print(f"[{'PASS' if ok else 'FAIL'}] {name} {detail}")
         return ok
 
@@ -95,11 +98,13 @@ def main(args=None):
     state = JointStateCache(node)
     scene = PlanningSceneAdapter(node)
     motion = MoveItMotion(node, config)
+    events = event_sink_from_env('selftest')
     spinner = BackgroundSpinner(node)
     spinner.start()
     try:
-        results = run(config, state, scene, motion)
+        results = run(config, state, scene, motion, events)
     finally:
+        close_sink(events)
         spinner.stop()
         node.destroy_node()
         rclpy.shutdown()

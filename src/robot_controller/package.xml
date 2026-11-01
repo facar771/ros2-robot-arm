@@ -9,6 +9,7 @@
 
   <depend>rclpy</depend>
   <depend>robot_core</depend>
+  <depend>robot_data</depend>
   <depend>ament_index_python</depend>
   <exec_depend>robot_description</exec_depend>
   <exec_depend>robot_moveit_config</exec_depend>
@@ -18,6 +19,7 @@
   <depend>geometry_msgs</depend>
   <depend>shape_msgs</depend>
   <depend>tf2_ros</depend>
+  <depend>visualization_msgs</depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>robot_sim</exec_depend>
 

@@ -4,13 +4,23 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, Mapping, Optional, Protocol
 
-from robot_core.models import BoxObstacle, JointTarget, MotionResult
+from robot_core.models import BoxObstacle, JointTarget, MotionResult, ObjectInfo, PoseTarget
 
 
 class MotionPort(Protocol):
     def move_to(self, target: JointTarget) -> MotionResult: ...
+
+
+class PosePort(Protocol):
+    def move_to_pose(self, target: PoseTarget) -> MotionResult:
+        """Plan + execute a Cartesian goal for the tool link (inverse kinematics inside MoveIt)."""
+
+
+class ObjectsPort(Protocol):
+    def objects(self) -> Optional[Mapping[str, ObjectInfo]]:
+        """Objects currently known (name -> info); None if the scene could not be read."""
 
 
 class ScenePort(Protocol):

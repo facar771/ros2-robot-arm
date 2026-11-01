@@ -41,3 +41,27 @@ class RecordingSink:
 
     def emit(self, kind, payload):
         self.events.append((kind, payload))
+
+
+class FakePose:
+    def __init__(self, result=None, raises=None):
+        self.result = result or MotionResult(ok=True, code=1, code_name='SUCCESS')
+        self.raises = raises
+        self.targets = []
+
+    def move_to_pose(self, target):
+        self.targets.append(target)
+        if self.raises:
+            raise self.raises
+        return self.result
+
+
+class FakeObjects:
+    def __init__(self, objects=None, raises=None):
+        self.found = objects
+        self.raises = raises
+
+    def objects(self):
+        if self.raises:
+            raise self.raises
+        return self.found

@@ -11,6 +11,7 @@ src/
   robot_controller/      ROS 2 adaptörleri + CLI'lar (cli_moveit, move_robot, selftest)
   robot_description/     URDF (görsel + çarpışma geometrisi)
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
+  robot_data/            ROS'suz veri katmanı: SQLAlchemy 2 + Alembic (SQLite testler, PostgreSQL üretim)
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
@@ -28,6 +29,9 @@ docker compose run --rm selftest          # başsız uçtan uca test, sahte dona
 docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile aynı)
 docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket testi + sensor_check
 docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit edilen konum ↔ dünya dosyası
+docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
+docker compose run --rm selftest-skills      # Skills: aleti nesnenin üstüne götür, uç konumu TF ile ölç
+docker compose run --rm selftest-db          # selftest olayları PostgreSQL'e yazılır (compose'taki db servisi)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
 # dev içinde:
 colcon build --symlink-install && source install/setup.bash
@@ -65,17 +69,40 @@ pozuyla karşılaştırır. GPU yoksa görüntüleme yazılımla (Mesa) yapılı
 `robot_core/perception.py`. `perception_check`, tespitleri `workspace.sdf`'teki gerçek konumlarla
 karşılaştırır (konum ≤ 2 cm, yükseklik ≤ 1.5 cm, kareler arası kararlılık).
 
+## Algı → MoveIt (Aşama 2b)
+`perception_scene:=true` (ve `perception:=true`) ile `perception_scene_sync` tespitleri MoveIt planlama
+sahnesine `obj_<renk>_<n>` çarpışma kutuları olarak yansıtır: kararlı kimlik, titreşim süzgeci, 3 kare
+onay, 2 s görülmeyince silme (`robot_core/scene_sync.py`, ayrıntı `docs/INTERFACES.md`).
+`perception_scene_check` bunu uçtan uca doğrular (nesne belirir; içinden geçen hedef reddedilir;
+Gazebo'da taşınan nesnenin kutusu taşınır; kaldırılınca aynı hedef için plan başarılı olur).
+
+## Poz hedefli hareket ve beceriler (Aşama 4)
+`MoveItMotion.move_to_pose` kartezyen hedefi (konum + yönelim kısıtı, KDL IK) planlayıp yürütür.
+`robot_core.skills.Skills` bunun üstünde LLM'in sonradan çağıracağı araç arayüzüdür: `list_objects`,
+`go_to_named_pose`, `go_to_position`, `go_above(nesne, yükseklik)`; hiçbiri exception fırlatmaz,
+hepsi `SkillResult` döner (ayrıntı, kısıtlar ve erişim sınırı: `docs/INTERFACES.md`).
+`cli_moveit` komutları: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`.
+`pose_check`, uç işlevcinin TF ile ölçülen konumunu hedefle ve dünya dosyasıyla karşılaştırır.
+
+## Veri katmanı (Aşama 3)
+`ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
+(`motion_result`, `obstacle_added/removed`, `objects_changed`, `selftest_check`...) `runs` / `events` /
+`error_reports` tablolarına yazar. Ayarlı değilse hiçbir şey değişmez. Veritabanı kapalıyken robot
+etkilenmez (olay düşer, loglanır). `docker compose up -d db` PostgreSQL'i açar; `dev` kabuğunda
+`ROBOT_DB_URL` hazırdır. Özet: `python3 -m robot_data summary`. Şema ve olay sözleşmesi:
+`docs/INTERFACES.md`.
+
 ## Testler
 ```bash
-pip install pytest ruff pyyaml numpy python-fcl
-ruff check src && python -m pytest        # ROS gerektirmez
+pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic "psycopg[binary]>=3.1"
+ruff check src && python -m pytest        # ROS gerektirmez; PostgreSQL testleri için ROBOT_TEST_PG_URL ver
 ```
 Model bütünlük testleri, geçmişte yaşanan hataların geri dönmesini engeller (çarpışma geometrisi
 eksikliği, çarpışma matrisi eksikliği, YAML'da tekrarlanan anahtar, ölü ikinci SRDF).
 
 ## cli_moveit komutları
 `status`, `move <home|cnc|pc|dik>`, `move j1..j6` (radyan), `addbox ad x y z sx sy sz`,
-`rmbox ad`, `clear`, `list`
+`rmbox ad`, `clear`, `list`, `objects`, `above nesne [yükseklik]`, `goto x y z`
 
 ## Notlar
 - URDF'teki kütle/atalet değerleri tahminidir; gerçek CAD değerleriyle değiştirilmeli.

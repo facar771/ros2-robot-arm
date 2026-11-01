@@ -4,9 +4,10 @@ Threading model: the node is spun by a background executor thread; the command l
 main thread and *polls* futures (it never spins the node itself). That is why callbacks (results,
 joint states) are processed while the user is typing.
 """
+import math
 import threading
 import time
-from typing import Dict, Optional
+from typing import Dict, Mapping, Optional
 
 from geometry_msgs.msg import Pose
 from moveit_msgs.action import MoveGroup
@@ -15,12 +16,16 @@ from moveit_msgs.msg import (
     Constraints,
     JointConstraint,
     MoveItErrorCodes,
+    OrientationConstraint,
     PlanningScene,
+    PlanningSceneComponents,
+    PositionConstraint,
 )
-from moveit_msgs.srv import ApplyPlanningScene
+from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene
 from rclpy.action import ActionClient
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
+from robot_core.models import ObjectInfo, PoseTarget
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
 
@@ -127,7 +132,7 @@ class PlanningSceneAdapter:
 
 
 class MoveItMotion:
-    """Implements MotionPort: plan + execute a joint goal through move_group."""
+    """Implements MotionPort (joint goals) and PosePort (Cartesian goals) through move_group."""
 
     def __init__(self, node: Node, config: RobotConfig, velocity_scale: float = 0.5,
                  execution_timeout: float = 60.0, discovery_timeout: float = 15.0):
@@ -139,6 +144,47 @@ class MoveItMotion:
         self._client = ActionClient(node, MoveGroup, 'move_action')
 
     def move_to(self, target: JointTarget) -> MotionResult:
+        constraints = Constraints()
+        for name, value in zip(self._config.joint_names, target.values):
+            joint = JointConstraint()
+            joint.joint_name = name
+            joint.position = float(value)
+            joint.tolerance_above = 0.01
+            joint.tolerance_below = 0.01
+            joint.weight = 1.0
+            constraints.joint_constraints.append(joint)
+        return self._plan_and_execute(constraints)
+
+    def move_to_pose(self, target: PoseTarget) -> MotionResult:
+        """Cartesian goal for the tool link; MoveIt solves the inverse kinematics (KDL)."""
+        constraints = Constraints()
+        position = PositionConstraint()
+        position.header.frame_id = target.frame
+        position.link_name = self._config.tip_link
+        region = SolidPrimitive()
+        region.type = SolidPrimitive.SPHERE
+        region.dimensions = [float(target.position_tolerance)]
+        center = Pose()
+        center.position.x, center.position.y, center.position.z = target.x, target.y, target.z
+        center.orientation.w = 1.0
+        position.constraint_region.primitives.append(region)
+        position.constraint_region.primitive_poses.append(center)
+        position.weight = 1.0
+        constraints.position_constraints.append(position)
+        if target.orientation is not None:
+            orientation = OrientationConstraint()
+            orientation.header.frame_id = target.frame
+            orientation.link_name = self._config.tip_link
+            (orientation.orientation.x, orientation.orientation.y, orientation.orientation.z,
+             orientation.orientation.w) = target.orientation
+            orientation.absolute_x_axis_tolerance = float(target.orientation_tolerance)
+            orientation.absolute_y_axis_tolerance = float(target.orientation_tolerance)
+            orientation.absolute_z_axis_tolerance = math.pi     # rotation about the tool axis: free
+            orientation.weight = 1.0
+            constraints.orientation_constraints.append(orientation)
+        return self._plan_and_execute(constraints)
+
+    def _plan_and_execute(self, constraints: Constraints) -> MotionResult:
         if not self._client.wait_for_server(timeout_sec=self._discovery_timeout):
             return MotionResult(False, message="MoveIt 'move_action' sunucusu bulunamadı "
                                                '(demo.launch.py çalışıyor mu?)')
@@ -149,16 +195,6 @@ class MoveItMotion:
         goal.request.max_velocity_scaling_factor = self._velocity_scale
         goal.request.max_acceleration_scaling_factor = self._velocity_scale
         goal.planning_options.plan_only = False
-
-        constraints = Constraints()
-        for name, value in zip(self._config.joint_names, target.values):
-            joint = JointConstraint()
-            joint.joint_name = name
-            joint.position = float(value)
-            joint.tolerance_above = 0.01
-            joint.tolerance_below = 0.01
-            joint.weight = 1.0
-            constraints.joint_constraints.append(joint)
         goal.request.goal_constraints.append(constraints)
 
         send_future = self._client.send_goal_async(goal)
@@ -172,3 +208,48 @@ class MoveItMotion:
             return MotionResult(False, message='Sonuç zaman aşımı (planlama/yürütme bitmedi)')
         code = result_future.result().result.error_code.val
         return MotionResult(code == MoveItErrorCodes.SUCCESS, code, error_name(code))
+
+
+class PlanningSceneReader:
+    """Implements ObjectsPort: the collision objects MoveIt currently holds (the perception
+    objects ``obj_<colour>_<n>`` as well as hand-made ones), read through /get_planning_scene.
+    Only objects in the world/base frames (identity transform) are returned."""
+
+    FRAMES = ('world', 'base_link')
+
+    def __init__(self, node: Node, timeout: float = 5.0):
+        self._node = node
+        self._timeout = timeout
+        self._client = node.create_client(GetPlanningScene, '/get_planning_scene')
+
+    def objects(self) -> Optional[Mapping[str, ObjectInfo]]:
+        if not self._client.wait_for_service(timeout_sec=self._timeout):
+            return None
+        request = GetPlanningScene.Request()
+        request.components.components = PlanningSceneComponents.WORLD_OBJECT_GEOMETRY
+        future = self._client.call_async(request)
+        if not wait_future(future, self._timeout) or future.result() is None:
+            return None
+        found: Dict[str, ObjectInfo] = {}
+        for co in future.result().scene.world.collision_objects:
+            if not co.primitives or co.header.frame_id not in self.FRAMES:
+                continue
+            c = co.primitive_poses[0].position           # identity orientations
+            o = co.pose.position
+            dims = _primitive_size(co.primitives[0])
+            parts = co.id.split('_')
+            label = parts[1] if co.id.startswith('obj_') and len(parts) >= 3 else ''
+            found[co.id] = ObjectInfo(co.id, label, (o.x + c.x, o.y + c.y, o.z + c.z), dims,
+                                      'world')
+        return found
+
+
+def _primitive_size(primitive: SolidPrimitive):
+    d = list(primitive.dimensions)
+    if primitive.type == SolidPrimitive.BOX:
+        return (d[0], d[1], d[2])
+    if primitive.type == SolidPrimitive.SPHERE:
+        return (2 * d[0], 2 * d[0], 2 * d[0])
+    if primitive.type == SolidPrimitive.CYLINDER:                # (height, radius)
+        return (2 * d[1], 2 * d[1], d[0])
+    return (0.0, 0.0, 0.0)

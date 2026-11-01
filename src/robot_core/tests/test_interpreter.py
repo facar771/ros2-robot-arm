@@ -106,3 +106,47 @@ def test_repl_stops_on_exit_and_eof(config):
     def eof(prompt):
         raise EOFError
     interp.repl(read=eof)
+
+
+# ---- skills commands -----------------------------------------------------------------------
+def _with_skills(config):
+    from robot_core.models import ObjectInfo
+    from robot_core.skills import Skills
+
+    from tests.fakes import FakeObjects, FakePose
+    red = ObjectInfo('obj_red_1', 'red', (0.35, 0.15, 0.03), (0.07, 0.07, 0.07))
+    pose = FakePose()
+    skills = Skills(config, FakeMotion(), pose, FakeObjects({red.name: red}))
+    out = []
+    return CommandInterpreter(config, FakeMotion(), FakeScene(), FakeState(), out=out.append,
+                              skills=skills), pose, out
+
+
+def test_objects_command_lists_detected_objects(config):
+    cli, _, out = _with_skills(config)
+    cli.execute('objects')
+    assert any('obj_red_1' in line and '0.350' in line for line in out)
+
+
+def test_above_and_goto_commands_call_the_skills(config):
+    cli, pose, out = _with_skills(config)
+    cli.execute('above red 0.15')
+    cli.execute('goto 0.3 0.0 0.25')
+    assert [round(t.z, 3) for t in pose.targets] == [0.03 + 0.035 + 0.15, 0.25]
+    assert any(line.startswith('[+]') for line in out)
+
+
+def test_skill_commands_validate_their_arguments(config):
+    cli, pose, out = _with_skills(config)
+    cli.execute('above')
+    cli.execute('above red tall')
+    cli.execute('goto 1 2')
+    cli.execute('goto a b c')
+    assert pose.targets == [] and sum(line.startswith('[-]') for line in out) == 4
+
+
+def test_skill_commands_without_a_skills_layer_say_so(config):
+    out = []
+    cli = CommandInterpreter(config, FakeMotion(), FakeScene(), FakeState(), out=out.append)
+    cli.execute('above red')
+    assert 'Beceri katmanı bağlı değil' in out[0]

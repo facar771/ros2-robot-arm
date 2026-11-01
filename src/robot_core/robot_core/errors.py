@@ -12,6 +12,10 @@ _HINTS = {
     'START_STATE_IN_COLLISION': ('robot şu an bir engelle çarpışıyor; '
                                 'engeli silmeyi dene (rmbox/clear).'),
     'GOAL_IN_COLLISION': 'hedef konum bir engelle çarpışıyor.',
+    'NO_IK_SOLUTION': ('hedef robotun erişim alanı dışında ya da eklem limitleriyle '
+                       'ulaşılamaz (IK çözümü yok).'),
+    'INVALID_GOAL_CONSTRAINTS': ('hedef kısıtları geçersiz ya da ulaşılamaz '
+                                 '(erişim alanı / eklem limitleri).'),
     'TIMED_OUT': 'planlama süresi doldu; hedef çok zor ya da ulaşılamaz olabilir.',
 }
 

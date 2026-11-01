@@ -28,6 +28,7 @@ class RobotConfig:
     poses: Mapping[str, Tuple[float, ...]]
     planning_group: str = 'robot_arm'
     base_frame: str = 'base_link'
+    tip_link: str = 'link_6'   # last link of the chain: the tool frame for pose goals
 
     # ---- construction ----------------------------------------------------
     @classmethod
@@ -35,10 +36,10 @@ class RobotConfig:
                    planning_group: str = 'robot_arm') -> 'RobotConfig':
         urdf = ET.parse(str(urdf_path)).getroot()
         srdf = ET.parse(str(srdf_path)).getroot()
-        base_frame, joint_names, limits = cls._read_urdf(urdf)
+        base_frame, joint_names, limits, tip_link = cls._read_urdf(urdf)
         cls._check_group(srdf, planning_group, joint_names)
         poses = cls._read_poses(srdf, planning_group, joint_names)
-        config = cls(tuple(joint_names), limits, poses, planning_group, base_frame)
+        config = cls(tuple(joint_names), limits, poses, planning_group, base_frame, tip_link)
         for pose_name, values in poses.items():
             errors = config.validate(values)
             if errors:
@@ -46,7 +47,7 @@ class RobotConfig:
         return config
 
     @staticmethod
-    def _read_urdf(urdf: ET.Element) -> Tuple[str, List[str], Dict[str, JointLimit]]:
+    def _read_urdf(urdf: ET.Element) -> Tuple[str, List[str], Dict[str, JointLimit], str]:
         links = {link.get('name') for link in urdf.findall('link')}
         joints = urdf.findall('joint')
         children = {j.find('child').get('link') for j in joints}
@@ -76,7 +77,7 @@ class RobotConfig:
             link = joint.find('child').get('link')
         if not names:
             raise ConfigError('URDF içinde tahrikli eklem yok')
-        return roots[0], names, limits
+        return roots[0], names, limits, link
 
     @staticmethod
     def _check_group(srdf: ET.Element, group: str, joint_names: Sequence[str]) -> None:

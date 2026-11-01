@@ -2,15 +2,18 @@
 the ROS 2 adapters into it."""
 import rclpy
 from rclpy.node import Node
+from robot_core.skills import Skills
 
 from robot_controller.adapters import (
     BackgroundSpinner,
     JointStateCache,
     MoveItMotion,
     PlanningSceneAdapter,
+    PlanningSceneReader,
 )
 from robot_controller.config_loader import load_robot_config
 from robot_core import CommandInterpreter
+from robot_data import close_sink, event_sink_from_env
 
 
 def main(args=None):
@@ -20,11 +23,14 @@ def main(args=None):
     state = JointStateCache(node)
     scene = PlanningSceneAdapter(node)
     motion = MoveItMotion(node, config)
+    events = event_sink_from_env('cli_moveit')    # ROBOT_DB_URL yoksa: kayıt yok
+    skills = Skills(config, motion, motion, PlanningSceneReader(node), events)
     spinner = BackgroundSpinner(node)
     spinner.start()
     try:
-        CommandInterpreter(config, motion, scene, state).repl()
+        CommandInterpreter(config, motion, scene, state, events=events, skills=skills).repl()
     finally:
+        close_sink(events)
         spinner.stop()
         node.destroy_node()
         if rclpy.ok():
