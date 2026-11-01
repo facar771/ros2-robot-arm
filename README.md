@@ -203,6 +203,13 @@ etkilenmez (olay düşer, loglanır). `docker compose up -d db` PostgreSQL'i aç
 `ROBOT_DB_URL` hazırdır. Özet: `python3 -m robot_data summary`. Şema ve olay sözleşmesi:
 `docs/INTERFACES.md`.
 
+## Kontrol Merkezi (Hub)
+Robot senaryolarını telefondan/PC'den çalıştıran web arayüzü: `apps/control_hub/` (ayrı Python uygulaması, ROS'a
+bağımlı değil; şimdilik sahte robotla). Kurulum, güvenlik ve yapılandırma: `apps/control_hub/README.md`.
+```bash
+docker compose up --build hub-fake        # WSL'de; sonra http://localhost:8765 (PIN loglarda)
+```
+
 ## Testler
 ```bash
 pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic "psycopg[binary]>=3.1"

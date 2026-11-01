@@ -1,0 +1,22 @@
+[project]
+name = "control-hub"
+version = "0.1.0"
+description = "Robot Kontrol Merkezi: robot senaryoları için web arayüzü + masaüstü uygulaması"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.110", "uvicorn>=0.29", "pyyaml>=6", "segno>=1.6"]
+
+[project.optional-dependencies]
+test = ["pytest", "httpx", "websockets", "ruff"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["B905"]

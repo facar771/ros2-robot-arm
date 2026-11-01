@@ -50,6 +50,32 @@ jobs:
         env:
           ROBOT_TEST_PG_URL: postgresql+psycopg://robot:robot@localhost:5432/robot
 
+  hub:
+    name: Control Hub (lint, tests, Docker smoke test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r apps/control_hub/requirements-dev.txt
+      - run: ruff check apps/control_hub
+      - name: pytest
+        run: python -m pytest
+        working-directory: apps/control_hub
+      - name: Config files validate
+        run: python -m control_hub --fake --check-config
+        working-directory: apps/control_hub
+      - name: Docker image starts, /health answers, API is behind the PIN
+        run: |
+          docker build -t control-hub apps/control_hub
+          docker run -d --name hub -p 8765:8765 -e HUB_PIN=123456 control-hub
+          for i in $(seq 1 30); do curl -fs localhost:8765/health && break; sleep 1; done
+          curl -fs localhost:8765/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8765/api/state)" = "401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8765/)" = "200"
+          docker rm -f hub
+
   ros:
     name: Build workspace + headless selftest, mock and Gazebo (Docker)
     needs: core
