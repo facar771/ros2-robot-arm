@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
+from robot_core.safezone import SafetyConfig, load_safety
 
 from robot_core import RobotConfig
 
@@ -15,3 +16,11 @@ def load_robot_config() -> RobotConfig:
         Path(get_package_share_directory('robot_moveit_config')) / 'config'
         / 'six_axis_robot.srdf')
     return RobotConfig.from_files(urdf, srdf)
+
+
+def load_safety_config() -> SafetyConfig:
+    """Safe working box + speed cap (robot_moveit_config/config/safe_zone.yaml). The path can be
+    overridden with ROBOT_SAFETY; a missing or malformed file is an error (never "no limits")."""
+    path = os.environ.get('ROBOT_SAFETY') or (
+        Path(get_package_share_directory('robot_moveit_config')) / 'config' / 'safe_zone.yaml')
+    return load_safety(path)

@@ -23,10 +23,14 @@ def generate_launch_description():
         DeclareLaunchArgument('commands', default_value='false',
                               description='true: enable POST /api/command (white-listed robot '
                                           'commands, one at a time)'),
+        DeclareLaunchArgument('mode', default_value='gazebo',
+                              description='mock | gazebo | real: what the robot is, shown in '
+                                          '/api/state (robot.mode)'),
         SetParameter(name='use_sim_time', value=True),
         Node(package='robot_viz', executable='web_view', output='screen',
              parameters=[{'host': ParameterValue(LaunchConfiguration('host'), value_type=str),
                           'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
                           'commands': ParameterValue(LaunchConfiguration('commands'),
-                                                     value_type=bool)}]),
+                                                     value_type=bool),
+                          'mode': ParameterValue(LaunchConfiguration('mode'), value_type=str)}]),
     ])

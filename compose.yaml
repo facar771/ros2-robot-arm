@@ -118,6 +118,22 @@ services:
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-cmd"]
 
+  selftest-stop:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-stop"]
+
+  selftest-jobs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-jobs"]
+
   # Interactive demo: headless simulation + browser view with white-listed command buttons. No host networking: the only
   # thing reachable from the host is the web view, and only on the host's own 127.0.0.1.
   demo:

@@ -14,7 +14,8 @@ from tests.test_viz import box_size
 
 WORLD = SRC / 'robot_sim' / 'worlds' / 'workspace.sdf'
 JOINTS = tuple(f'joint_{i}' for i in range(1, 7))
-STATE_KEYS = {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool', 'commands', 'command'}
+STATE_KEYS = {'api_version', 'time', 'robot', 'camera', 'objects', 'objects_age_s', 'joints',
+              'tool', 'commands', 'command'}
 
 
 @pytest.fixture(scope='module')
@@ -89,9 +90,11 @@ def test_index_and_static_assets(view):
     assert "default-src 'none'" in headers['Content-Security-Policy']
 
 
-def test_page_posts_only_to_the_command_endpoint(view):
+def test_page_posts_only_to_the_robot_api_endpoints(view):
     js = request(view, path='/app.js')[2].decode()
-    assert js.count("method: 'POST'") == 1 and js.count("'/api/command'") == 1
+    assert js.count("method: 'POST'") == 3       # start a job, cancel it, the stop/reset helper
+    assert js.count("'/api/jobs'") == 1 and js.count("'/api/stop'") == 1
+    assert js.count("'/api/reset'") == 1 and '/api/command' not in js   # deprecated door unused
     assert 'PUT' not in js and 'DELETE' not in js
 
 
@@ -118,7 +121,8 @@ def test_state_document(view, ws):
     s = json.loads(body)
     assert set(s) == STATE_KEYS
     assert s['commands'] == {'enabled': False, 'allowed': []}      # read-only server
-    assert s['command'] == {'running': False, 'name': None, 'log': [], 'last': None}
+    assert s['command'] == {'running': False, 'name': None, 'job': None, 'log': [], 'last': None,
+                            'last_error': None}
     assert s['camera'] == {'width': 320, 'height': 240, 'rgb_age_s': 0.05, 'depth_age_s': 0.06,
                            'overlay': True}
     assert [o['name'] for o in s['objects']] == ['red#0', 'green#0', 'blue#0']

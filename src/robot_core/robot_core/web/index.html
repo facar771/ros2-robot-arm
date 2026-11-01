@@ -8,6 +8,11 @@
 </head>
 <body>
 <header><h1>Robot kolu - canlı görünüm</h1><span id="status" class="badge">bağlanıyor...</span></header>
+<div id="estop-bar" hidden>
+  <button id="estop" class="estop">ACİL DUR</button>
+  <button id="reset">Sıfırla (komutları aç)</button>
+  <span id="robot-state" class="badge">-</span><span id="estop-msg" class="msg"></span>
+</div>
 <main>
   <section class="panel"><h2>Kamera (algılanan nesneler işaretli)</h2>
     <div class="frame"><img id="rgb" alt="RGB kare"><p id="rgb-msg" class="msg">kare yok</p></div></section>
@@ -23,11 +28,13 @@
       <button data-cmd="demo_scenario">Demo senaryosunu çalıştır</button>
     </div>
     <div class="buttons">
-      <label>Yükseklik (m) <input id="height" type="number" min="0" max="0.5" step="0.05" value="0.30"></label>
+      <label>Yükseklik (m) <input id="height" type="number" min="0" max="0.5" step="0.05" value="0.35"></label>
       <button data-above="green">Yeşilin üstüne</button>
       <button data-above="red">Kırmızının üstüne</button>
       <button data-above="blue">Mavinin üstüne</button>
     </div>
+    <div class="buttons"><button id="cancel" class="cancel" disabled>İşi iptal et</button>
+      <span class="msg">(acil durdan farklı: kilitlemez, kol durur ve yeni iş verebilirsin)</span></div>
     <p id="cmd-msg" class="msg"></p>
     <pre id="cmd-log" class="mono"></pre></section>
   <section class="panel"><h2>Eklem açıları</h2>
