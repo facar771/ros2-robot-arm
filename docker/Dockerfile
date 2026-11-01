@@ -38,7 +38,8 @@ FROM base AS ci
 ENV LIBGL_ALWAYS_SOFTWARE=1
 COPY src /workspace/src
 COPY docker/run_selftest.sh /usr/local/bin/run_selftest
-RUN chmod +x /usr/local/bin/run_selftest \
+COPY docker/run_demo.sh /usr/local/bin/run_demo
+RUN chmod +x /usr/local/bin/run_selftest /usr/local/bin/run_demo \
     && . /opt/ros/${ROS_DISTRO}/setup.sh \
     && colcon build --symlink-install --event-handlers console_direct+ \
     && echo ". /workspace/install/setup.bash" >> /root/.bashrc

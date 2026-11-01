@@ -1,0 +1,17 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; background: #14171c; color: #e6e8eb; }
+header { display: flex; align-items: center; gap: 1rem; padding: .6rem 1rem; background: #1d2229; }
+h1 { font-size: 1.1rem; margin: 0; }
+h2 { font-size: .95rem; margin: .2rem 0 .5rem; color: #aab3bd; }
+main { display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 1rem; padding: 1rem; }
+.panel { background: #1d2229; border-radius: 8px; padding: .8rem; }
+.frame img { width: 100%; image-rendering: pixelated; background: #000; display: none; }
+.frame.live img { display: block; }
+.frame.live .msg { display: none; }
+.msg { color: #8a94a0; margin: 1rem 0; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: .2rem .4rem; border-bottom: 1px solid #2c333c; font-size: .9rem; }
+.mono { font-family: ui-monospace, monospace; }
+.badge { padding: .1rem .6rem; border-radius: 99px; background: #444; font-size: .8rem; }
+.badge.ok { background: #1f6f3f; } .badge.bad { background: #8a2c2c; }
+footer { padding: .5rem 1rem 1rem; color: #8a94a0; font-size: .8rem; }

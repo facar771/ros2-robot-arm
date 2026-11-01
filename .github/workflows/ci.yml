@@ -80,6 +80,8 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-scene
       - name: Selftest - Cartesian goals and Skills (go_above, explicit errors)
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-skills
+      - name: Selftest - read-only browser view (page, JSON, PNGs and overlay vs. world file)
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-viz
       - name: Data layer - selftest events end up in SQLite
         run: >-
           docker run --rm -e ROBOT_DB_URL=sqlite:////tmp/robot.db ros2-robot-arm:ci

@@ -7,6 +7,9 @@
 # docker compose run --rm selftest-scene     -> + detections in the MoveIt scene: perception_scene_check
 # docker compose run --rm selftest-skills    -> Skills layer: go_above etc., tool position measured from TF
 # docker compose run --rm selftest-db        -> selftest with its events written to PostgreSQL
+# docker compose run --rm selftest-viz       -> + read-only browser view: viz_check (page, PNGs, overlay, JSON)
+# docker compose up demo                     -> interactive demo, browser view at http://localhost:8080
+#                                               (second terminal: ./docker/cli.sh)
 services:
   db:
     image: postgres:16-alpine
@@ -96,6 +99,28 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-skills"]
+
+  selftest-viz:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-viz"]
+
+  # Interactive demo: headless simulation + read-only browser view. No host networking: the only
+  # thing reachable from the host is the web view, and only on the host's own 127.0.0.1.
+  demo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    init: true                 # signals reach run_demo; no zombie processes
+    stop_grace_period: 30s     # Gazebo needs a few seconds to shut down
+    ports:
+      - "127.0.0.1:${VIEW_PORT:-8080}:8080"
+    command: ["run_demo"]
 
   selftest-db:
     build:

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills]   (default: mock; or set SIM_MODE)
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz]
+#   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
 # gazebo-camera = gazebo + workspace world with RGB-D camera (software rendering without a GPU);
@@ -12,11 +13,15 @@
 #                 plan through one is rejected, moving/removing it in Gazebo updates the scene)
 # gazebo-skills = same stack; runs only pose_check (Skills.go_above etc.: tool position measured
 #                 from TF reaches the target, unreachable goals are refused with an explicit error)
+# gazebo-viz    = same stack + the read-only browser view (robot_viz web_view on 127.0.0.1:8080);
+#                 runs only viz_check (page, JSON, PNGs and overlay vs. the world file, joints/tool
+#                 vs. /joint_states and TF, read-only guard, view follows a go_above move)
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
 
 MODE=${1:-${SIM_MODE:-mock}}
+EXTRA=()    # a second launch that runs next to the simulation (browser view)
 case "$MODE" in
     mock)   LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false); CTRL_TIMEOUT=60 ;;
     gazebo) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py); CTRL_TIMEOUT=120 ;;
@@ -24,7 +29,9 @@ case "$MODE" in
     gazebo-perception) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true); CTRL_TIMEOUT=180 ;;
     gazebo-scene) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true); CTRL_TIMEOUT=180 ;;
     gazebo-skills) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true); CTRL_TIMEOUT=180 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills]"; exit 64 ;;
+    gazebo-viz) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py); CTRL_TIMEOUT=180 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -35,10 +42,23 @@ LOG=/tmp/sim_launch.log
 # setsid: own process group, so cleanup can stop launch *and* all nodes it started.
 setsid "${LAUNCH[@]}" >"$LOG" 2>&1 &
 LAUNCH_PID=$!
+EXTRA_PID=
+EXTRA_LOG=/tmp/extra_launch.log
+if [ ${#EXTRA[@]} -gt 0 ]; then
+    setsid "${EXTRA[@]}" >"$EXTRA_LOG" 2>&1 &
+    EXTRA_PID=$!
+fi
 cleanup() {
-    kill -INT -- "-$LAUNCH_PID" 2>/dev/null   # graceful: launch shuts its nodes down
-    for _ in $(seq 1 15); do kill -0 "$LAUNCH_PID" 2>/dev/null || break; sleep 1; done
-    kill -KILL -- "-$LAUNCH_PID" 2>/dev/null || true
+    for pid in $EXTRA_PID $LAUNCH_PID; do
+        kill -INT -- "-$pid" 2>/dev/null   # graceful: launch shuts its nodes down
+    done
+    for _ in $(seq 1 15); do
+        alive=0
+        for pid in $EXTRA_PID $LAUNCH_PID; do kill -0 "$pid" 2>/dev/null && alive=1; done
+        [ $alive -eq 0 ] && break
+        sleep 1
+    done
+    for pid in $EXTRA_PID $LAUNCH_PID; do kill -KILL -- "-$pid" 2>/dev/null || true; done
 }
 trap cleanup EXIT
 
@@ -71,6 +91,8 @@ elif [ "$MODE" = "gazebo-scene" ]; then
     timeout 400 ros2 run robot_controller perception_scene_check || STATUS=$?
 elif [ "$MODE" = "gazebo-skills" ]; then
     timeout 500 ros2 run robot_controller pose_check || STATUS=$?
+elif [ "$MODE" = "gazebo-viz" ]; then
+    timeout 500 ros2 run robot_viz viz_check || STATUS=$?
 else
     timeout 180 ros2 run robot_controller selftest || STATUS=$?
 fi
@@ -79,5 +101,6 @@ if [ "$MODE" = "gazebo-camera" ]; then
 fi
 if [ $STATUS -ne 0 ]; then
     echo "----- last launch log lines -----"; tail -n 80 "$LOG"
+    if [ -n "$EXTRA_PID" ]; then echo "----- last web_view log lines -----"; tail -n 40 "$EXTRA_LOG"; fi
 fi
 exit $STATUS
