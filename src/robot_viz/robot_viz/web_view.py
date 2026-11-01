@@ -1,12 +1,15 @@
-"""Read-only browser view: ROS side. Collects camera frames, detections, joint states and TF into
-a :class:`robot_core.webview.Snapshot` and hands it to the (ROS-free) HTTP server in
+"""Browser view: ROS side. Collects camera frames, detections, joint states and TF into a
+:class:`robot_core.webview.Snapshot` and hands it to the (ROS-free) HTTP server in
 :mod:`robot_core.webview`.
 
-    ros2 launch robot_viz web_view.launch.py         # then open http://127.0.0.1:8080
+    ros2 launch robot_viz web_view.launch.py                    # read-only, http://127.0.0.1:8080
+    ros2 launch robot_viz web_view.launch.py commands:=true     # + POST /api/command
 
 Subscribes /camera/{image,depth_image,camera_info}, /perception/objects, /joint_states; TF is
 looked up per request (world <- camera_optical_frame for the overlay, world <- tip link for the
-tool position). Nothing is published and nothing can be commanded through it.
+tool position). Read-only by default: nothing is published and nothing can be commanded.
+With ``commands:=true`` the white-listed commands of :mod:`robot_core.webcmd` run on the Skills
+layer (MoveIt) exactly as in ``cli_moveit``.
 """
 import signal
 import threading
@@ -19,14 +22,24 @@ from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from robot_controller.adapters import BackgroundSpinner, JointStateCache
+from robot_controller.adapters import (
+    BackgroundSpinner,
+    JointStateCache,
+    MoveItMotion,
+    PlanningSceneReader,
+    TfToolPosition,
+)
 from robot_controller.config_loader import load_robot_config
 from robot_core.perception import Intrinsics, Transform
+from robot_core.skills import Skills
+from robot_core.webcmd import CommandRunner
 from robot_core.webview import SceneObject, Snapshot, WebView
 from robot_perception.images import depth_array, rgb_array
 from sensor_msgs.msg import CameraInfo, Image
 from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
+
+from robot_data import close_sink, event_sink_from_env
 
 TOPIC_OBJECTS = '/perception/objects'
 
@@ -48,6 +61,7 @@ class WebViewNode(Node):
         self.declare_parameter('depth_near', 0.5)
         self.declare_parameter('depth_far', 1.7)
         self.declare_parameter('objects_stale_s', 2.0)   # detections older than this are dropped
+        self.declare_parameter('commands', False)        # True: POST /api/command is enabled
         self._world = self.get_parameter('world_frame').value
         self._optical = self.get_parameter('optical_frame').value
         self._stale_s = float(self.get_parameter('objects_stale_s').value)
@@ -69,6 +83,15 @@ class WebViewNode(Node):
         self.create_subscription(CameraInfo, '/camera/camera_info', self._on_info,
                                  qos_profile_sensor_data)
         self.create_subscription(MarkerArray, TOPIC_OBJECTS, self._on_objects, 10)
+
+        self.events = None
+        self.runner = None
+        if bool(self.get_parameter('commands').value):
+            self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
+            motion = MoveItMotion(self, config)
+            skills = Skills(config, motion, motion, PlanningSceneReader(self), self.events)
+            self.runner = CommandRunner(
+                skills, TfToolPosition(self._tf, self._tip, self._world), self.events)
 
     @property
     def depth_range(self) -> Tuple[float, float]:
@@ -148,7 +171,8 @@ def main(args=None):
     host = str(node.get_parameter('host').value)
     port = int(node.get_parameter('port').value)
     try:
-        view = WebView(node, host=host, port=port, depth_range=node.depth_range)
+        view = WebView(node, host=host, port=port, depth_range=node.depth_range,
+                       commands=node.runner)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()
@@ -162,7 +186,9 @@ def main(args=None):
     # (HTTP server, executor thread, node), so no callback is running while rclpy shuts down.
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    node.get_logger().info(f'web_view hazır: http://{host}:{view.port}/ (salt okunur)')
+    mode = ('KOMUTLAR AÇIK (yalnızca beyaz liste, aynı anda tek komut)' if node.runner
+            else 'salt okunur')
+    node.get_logger().info(f'web_view hazır: http://{host}:{view.port}/ ({mode})')
     try:
         while not stop.wait(0.2) and rclpy.ok():
             pass
@@ -171,6 +197,8 @@ def main(args=None):
     finally:
         view.shutdown()
         spinner.stop()
+        if node.events is not None:
+            close_sink(node.events)
         node.destroy_node()
         rclpy.try_shutdown()
 

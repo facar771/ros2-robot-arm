@@ -16,12 +16,26 @@
   <section class="panel"><h2>Algılanan nesneler (world, metre)</h2>
     <table id="objects"><thead><tr><th>nesne</th><th>konum x, y, z</th><th>boyut x, y, z</th></tr></thead>
     <tbody></tbody></table></section>
+  <section class="panel" id="commands" hidden><h2>Komutlar (yalnızca beyaz liste, aynı anda tek komut)</h2>
+    <div class="buttons">
+      <button data-cmd="home">Home</button>
+      <button data-cmd="objects">Nesneleri listele</button>
+      <button data-cmd="demo_scenario">Demo senaryosunu çalıştır</button>
+    </div>
+    <div class="buttons">
+      <label>Yükseklik (m) <input id="height" type="number" min="0" max="0.5" step="0.05" value="0.25"></label>
+      <button data-above="green">Yeşilin üstüne</button>
+      <button data-above="red">Kırmızının üstüne</button>
+      <button data-above="blue">Mavinin üstüne</button>
+    </div>
+    <p id="cmd-msg" class="msg"></p>
+    <pre id="cmd-log" class="mono"></pre></section>
   <section class="panel"><h2>Eklem açıları</h2>
     <table id="joints"><thead><tr><th>eklem</th><th>rad</th><th>derece</th></tr></thead>
     <tbody></tbody></table>
     <h2>Uç işlevci (<span id="tool-link">-</span>)</h2><p id="tool" class="mono">-</p></section>
 </main>
-<footer>Salt okunur görünüm; bu sayfa robotu hareket ettiremez. Yenileme ~5 Hz.</footer>
+<footer id="footer">Salt okunur görünüm; bu sayfa robotu hareket ettiremez. Yenileme ~5 Hz.</footer>
 <script src="/app.js"></script>
 </body>
 </html>

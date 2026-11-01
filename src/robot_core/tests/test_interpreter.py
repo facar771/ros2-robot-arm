@@ -150,3 +150,47 @@ def test_skill_commands_without_a_skills_layer_say_so(config):
     cli = CommandInterpreter(config, FakeMotion(), FakeScene(), FakeState(), out=out.append)
     cli.execute('above red')
     assert 'Beceri katmanı bağlı değil' in out[0]
+
+
+# ---- demo_scenario -------------------------------------------------------------------------
+def _scenario_cli(config, tool, sink=None):
+    from tests.fakes import FakeSkills
+    skills, out = FakeSkills(), []
+    cli = CommandInterpreter(config, FakeMotion(), FakeScene(), FakeState(), out=out.append,
+                             events=sink, skills=skills, tool=tool)
+    return cli, skills, out
+
+
+def test_demo_scenario_command_runs_and_narrates(config, monkeypatch):
+    from robot_core import scenario
+    from tests.fakes import FakeTool
+    monkeypatch.setattr(scenario, 'SETTLE_S', 0.0)
+    monkeypatch.setattr('robot_core.interpreter.run_demo_scenario',
+                        lambda *a, **k: scenario.run_demo_scenario(*a, sleep=lambda _: None, **k))
+    tool = FakeTool((0.0, 0.0, 1.24), (0.40, -0.10, 0.35), (0.35, 0.15, 0.36), (0.0, 0.0, 1.24))
+    sink = RecordingSink()
+    cli, skills, out = _scenario_cli(config, tool, sink)
+    cli.execute('demo_scenario')
+    assert [c[0] for c in skills.calls] == ['go_to_named_pose', 'go_above', 'go_above',
+                                            'go_to_named_pose']
+    assert any(line.startswith('[1/4]') for line in out) and out[-1].startswith('[+] senaryo')
+    assert sink.events[-1][0] == 'scenario_result' and sink.events[-1][1]['ok']
+
+
+def test_demo_scenario_needs_skills_a_tool_and_no_arguments(config):
+    from tests.fakes import FakeTool
+    out = []
+    CommandInterpreter(config, FakeMotion(), FakeScene(), FakeState(),
+                       out=out.append).execute('demo_scenario')
+    assert 'Beceri katmanı bağlı değil' in out[0]
+    cli, skills, out = _scenario_cli(config, tool=None)
+    cli.execute('demo_scenario')
+    assert 'TF' in out[0] and skills.calls == []
+    cli, skills, out = _scenario_cli(config, FakeTool((0, 0, 0)))
+    cli.execute('demo_scenario now')
+    assert 'Kullanım' in out[0] and skills.calls == []
+
+
+def test_demo_scenario_is_in_the_help(config):
+    interp, _ = make(config)
+    assert 'demo_scenario' in interp.help_text

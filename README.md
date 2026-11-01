@@ -90,7 +90,8 @@ hepsi `SkillResult` döner (ayrıntı, kısıtlar ve erişim sınırı: `docs/IN
 ## Tarayıcıda canlı görünüm (Aşama 5a)
 Sistemi gözle görmek için: kamera görüntüsü (algılanan nesneler kutu + etiketle işaretli), derinlik
 haritası, nesne tablosu, eklem açıları ve uç işlevci konumu, ~5 Hz canlı. Yalnızca standart kütüphane
-(`http.server`), ek kurulum yok. **Salt okunur**: robotu hareket ettiren hiçbir uç nokta yok.
+(`http.server`), ek kurulum yok. Varsayılan **salt okunur**; `demo` servisinde komut düğmeleri açıktır
+(aşağıdaki "Tarayıcıdan komut" bölümü).
 
 ```bash
 # Terminal 1 — WSL'de (simülasyon + görünüm; ilk açılış 1-3 dk, "Hazır." yazısını bekle)
@@ -109,11 +110,37 @@ cd ~/ros2-robot-arm
 Durdurmak için Terminal 1'de **Ctrl-C** (süreçler sırayla kapanır, port serbest kalır). 8080 doluysa:
 `VIEW_PORT=8081 docker compose up demo` (WSL'de) ve `http://localhost:8081`.
 
-Güvenlik: konteyner içinde `0.0.0.0`'da dinler ama `compose.yaml` portu yalnızca ana makinenin
+Tarayıcıdan komut ve demo senaryosu için aşağıdaki bölüme bak. Güvenlik: konteyner içinde `0.0.0.0`'da dinler ama `compose.yaml` portu yalnızca ana makinenin
 `127.0.0.1`'ine yayımlar (ağdaki başka makineler erişemez); `Host` başlığı localhost değilse `403`,
 `GET`/`HEAD` dışındaki her yöntem `405`. Docker'sız (ör. `dev` kabuğunda):
 `ros2 launch robot_viz web_view.launch.py` (varsayılan `127.0.0.1:8080`). Uç noktalar ve JSON
 şeması: `docs/INTERFACES.md`.
+
+## Tarayıcıdan komut + demo senaryosu (Aşama 5c)
+`docker compose up demo` ile açılan sayfada **Komutlar** paneli görünür (yalnızca `web_view`
+`commands:=true` ile başlatılmışsa; varsayılan kapalı). Düğmeler `POST /api/command`'ı çağırır:
+
+| Komut | Ne yapar |
+|---|---|
+| `home` | robot `home` pozuna |
+| `objects` | bilinen nesneleri (ad, renk, konum, boyut) listeler |
+| `above <red\|green\|blue> [yükseklik_m]` | aleti o renkteki nesnenin üstüne götürür (varsayılan 0.10 m, en çok 0.5 m); `kırmızı/yeşil/mavi` de olur |
+| `demo_scenario` | `home` → yeşil silindirin 25 cm üstü → kırmızı kutunun 30 cm üstü → `home`; her adım Türkçe anlatılır, her hareketten sonra uç konum **TF ile ölçülüp** hedefle karşılaştırılır (≤ 1.5 cm; `home` tekrarı ≤ 3 cm), ilk başarısız adımda durur |
+
+Anlatım sayfada canlı akar; aynı komutu komut satırında `demo_scenario` yazarak da çalıştırabilirsin.
+Aynı anda tek komut çalışır (ikincisi `409`). Erişilemeyen hedef (ör. tabana yakın nesnede çok alçak
+`above red 0`) robotu hiç oynatmadan `422` ve nedeniyle reddedilir. Beyaz liste dışındaki her şey
+(`goto`, `move`, kabuk karakterleri, bilinmeyen renk, 0-0.5 m dışı yükseklik...) `400`, yanlış içerik
+türü `415`, başka bir sitenin isteği `403`. Ayrıntı ve durum kodları: `docs/INTERFACES.md`.
+
+```bash
+# WSL'de (komutlar açık simülasyon çalışırken, aynı makineden)
+curl -s localhost:8080/api/command -H 'Content-Type: application/json' -d '{"command": "above green 0.25"}'
+curl -s localhost:8080/api/command -H 'Content-Type: application/json' -d '{"command": "demo_scenario"}'
+```
+Docker'sız: `ros2 launch robot_viz web_view.launch.py commands:=true`. Otomatik test (WSL'de):
+`docker compose run --rm selftest-cmd` (reddedilmesi gerekenler, TF ile ölçülen hareketler, canlı
+anlatım, meşgulken `409`).
 
 ## Görsel çalıştırma: RViz + Gazebo penceresi (Aşama 5b)
 Tarayıcı görünümü (yukarıda) en kolay yoldur. RViz ve Gazebo penceresi WSLg ister ve `dev` kabuğunda
@@ -186,7 +213,7 @@ eksikliği, çarpışma matrisi eksikliği, YAML'da tekrarlanan anahtar, ölü i
 
 ## cli_moveit komutları
 `status`, `move <home|cnc|pc|dik>`, `move j1..j6` (radyan), `addbox ad x y z sx sy sz`,
-`rmbox ad`, `clear`, `list`, `objects`, `above nesne [yükseklik]`, `goto x y z`
+`rmbox ad`, `clear`, `list`, `objects`, `above nesne [yükseklik]`, `goto x y z`, `demo_scenario`
 
 ## Notlar
 - URDF'teki kütle/atalet değerleri tahminidir; gerçek CAD değerleriyle değiştirilmeli.

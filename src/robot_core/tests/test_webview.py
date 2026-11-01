@@ -14,6 +14,7 @@ from tests.test_viz import box_size
 
 WORLD = SRC / 'robot_sim' / 'worlds' / 'workspace.sdf'
 JOINTS = tuple(f'joint_{i}' for i in range(1, 7))
+STATE_KEYS = {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool', 'commands', 'command'}
 
 
 @pytest.fixture(scope='module')
@@ -88,9 +89,10 @@ def test_index_and_static_assets(view):
     assert "default-src 'none'" in headers['Content-Security-Policy']
 
 
-def test_page_makes_no_write_requests(view):
+def test_page_posts_only_to_the_command_endpoint(view):
     js = request(view, path='/app.js')[2].decode()
-    assert 'POST' not in js and 'method:' not in js
+    assert js.count("method: 'POST'") == 1 and js.count("'/api/command'") == 1
+    assert 'PUT' not in js and 'DELETE' not in js
 
 
 def test_query_string_is_ignored(view):
@@ -101,7 +103,7 @@ def test_query_string_is_ignored(view):
 def test_unknown_path_is_404(view):
     status, _, body = request(view, path='/nope')
     assert status == 404 and json.loads(body)['error']
-    assert request(view, path='/api/command')[0] == 404       # no such endpoint (yet)
+    assert request(view, path='/api/nothing')[0] == 404
 
 
 def test_head_has_headers_but_no_body(view):
@@ -114,7 +116,9 @@ def test_state_document(view, ws):
     status, headers, body = request(view, path='/api/state')
     assert status == 200 and headers['Content-Type'] == 'application/json'
     s = json.loads(body)
-    assert set(s) == {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool'}
+    assert set(s) == STATE_KEYS
+    assert s['commands'] == {'enabled': False, 'allowed': []}      # read-only server
+    assert s['command'] == {'running': False, 'name': None, 'log': [], 'last': None}
     assert s['camera'] == {'width': 320, 'height': 240, 'rgb_age_s': 0.05, 'depth_age_s': 0.06,
                            'overlay': True}
     assert [o['name'] for o in s['objects']] == ['red#0', 'green#0', 'blue#0']
@@ -135,7 +139,7 @@ def test_state_without_any_data_has_the_same_keys_and_nulls():
     assert s['camera'] == {'width': None, 'height': None, 'rgb_age_s': None, 'depth_age_s': None,
                            'overlay': False}
     assert s['objects'] == [] and s['joints'] is None and s['tool'] is None
-    assert set(s) == {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool'}
+    assert set(s) == STATE_KEYS
 
 
 def test_state_objects_without_projection_have_null_pixel():
@@ -193,15 +197,28 @@ def test_frames_are_503_before_the_first_frame():
 
 # ---- safety ------------------------------------------------------------------------------------
 @pytest.mark.parametrize('method', ['POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
-def test_write_methods_are_405(view, method):
-    for path in ('/', '/api/state', '/api/command', '/frame/rgb.png'):
+def test_write_methods_are_405_on_every_read_only_path(view, method):
+    for path in ('/', '/api/state', '/frame/rgb.png', '/api/nothing'):
         status, headers, _ = request(view, method, path, body=b'{"x": 1}',
                                      headers={'Content-Type': 'application/json'})
         assert status == 405 and headers['Allow'] == 'GET, HEAD'
 
 
+@pytest.mark.parametrize('method', ['PUT', 'DELETE', 'PATCH', 'OPTIONS', 'GET', 'HEAD'])
+def test_command_path_accepts_only_post(view, method):
+    status, headers, _ = request(view, method, '/api/command', body=b'{}')
+    assert status == 405 and headers['Allow'] == 'POST'
+
+
+def test_post_to_command_path_is_403_when_the_server_has_no_commands(view):
+    status, _, body = request(view, 'POST', '/api/command', body=b'{"command": "home"}',
+                              headers={'Content-Type': 'application/json'})
+    assert status == 403 and 'kapalı' in json.loads(body)['error']
+
+
 def test_server_stays_usable_after_a_rejected_post_with_body(view):
     request(view, 'POST', '/api/state', body=b'x' * 5000)
+    request(view, 'POST', '/api/command', body=b'x' * 5000)
     assert request(view, path='/api/state')[0] == 200
 
 

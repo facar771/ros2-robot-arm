@@ -49,6 +49,7 @@ from sensor_msgs.msg import Image
 from tf2_ros import Buffer, TransformException, TransformListener
 
 WAIT_S = 90.0
+COMMAND_TIMEOUT_S = 600.0     # POST /api/command blocks until the command has finished
 POSITION_TOLERANCE = 0.025     # m, reported object centre vs world file (perception is <= 2 cm)
 PIXEL_TOLERANCE = 5.0          # px, reported/drawn object centre vs true projection (2 cm ~ 5 px)
 EDGE_FRACTION = 0.98           # share of an outline's pixels that must carry the overlay colour
@@ -57,7 +58,7 @@ JOINT_TOLERANCE = 0.01         # rad
 TOOL_TOLERANCE = 0.015         # m
 TARGET_TOLERANCE = 0.02        # m
 MOVE_CASE = ('green', 0.25)    # reached reliably by this arm (see pose_check)
-STATE_KEYS = {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool'}
+STATE_KEYS = {'time', 'camera', 'objects', 'objects_age_s', 'joints', 'tool', 'commands', 'command'}
 
 
 class Http:
@@ -65,9 +66,9 @@ class Http:
         parts = urlsplit(base)
         self.host, self.port = parts.hostname, parts.port or 80
 
-    def request(self, method: str, path: str, headers=None, body=None):
+    def request(self, method: str, path: str, headers=None, body=None, timeout: float = 10.0):
         """(status, headers, body); (None, {}, b'') if the server cannot be reached."""
-        conn = http.client.HTTPConnection(self.host, self.port, timeout=10)
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
         try:
             conn.request(method, path, body=body, headers=headers or {})
             resp = conn.getresponse()
@@ -80,6 +81,19 @@ class Http:
     def state(self):
         status, _, body = self.request('GET', '/api/state')
         return json.loads(body) if status == 200 else None
+
+    def post(self, command=None, *, raw=None, headers=None):
+        """POST /api/command -> (status, headers, parsed JSON or None)."""
+        body = raw if raw is not None else json.dumps({'command': command}).encode()
+        sent = {'Content-Type': 'application/json'} if headers is None else headers
+        # a command answers when the robot is done: planning + execution can take a long while
+        status, received, data = self.request('POST', '/api/command', headers=sent, body=body,
+                                              timeout=COMMAND_TIMEOUT_S)
+        try:
+            parsed = json.loads(data) if data else None
+        except ValueError:
+            parsed = None
+        return status, received, parsed
 
 
 class CameraTap:
@@ -251,7 +265,16 @@ def run(base: str, config, ws, skills: Skills, state: JointStateCache, buffer: B
                status == 405 and headers.get('Allow') == 'GET, HEAD', f'(durum {status})')
     status, _, _ = http_.request('GET', '/api/state', headers={'Host': 'evil.example.com'})
     record('yabancı Host başlığı 403', status == 403, f'(durum {status})')
-    record('bilinmeyen yol 404', http_.request('GET', '/api/command')[0] == 404)
+    record('bilinmeyen yol 404', http_.request('GET', '/api/nothing')[0] == 404)
+    status, headers, _ = http_.request('GET', '/api/command')
+    record('/api/command yalnızca POST kabul eder (GET 405, Allow: POST)',
+           status == 405 and headers.get('Allow') == 'POST', f'(durum {status})')
+    status, _, body = http_.post('home')
+    record('salt okunur başlatılan sunucuda POST /api/command 403 (komut ucu kapalı) ve robot '
+           'hareket etmedi', status == 403 and 'kapalı' in (body or {}).get('error', ''),
+           f'(durum {status})')
+    record('/api/state komutların kapalı olduğunu söylüyor',
+           http_.state()['commands'] == {'enabled': False, 'allowed': []})
 
     # 7. the view follows the robot ----------------------------------------------------------
     label, clearance = MOVE_CASE

@@ -3,6 +3,7 @@ the ROS 2 adapters into it."""
 import rclpy
 from rclpy.node import Node
 from robot_core.skills import Skills
+from tf2_ros import Buffer, TransformListener
 
 from robot_controller.adapters import (
     BackgroundSpinner,
@@ -10,6 +11,7 @@ from robot_controller.adapters import (
     MoveItMotion,
     PlanningSceneAdapter,
     PlanningSceneReader,
+    TfToolPosition,
 )
 from robot_controller.config_loader import load_robot_config
 from robot_core import CommandInterpreter
@@ -25,10 +27,14 @@ def main(args=None):
     motion = MoveItMotion(node, config)
     events = event_sink_from_env('cli_moveit')    # ROBOT_DB_URL yoksa: kayıt yok
     skills = Skills(config, motion, motion, PlanningSceneReader(node), events)
+    buffer = Buffer()
+    TransformListener(buffer, node)
+    tool = TfToolPosition(buffer, config.tip_link)
     spinner = BackgroundSpinner(node)
     spinner.start()
     try:
-        CommandInterpreter(config, motion, scene, state, events=events, skills=skills).repl()
+        CommandInterpreter(config, motion, scene, state, events=events, skills=skills,
+                           tool=tool).repl()
     finally:
         close_sink(events)
         spinner.stop()

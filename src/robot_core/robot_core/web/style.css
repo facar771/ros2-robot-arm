@@ -15,3 +15,11 @@ th, td { text-align: left; padding: .2rem .4rem; border-bottom: 1px solid #2c333
 .badge { padding: .1rem .6rem; border-radius: 99px; background: #444; font-size: .8rem; }
 .badge.ok { background: #1f6f3f; } .badge.bad { background: #8a2c2c; }
 footer { padding: .5rem 1rem 1rem; color: #8a94a0; font-size: .8rem; }
+.panel[hidden] { display: none; }
+.buttons { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .6rem; }
+button { background: #2c4a73; color: #e6e8eb; border: 0; border-radius: 6px; padding: .4rem .8rem; cursor: pointer; }
+button:hover:not(:disabled) { background: #3a62a0; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+input[type=number] { width: 5rem; background: #14171c; color: #e6e8eb; border: 1px solid #2c333c; border-radius: 4px; padding: .2rem; }
+pre.mono { white-space: pre-wrap; max-height: 16rem; overflow: auto; background: #14171c; padding: .5rem; border-radius: 6px; margin: 0; min-height: 3rem; }
+.msg.err { color: #e08080; }

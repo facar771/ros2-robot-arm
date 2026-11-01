@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Interactive demo: headless Gazebo + MoveIt + perception + planning scene, plus the read-only
-# browser view (robot_viz). Stays up until it is stopped; Ctrl-C (SIGINT) and SIGTERM shut every
-# process down in order.
+# Interactive demo: headless Gazebo + MoveIt + perception + planning scene, plus the browser view
+# (robot_viz) with its white-listed command buttons and the demo scenario. Stays up until it is
+# stopped; Ctrl-C (SIGINT) and SIGTERM shut every process down in order.
 #
 #   Terminal 1:  docker compose up demo      (this script; Ctrl-C stops it)
-#   Terminal 2:  ./docker/cli.sh             (command line: `help`, `objects`, `above red 0.3`, ...)
+#   Terminal 2:  ./docker/cli.sh             (command line: `help`, `objects`, `above red 0.3`,
+#                                             `demo_scenario`, ...)
 #   Browser:     http://localhost:8080
 #
 # The web view listens on 0.0.0.0 *inside* the container; compose.yaml publishes the port on the
-# host's 127.0.0.1 only, so it is not reachable from other machines.
+# host's 127.0.0.1 only, so it is not reachable from other machines. Its POST /api/command is
+# enabled (commands:=true): only the white-listed commands, one at a time (docs/INTERFACES.md).
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
 
@@ -24,7 +26,8 @@ VIEW_LOG=/tmp/web_view.log
 setsid ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true \
     perception_scene:=true >"$SIM_LOG" 2>&1 &
 SIM_PID=$!
-setsid ros2 launch robot_viz web_view.launch.py host:=0.0.0.0 port:="$PORT" >"$VIEW_LOG" 2>&1 &
+setsid ros2 launch robot_viz web_view.launch.py host:=0.0.0.0 port:="$PORT" commands:=true \
+    >"$VIEW_LOG" 2>&1 &
 VIEW_PID=$!
 
 cleanup() {
@@ -74,7 +77,8 @@ cat <<BANNER
 ==============================================================================
   Hazır.
   Tarayıcı (Windows'ta, WSL'dekiyle aynı localhost):  http://localhost:8080
-  Komut satırı, İKİNCİ terminalde (WSL'de):   ./docker/cli.sh
+    -> sayfadaki "Demo senaryosunu çalıştır" düğmesi: home -> yeşil -> kırmızı -> home
+  Komut satırı, İKİNCİ terminalde (WSL'de):   ./docker/cli.sh   (demo_scenario komutu da var)
   Durdurmak için bu terminalde Ctrl-C.
 ==============================================================================
 

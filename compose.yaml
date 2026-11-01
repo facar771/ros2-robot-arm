@@ -8,7 +8,8 @@
 # docker compose run --rm selftest-skills    -> Skills layer: go_above etc., tool position measured from TF
 # docker compose run --rm selftest-db        -> selftest with its events written to PostgreSQL
 # docker compose run --rm selftest-viz       -> + read-only browser view: viz_check (page, PNGs, overlay, JSON)
-# docker compose up demo                     -> interactive demo, browser view at http://localhost:8080
+# docker compose run --rm selftest-cmd      -> browser commands: white list, refusals, demo scenario (cmd_check)
+# docker compose up demo                     -> interactive demo, browser view + buttons at http://localhost:8080
 #                                               (second terminal: ./docker/cli.sh)
 services:
   db:
@@ -108,7 +109,15 @@ services:
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-viz"]
 
-  # Interactive demo: headless simulation + read-only browser view. No host networking: the only
+  selftest-cmd:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-cmd"]
+
+  # Interactive demo: headless simulation + browser view with white-listed command buttons. No host networking: the only
   # thing reachable from the host is the web view, and only on the host's own 127.0.0.1.
   demo:
     build:

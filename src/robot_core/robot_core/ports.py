@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Protocol
+from typing import Any, Dict, Mapping, Optional, Protocol, Tuple
 
 from robot_core.models import BoxObstacle, JointTarget, MotionResult, ObjectInfo, PoseTarget
 
@@ -32,6 +32,11 @@ class ScenePort(Protocol):
 class StatePort(Protocol):
     def joint_positions(self) -> Optional[Dict[str, float]]:
         """Latest joint positions by name, or None if nothing was received yet."""
+
+
+class ToolPositionPort(Protocol):
+    def tool_position(self) -> Optional[Tuple[float, float, float]]:
+        """Measured tool position in the world frame (from TF), or None if it cannot be read."""
 
 
 class EventSink(Protocol):

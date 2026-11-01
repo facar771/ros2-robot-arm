@@ -25,6 +25,42 @@ function fill(tbody, rows) {
   }));
 }
 
+const FOOTER_READ_ONLY = $('footer').textContent;
+const FOOTER_COMMANDS = 'Komutlar açık: yalnızca beyaz listedeki komutlar çalışır '
+  + '(home, objects, above, demo_scenario); aynı anda tek komut. Yenileme ~5 Hz.';
+let busy = false;
+
+function setBusy(running) {
+  busy = running;
+  document.querySelectorAll('#commands button').forEach((b) => { b.disabled = running; });
+}
+
+async function sendCommand(line) {
+  const msg = $('cmd-msg');
+  msg.className = 'msg';
+  msg.textContent = '> ' + line + ' ...';
+  setBusy(true);
+  try {
+    const r = await fetch('/api/command', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: line }),
+    });
+    const j = await r.json();
+    const text = j.message || j.error || ('HTTP ' + r.status);
+    msg.className = r.ok ? 'msg' : 'msg err';
+    msg.textContent = (r.ok ? '[+] ' : '[-] (' + r.status + ') ') + text;
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = '[-] sunucuya ulaşılamadı';
+  }
+  refreshState();
+}
+
+document.querySelectorAll('[data-cmd]').forEach((b) =>
+  b.addEventListener('click', () => sendCommand(b.dataset.cmd)));
+document.querySelectorAll('[data-above]').forEach((b) =>
+  b.addEventListener('click', () => sendCommand('above ' + b.dataset.above + ' ' + $('height').value)));
+
 async function refreshState() {
   const badge = $('status');
   try {
@@ -34,6 +70,13 @@ async function refreshState() {
     fill($('joints').tBodies[0], (s.joints || []).map((j) => [j.name, j.rad.toFixed(3), j.deg.toFixed(1)]));
     $('tool-link').textContent = s.tool ? s.tool.link : '-';
     $('tool').textContent = s.tool ? 'x, y, z = ' + fmt(s.tool.position) + ' m' : 'TF yok';
+    const enabled = s.commands.enabled;
+    $('commands').hidden = !enabled;
+    $('footer').textContent = enabled ? FOOTER_COMMANDS : FOOTER_READ_ONLY;
+    if (enabled) {
+      setBusy(s.command.running);
+      if (s.command.log.length) $('cmd-log').textContent = s.command.log.join('\n');
+    }
     const age = s.camera.rgb_age_s;
     const fresh = age !== null && age < 2;
     badge.textContent = fresh ? 'canlı' : 'kamera akmıyor';
