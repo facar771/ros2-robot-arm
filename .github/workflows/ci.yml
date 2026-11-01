@@ -21,6 +21,15 @@ jobs:
       - run: pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic
       - run: ruff check src
       - run: python -m pytest
+      - name: Vision core validation report (measured vs. world-file geometry)
+        run: |
+          pip install matplotlib
+          PYTHONPATH=src/robot_core:src/robot_vision python -m robot_vision.validate --out /tmp/vision
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-validation
+          path: /tmp/vision
 
   data:
     name: Data layer on PostgreSQL

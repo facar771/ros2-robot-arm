@@ -13,6 +13,7 @@ src/
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
   robot_data/            ROS'suz veri katmanı: SQLAlchemy 2 + Alembic (SQLite testler, PostgreSQL üretim)
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
+  robot_vision/          ROS'suz görüntü çekirdeği: Detector, Tracker, DepthGeometry (nesne ölçüleri, tutma adayları)
   robot_viz/             salt okunur tarayıcı görünümü: web_view düğümü + viz_check (mantık robot_core.viz / webview'de)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
@@ -194,6 +195,25 @@ Ayrıca Terminal 1'in ilk 60 ve son 40 satırını, RViz'de **Displays** panelin
 (Error/Warning) görünen ekranın adını ve altındaki mesajı ekle. Pencere hiç açılmıyorsa (dev
 kabuğunda) `ros2 run rviz2 rviz2` ve `LIBGL_ALWAYS_SOFTWARE=1 ros2 launch ... headless:=false ...`
 komutlarını ayrı ayrı dene ve çıktılarını yapıştır.
+
+## Görüntü çekirdeği (Vision V1)
+`src/robot_vision` ROS'a bağımlı değildir (yalnızca numpy). Algı paketlerinin ve ileride "paketlerin"
+(plugin) kullanacağı yapı taşlarını verir: `ColorDetector` (yerine ONNX/YOLO tipi bir dedektör
+takılabilir; arayüz `Detector.detect(frame) -> [Segment]`), `Tracker` (kimlik sürekliliği, kayıp/yeniden
+bulma, Kalman süzgeci) ve `measure()` (segmentten 3B ölçüler: nesne merkezi, boyut, yönlü kutu,
+kameraya en yakın/en uzak görünür nokta, kenar noktaları, tutma adayları). Ayrıntı ve varsayımlar:
+`docs/INTERFACES.md`.
+
+Doğrulama, `workspace.sdf`'teki gerçek ölçülerle (kutu 6 cm, küre r=4 cm, silindir r=3 cm h=10 cm)
+yapılır ve hata tablosu üretir:
+```bash
+# WSL'de (repo kökünde; ROS ya da Docker gerekmez)
+pip install numpy matplotlib
+PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.validate --out /tmp/vision
+# -> /tmp/vision/vision_v1_dogrulama.md (tablo) + vision_v1_hata.png (hata / tolerans)
+```
+Gazebo'dan gerçek kare yakalamak için (simülasyon açıkken, `dev` kabuğunda):
+`python3 src/robot_vision/tools/capture_frame.py /tmp/frame.npz`.
 
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
