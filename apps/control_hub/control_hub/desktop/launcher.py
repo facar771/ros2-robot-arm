@@ -17,7 +17,7 @@ import urllib.request
 from typing import List, Optional
 
 from control_hub import cli
-from control_hub.desktop.winconsole import hide_console_if_owned
+from control_hub.desktop.winconsole import ensure_utf8_output, hide_console_if_owned
 
 
 def _setup_file_log() -> None:
@@ -67,6 +67,7 @@ def gui_selftest() -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    ensure_utf8_output()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == '--gui-selftest':
         return gui_selftest()

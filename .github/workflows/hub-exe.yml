@@ -45,6 +45,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt pyinstaller
 
+      # Tk bu runner'da açılıyor mu? (pencere testleri ve --gui-selftest buna bağlı). Bilgi amaçlı; tam hata
+      # metnini annotation'a yazar, çünkü CI log'u okunamıyor.
+      - name: Tk tanılama (bilgi amaçlı)
+        continue-on-error: true
+        run: |
+          $py = (Get-Command python).Source
+          $tclDir = Join-Path (Split-Path $py) 'tcl'
+          $icons = Get-ChildItem $tclDir -Recurse -Filter 'icons.tcl' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          $out = python -c "import os,sys,tkinter; print(sys.version); print('TCL_LIBRARY=', os.environ.get('TCL_LIBRARY')); print('TK_LIBRARY=', os.environ.get('TK_LIBRARY')); r=tkinter.Tk(); print('Tk OK', r.tk.call('info','patchlevel')); r.destroy()" 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          $t = ("rc=$rc`nicons.tcl: $icons`n$out").Trim()
+          if ($t.Length -gt 2500) { $t = $t.Substring(0, 2500) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0) { 'notice' } else { 'warning' }
+          Write-Host "::$level title=Tk tanılama rc=$rc::$t"
+
       # Bilgi amaçlı: Windows'ta yollar, güvenlik duvarı mantığı, Tk penceresi. Başarısızlık .exe'yi engellemez
       # (Linux'taki `hub` işi zorunlu kapıdır) ama annotation'da görünür.
       - name: Testler (Windows'ta, bilgi amaçlı)

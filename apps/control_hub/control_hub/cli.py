@@ -125,6 +125,8 @@ def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    from control_hub.desktop.winconsole import ensure_utf8_output
+    ensure_utf8_output()
     args = build_parser().parse_args(argv)
     if args.firewall_help:
         print_firewall_help(args.port)

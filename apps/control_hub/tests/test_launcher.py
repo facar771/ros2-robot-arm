@@ -47,3 +47,24 @@ def test_firewall_help_prints_commands_and_changes_nothing(capsys, monkeypatch):
 def test_check_config_via_cli_entry(capsys):
     assert launcher.main(['--fake', '--check-config']) == 0
     assert 'geçerli' in capsys.readouterr().out
+
+
+def test_turkish_output_survives_a_cp1252_console(monkeypatch):
+    """CI'daki gerçek hata: Windows konsolu cp1252 iken 'ı' yazmak .exe'yi çökertiyordu."""
+    import io
+
+    from control_hub.desktop.winconsole import ensure_utf8_output
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding='cp1252', errors='strict')
+    monkeypatch.setattr(sys, 'stdout', stream)
+    monkeypatch.setattr(sys, 'stderr', io.TextIOWrapper(io.BytesIO(), encoding='cp437'))
+    try:
+        print('Yapılandırma geçerli')
+        raise AssertionError('cp1252 ı yazamamalıydı (test geçerli değil)')
+    except UnicodeEncodeError:
+        pass
+    ensure_utf8_output(platform='linux')
+    print('Yapılandırma geçerli: şğüöç İ')
+    sys.stdout.flush()
+    assert 'Yapılandırma geçerli: şğüöç İ' in raw.getvalue().decode('utf-8')
+    print('ekstra', file=sys.stderr)                 # stderr de çökmemeli
