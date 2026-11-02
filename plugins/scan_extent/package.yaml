@@ -1,0 +1,24 @@
+name: scan_extent
+version: 0.1.0
+description: >-
+  Ortamdaki tüm renkli nesneleri listeler ve her birinin 3B ölçülerini verir (şimdilik tek bakış;
+  PR-V4'te kamera dönerek tarama eklenir).
+entry: main:Plugin
+permissions: [camera:read]
+parameters:
+  type: object
+  properties:
+    max_aperture:
+      type: number
+      minimum: 0.01
+      maximum: 0.2
+      default: 0.08
+tools:
+  - name: scan_extent
+    description: >-
+      Kameranın şu an gördüğü tüm renkli nesneleri (en büyük önce) ve 3B ölçülerini döndürür.
+      Robotu HAREKET ETTİRMEZ.
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false

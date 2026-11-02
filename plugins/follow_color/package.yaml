@@ -1,0 +1,47 @@
+name: follow_color
+version: 0.1.0
+description: >-
+  Verilen renkteki nesneyi kamerayla izler; nesne yer değiştirince robotu yeniden onun üstüne gönderir.
+  Her hareket Robot API v1 iş kuyruğundan geçer (güvenli çalışma kutusu, hız tavanı, acil dur).
+entry: main:Plugin
+permissions: [camera:read, robot:jobs]
+parameters:
+  type: object
+  properties:
+    poll_s:
+      type: number
+      minimum: 0.1
+      maximum: 5
+      default: 0.5
+      description: Kamera/izleme döngüsünün periyodu (s).
+tools:
+  - name: follow_color
+    description: >-
+      Verilen renkteki nesnenin üstünde kalmaya çalışır: nesne min_move_m'den fazla yer değiştirdikçe
+      'above <renk> <yükseklik>' işi gönderir. duration_s dolunca, nesne kaybolunca, acil dur olunca
+      ya da eklenti durdurulunca biter. Robotu HAREKET ETTİRİR (işler robotun güvenli kutusuyla sınırlı).
+    input_schema:
+      type: object
+      properties:
+        color:
+          type: string
+          enum: [red, green, blue]
+        height_m:
+          type: number
+          minimum: 0
+          maximum: 0.5
+          default: 0.30
+          description: Aletin nesnenin üst yüzeyinden yüksekliği (m).
+        duration_s:
+          type: number
+          minimum: 1
+          maximum: 300
+          default: 20
+        min_move_m:
+          type: number
+          minimum: 0.005
+          maximum: 0.3
+          default: 0.03
+          description: Bu kadar yer değiştirmeyen nesne için yeni iş gönderilmez.
+      required: [color]
+      additionalProperties: false

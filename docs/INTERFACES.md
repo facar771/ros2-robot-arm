@@ -198,6 +198,81 @@ yok sayıyordu; yalın bir komut tekrarıyla yeniden üretildi), **yer çekimi k
 bağlantı başına `<gravity>false</gravity>`'ı yok sayıp hedefi düşürüyordu), fizik adımı 10 ms ve gerçek zaman faktörü 0.4
 (2 CPU + yazılımsal görüntülemede köprü aç kalıp komutları gecikmeli iletiyordu).
 
+## Plugin v1 (paketler) — `robot_plugins`, `plugins/`
+Algı/beceri yeteneklerini paket olarak yazmak ve LLM'in çağıracağı **araç** olarak sunmak için (ROS'suz).
+Her paket `plugins/<ad>/` altında bir dizindir: `package.yaml` + giriş modülü (`main.py`). **Yalnızca bu
+depodan gelen, gözden geçirilmiş paketler** çalıştırılır; zip yükleme/uzaktan kod yüklemesi YOKTUR
+(tasarım: `docs/plugin-upload-design.md`). İzinler paketin eline verilen API nesneleriyle uygulanır,
+işletim sistemi sandbox'ı değildir: paket *güvenilir kod* sayılır.
+
+### `package.yaml`
+| Anahtar | Anlam |
+|---|---|
+| `name` | `a-z`, rakam, `_`; 2-40 karakter; **dizin adıyla aynı** |
+| `version` | `MAJOR.MINOR.PATCH` |
+| `description` | insan okur |
+| `entry` | `modül:Sınıf` (`main:Plugin`); modül paket dizinindeki `.py`, sınıf `robot_plugins.PluginBase` alt sınıfı |
+| `permissions` | `camera:read` (kare okuma), `robot:jobs` (Robot API v1 iş kuyruğu: `state`/`submit_job`/`job`/`cancel`). **`robot:stop` istenmez ve elinden alınamaz**: her pakette `ctx.robot.stop()` çalışır; manifestte `deny`/bilinmeyen izin geçersizdir. Paketin `reset` yetkisi yoktur (kilidi yalnızca insan açar) |
+| `parameters` | JSON-Schema alt kümesi (`type object`); varsayılanlar uygulanır, `enable` sırasında doğrulanır |
+| `tools[]` | `name`, `description` (LLM bunu okur), `input_schema` (JSON-Schema alt kümesi). **LLM araç katmanı (Robot sohbetinin Aşama 7'si) bu listeyi olduğu gibi alır:** `Manifest.describe()['tools']` |
+
+JSON-Schema alt kümesi (`robot_plugins.schema`): `type` (object/array/string/number/integer/boolean/null),
+`properties`, `required`, `additionalProperties: false`, `enum`, `minimum`/`maximum`, `minLength`/`maxLength`,
+`pattern`, `items`, `minItems`/`maxItems`, `default`. Başka anahtar **manifestte hata** verir (vaat edilip
+uygulanmayan doğrulama olmasın).
+
+### Araç sözleşmesi
+`PluginBase.call(tool, args) -> dict`; `args` şemaya göre doğrulanmış ve varsayılanları doldurulmuştur.
+Beklenen başarısızlıkta **istisna atma**: `{"ok": false, "error": "..."}` dön (LLM okur). Yönetici her çağrıyı
+`{"ok": true, "data": {...}}` ya da `{"ok": false, "code", "error"}` olarak sarar; `code`: `bad_arguments`,
+`unknown_tool`, `not_running`, `permission_denied`, `stopped`, `timeout`, `robot_<durum>` (ör. `robot_423`),
+`exception`. Uzun işler `ctx.stop` (StopToken) belirtecini en az 0.5 s'de bir yoklamalıdır.
+
+### `PluginContext` (`ctx`)
+`params`, `log(msg)`, `stop` (`is_set`/`wait`/`check`), `camera.latest_frame()` → `robot_vision.Frame`
+(`camera:read`), `robot.submit_job(komut)`, `robot.wait_for_job(id, ctx.stop)`, `robot.state()`,
+`robot.cancel(id)` (`robot:jobs`), `robot.stop(neden)` (her zaman). Hareket **yalnızca** Robot API v1
+üzerinden gider (beyaz listeli komutlar, güvenli çalışma kutusu, hız tavanı, acil dur); `423` alan paket
+yeniden denemez.
+
+### `PluginManager` ve alt süreçler
+Her etkin paket kendi alt sürecinde çalışır (`python -m robot_plugins.runner`; stdin/stdout'ta satır başına
+bir JSON: `call`/`stop` → `ready`/`result`/`log`). Durumlar: `stopped`, `starting`, `running`, `crashed`,
+`invalid` (manifest hatası; listede görünür). `disable`: önce durdurma belirteci, `grace_s` (3 s) sonra
+`SIGTERM`/`SIGKILL`. **Acil dur bağlantısı:** `PluginManager.emergency_stop()` tüm paketlere durdurma
+belirtecini koyar, robota `POST /api/stop` gönderir (başarısız olsa bile paketler durdurulur ve hata
+raporlanır), sonra süreçleri toplar; ardından insan `clear_estop()`/robot `reset` yapana dek paket
+etkinleştirilmez. `watch_robot()` robot `estopped` bildirince (düğme, Hub, herhangi biri) paketleri durdurur;
+ulaşılamayan Robot API'si acil dur sayılmaz.
+
+### Yönetim API (`python -m robot_plugins serve`, varsayılan `127.0.0.1:8770`, robot API'sinden AYRI port)
+| Uç nokta | Anlam |
+|---|---|
+| `GET /api/plugins` | `{"api_version": 1, "plugins": [durum...]}` (geçersiz paketler `status: invalid` + `error` ile) |
+| `GET /api/plugins/<ad>`, `.../logs` | tek paket (+ manifest özeti, araç kataloğu) / son günlük satırları |
+| `POST /api/plugins/<ad>/enable` | gövde `{"params": {...}}` (isteğe bağlı) → durum; `400` parametre, `404` yok, `423` acil dur |
+| `POST /api/plugins/<ad>/disable` | → durum |
+| `POST /api/plugins/estop` | gövde `{"reason": ...}`; tüm paketleri durdurur **ve** robota `/api/stop` yollar |
+
+Koruma, robotun web görünümüyle aynı: yalnızca loopback'e bağlanır (aksi kurucuda hata), `Host` loopback
+olmalı (`403`), yabancı `Origin`/`Sec-Fetch-Site: cross-site` `403`, POST `application/json` (`415`) ve ≤ 4 KB
+(`413`), `PUT/DELETE/PATCH` `405`. Kimlik doğrulama yok: erişim = bu makinede olmak. **Araç çağırma bilerek
+HTTP'ye açılmadı** (`404`): bu, LLM katmanının işidir (`PluginManager.call`). Hub'ın "paketler" paneli bu
+API'yi kullanacak.
+
+### İlk paketler (`plugins/`)
+| Paket | İzin | Araç |
+|---|---|---|
+| `find_object` | `camera:read` | `find_object(color)` → merkez, boyut, şekil, yönlü kutu, kenar noktaları, tutma adayları (`robot_vision`, PR-V1) |
+| `follow_color` | `camera:read`, `robot:jobs` | `follow_color(color, height_m, duration_s, min_move_m)` → nesne yer değiştirdikçe `above <renk> <yükseklik>` işi gönderir; acil dur/iptal/süre dolunca biter |
+| `scan_extent` | `camera:read` | `scan_extent()` → görünen tüm nesneler + ölçüleri (tek bakış; kamerayı döndüren tarama PR-V4'te) |
+
+**Robot API bağımlılığı (dürüst not):** `/api/jobs` ve `/api/stop` bu dalın tabanında (`main`) henüz yoktur;
+Robot sohbetinin açık PR'larındadır (#14 Aşama 6a, #15 Aşama 6b). `HttpRobotApi` bu belgedeki v1
+sözleşmesine göre yazıldı ve **bu sözleşmeyi uygulayan bir test sunucusuyla** doğrulandı; gerçek `web_view`
+ile uçtan uca denenmedi. Camera platformunu (PR-V2) süren bir paket için `platform:rates` izni henüz tanımlı
+değildir (ROS bağımlı; ileride).
+
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
 imza ve açıklamayı düz veri olarak verir). Kurallar: **hiçbir beceri exception fırlatmaz**; her çağrı

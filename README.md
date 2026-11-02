@@ -15,6 +15,8 @@ src/
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
   robot_vision/          ROS'suz görüntü çekirdeği: Detector, Tracker, DepthGeometry, servo (PID + kilit), takip simülasyonu
   robot_vision_ros/      robot_vision'ın ROS adaptörleri: tracking_node (kamera platformunu hedefe kilitler) + tracking_check (selftest)
+  robot_plugins/         paket (plugin) SDK'sı ve yöneticisi (ROS'suz): manifest, izinler, alt süreç yaşam döngüsü, yönetim API'si
+plugins/                 paketler: find_object, follow_color, scan_extent
   robot_viz/             salt okunur tarayıcı görünümü: web_view düğümü + viz_check (mantık robot_core.viz / webview'de)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
@@ -240,6 +242,23 @@ ros2 topic pub --once /tracking/mode std_msgs/msg/String "{data: track}"
 PNG için (matplotlib'li ortamda) `python3 -m robot_vision.tracking_sim --from-json DIR/takip_gazebo.json --out DIR`.
 Metrikler: yakalama süresi (ilk kilide kadar), kilit tutma oranı, RMS piksel / mesafe hatası, kayıp sayısı,
 görüntü damgası → komut gecikmesi (sim saniyesi), yeniden kilit süresi. Eşikler `trajectories.py`'de.
+
+## Paketler / plugin'ler (Vision V3)
+Görüntü işleme yetenekleri `plugins/<ad>/` altında **paket** olarak yazılır (`package.yaml` + `main.py`):
+ad, sürüm, **izinler** (`camera:read`, `robot:jobs`; acil dur `robot:stop` her pakette hep açık), parametre
+şeması ve LLM'in çağıracağı **araçlar** (`tools`, JSON-Schema). `src/robot_plugins` (ROS'suz) paketleri
+alt süreçlerde çalıştırır, acil durla bağlar ve `127.0.0.1:8770`'te küçük bir yönetim API'si sunar. Hareket
+yalnızca Robot API v1 üzerinden (güvenli kutu, hız tavanı, acil dur). İlk paketler: `find_object`,
+`follow_color`, `scan_extent`. Ayrıntı: `docs/INTERFACES.md` ("Plugin v1"); zip yükleme yalnızca tasarım:
+`docs/plugin-upload-design.md`.
+
+```bash
+# WSL'de — Docker/ROS gerekmez, tek terminal (sahte robot + sentetik kamera karesiyle)
+cd ~/ros2-robot-arm && pip install pytest numpy pyyaml
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins list
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins call find_object find_object --args '{"color": "red"}'
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins serve    # sonra: curl -s localhost:8770/api/plugins
+```
 
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını

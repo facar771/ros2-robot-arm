@@ -1,6 +1,7 @@
 [tool.pytest.ini_options]
-testpaths = ["src/robot_core/tests", "src/robot_data/tests", "src/robot_vision/tests"]
-pythonpath = ["src/robot_core", "src/robot_data", "src/robot_vision", "src/robot_vision/tests"]
+testpaths = ["src/robot_core/tests", "src/robot_data/tests", "src/robot_vision/tests", "src/robot_plugins/tests"]
+pythonpath = ["src/robot_core", "src/robot_data", "src/robot_vision", "src/robot_vision/tests",
+    "src/robot_plugins", "src/robot_plugins/tests"]
 addopts = "-q"
 
 [tool.ruff]

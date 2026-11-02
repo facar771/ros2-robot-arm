@@ -1,0 +1,31 @@
+name: find_object
+version: 0.1.0
+description: >-
+  Kamera görüntüsünde renkli bir nesneyi (kırmızı, yeşil, mavi) bulur ve 3B ölçülerini verir:
+  merkez, boyut, şekil, yönlü kutu, kameraya en yakın görünür nokta, kenar noktaları ve tutma adayları.
+entry: main:Plugin
+permissions: [camera:read]
+parameters:
+  type: object
+  properties:
+    max_aperture:
+      type: number
+      minimum: 0.01
+      maximum: 0.2
+      default: 0.08
+      description: Tutucunun açabildiği en geniş aralık (m); tutma adaylarının 'fits' alanını belirler.
+tools:
+  - name: find_object
+    description: >-
+      Verilen renkteki nesneyi kamerada bulur. Bulursa dünya çerçevesinde (metre) konumunu, boyutunu,
+      şeklini (box/cylinder/sphere), kenar noktalarını ve tutma adaylarını döndürür. color='any' ise
+      görünen tüm renkli nesneler döner. Robotu HAREKET ETTİRMEZ.
+    input_schema:
+      type: object
+      properties:
+        color:
+          type: string
+          enum: [red, green, blue, any]
+          default: any
+          description: Aranan renk.
+      additionalProperties: false
