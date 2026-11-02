@@ -1,0 +1,5 @@
+# Python packages the Docker image installs with pip (robot_data). Ubuntu's apt python3-sqlalchemy is
+# 1.4, we need 2.x. numpy/pyyaml/pytest come from apt in the image.
+sqlalchemy>=2.0
+alembic
+psycopg[binary]>=3.1

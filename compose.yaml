@@ -14,7 +14,7 @@
 # docker compose up hub-fake                 -> control hub with a FAKE robot (no ROS), http://localhost:8765
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
     environment:
       POSTGRES_USER: robot
       POSTGRES_PASSWORD: robot
@@ -117,6 +117,22 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-cmd"]
+
+  selftest-stop:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-stop"]
+
+  selftest-jobs:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-jobs"]
 
   # Interactive demo: headless simulation + browser view with white-listed command buttons. No host networking: the only
   # thing reachable from the host is the web view, and only on the host's own 127.0.0.1.
