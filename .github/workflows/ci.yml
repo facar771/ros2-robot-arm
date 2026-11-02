@@ -22,6 +22,14 @@ jobs:
       - run: pip install --require-hashes -r requirements/ci-core.txt
       - run: ruff check src
       - run: python -m pytest
+      - name: Vision core validation report (measured vs. world-file geometry)
+        run: |
+          PYTHONPATH=src/robot_core:src/robot_vision python -m robot_vision.validate --out /tmp/vision
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vision-validation
+          path: /tmp/vision
 
   data:
     name: Data layer on PostgreSQL
@@ -115,8 +123,13 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-stop
       - name: Selftest - async jobs (202, progress, cancel / timeout / e-stop mid-motion, safety limits)
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-jobs
-      - name: Selftest - LLM tool layer (scripted LLM: valid / invalid / unsafe / e-stop, real CLI)
+      - name: "Selftest - LLM tool layer (scripted LLM - valid / invalid / unsafe / e-stop, real CLI)"
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-agent
+      - name: Selftest - camera platform tracks a moving target (4 scenarios, lock criteria)
+        # Not verified in Docker when it was written (the sandbox has no Docker Hub access); the
+        # world needs the bullet-featherstone physics plugin. Does not block the other jobs.
+        continue-on-error: true
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-tracking
       - name: Data layer - selftest events end up in SQLite
         run: >-
           docker run --rm -e ROBOT_DB_URL=sqlite:////tmp/robot.db ros2-robot-arm:ci

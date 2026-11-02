@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent]
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-tracking]
 #   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
@@ -25,6 +25,9 @@
 #                 202 + progress, cancel/timeout/e-stop mid-motion with the arm measured to stop)
 # gazebo-agent  = same stack + the browser with commands enabled; runs only agent_check (robot_agent: valid /
 #                 invalid / unsafe / e-stop requests through a scripted LLM, the real CLI incl. Ctrl-C)
+# gazebo-tracking = NO robot arm: robot_sim/worlds/tracking.sdf (3-DoF camera platform + scripted red target)
+#                 and robot_vision_ros' tracking node; runs only tracking_check (lock behaviour on four
+#                 scenarios, thresholds shared with the unit simulation). Slow: ~5 min (sim runs at 0.4x).
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -49,7 +52,8 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
     gazebo-agent) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent]"; exit 64 ;;
+    gazebo-tracking) LAUNCH=(ros2 launch robot_vision_ros tracking.launch.py); CTRL_TIMEOUT=240 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-tracking]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -121,8 +125,17 @@ controllers_active() {
     [ "$(ros2 control list_controllers 2>/dev/null | grep -c 'active')" -ge 2 ]
 }
 
-wait_for "move_group node" 90 bash -c 'ros2 node list 2>/dev/null | grep -q move_group'
-wait_for "controllers active" "$CTRL_TIMEOUT" controllers_active
+camera_and_joints_ready() {
+    timeout 20 ros2 topic list 2>/dev/null | grep -q '^/camera/image$' \
+        && timeout 20 ros2 topic list 2>/dev/null | grep -q '^/platform/joint_states$'
+}
+
+if [ "$MODE" = "gazebo-tracking" ]; then
+    wait_for "camera + platform joint states" "$CTRL_TIMEOUT" camera_and_joints_ready
+else
+    wait_for "move_group node" 90 bash -c 'ros2 node list 2>/dev/null | grep -q move_group'
+    wait_for "controllers active" "$CTRL_TIMEOUT" controllers_active
+fi
 
 STATUS=0
 if [ "$MODE" = "gazebo-perception" ]; then
@@ -141,6 +154,23 @@ elif [ "$MODE" = "gazebo-jobs" ]; then
     timeout 900 ros2 run robot_viz jobs_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-agent" ]; then
     timeout 900 ros2 run robot_viz agent_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+elif [ "$MODE" = "gazebo-tracking" ]; then
+    timeout 1500 ros2 run robot_vision_ros tracking_check --out /tmp/tracking 2>&1 | tee /tmp/tracking_check.log
+    STATUS=${PIPESTATUS[0]}
+    # CI logs cannot be read through the API, annotations can: publish the outcome as annotations
+    annotate() {  # annotate <level> <title> <file> <lines>
+        local body
+        body=$(tail -n "$4" "$3" 2>/dev/null | tr -d '\r' | head -c 3000 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+        echo "::$1 title=$2::$body"
+    }
+    annotate "$([ $STATUS -eq 0 ] && echo notice || echo error)" "tracking_check exit=$STATUS" /tmp/tracking_check.log 40
+    if [ $STATUS -ne 0 ]; then
+        annotate error "tracking launch log (tail)" "$LOG" 40
+        annotate error "gz / bridge processes and topics" /dev/null 1
+        { ps -eo pid,args | grep -E "gz sim|parameter_bridge|tracking_node" | grep -v grep | cut -c1-160; \
+          timeout 20 ros2 topic list 2>&1 | head -30; } > /tmp/diag.txt 2>&1
+        annotate error "diag: processes + topics" /tmp/diag.txt 40
+    fi
 else
     timeout 180 ros2 run robot_controller selftest 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 fi

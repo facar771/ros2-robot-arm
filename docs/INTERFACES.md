@@ -323,6 +323,161 @@ Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. 
 `error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`, `estop` (her acil dur), `agent_tool_call` (`status` ok/dry_run değilse),
 `selftest_check` (`ok=false`), `skill_result` (`ok=false`), `scenario_result` (`ok=false`), `error`.
 
+## Görüntü çekirdeği (`robot_vision`, ROS'suz)
+`robot_vision` yalnızca numpy kullanır; ROS'a ve `robot_*` paketlerinin geri kalanına dokunmaz
+(`robot_core.perception`'dan renk sınıfları, `Intrinsics` ve `Transform`'u kullanır).
+
+| Parça | Arayüz |
+|---|---|
+| `Frame` | `rgb` (H,W,3 uint8), `depth` (H,W, z-derinliği m), `intrinsics`, `world_from_optical`, `stamp` (s) |
+| `Detector.detect(frame) -> [Segment]` | `Segment`: `label`, piksel indeksleri `rows`/`cols`, `score`. Hata fırlatmaz. `ColorDetector` HSV + bağlı bileşenler (`robot_core.perception` ile aynı renk sınıfları) |
+| `measure(frame, segment, cfg=None, origin=None) -> ObjectMeasure \| None` | Geçerli derinlikli < 20 nokta varsa `None` |
+| `Tracker.update(observations, stamp) -> [Track]` | `Observation(label, position, size)`; `Track`: `id` (asla yeniden kullanılmaz), `state` (`confirmed`/`lost`), `position`, `velocity`, `time_since_seen` |
+
+`ObjectMeasure` alanları (hepsi `world`, metre): `shape` (`box`/`cylinder`/`sphere`/`unknown`),
+`center`, `size` (eksen hizalı), `height` (= üst - zemin), `radius`, `obb_*` (yönlü kutu: `a ≥ b`,
+`yaw` rad), `nearest`/`farthest` (kameraya göre **görünür** en yakın/en uzak nokta),
+`edge_points` (kutu: 8 köşe; silindir: üst/alt kenar noktaları; küre: 6 uç nokta; ayrıca `nearest`,
+`top_center`), `distances_from(nokta)` (her kenar noktasına mesafe), `grasps` (tutma adayları:
+`kind` `top`/`side`, `position`, `approach`, `yaw`, `width`, `fits` = `width ≤ max_aperture`).
+
+Varsayımlar (kodda belgeli, testle sınanır): nesne zemine oturur ve ekseni dikeydir; üst yüz
+kameradan görünür; **arka yüz görünmez**, bu yüzden `farthest` nesnenin gerçek uzak ucu DEĞİL, görünür
+en uzak noktadır. Şekil tahmini sezgiseldir (küre-uydurma kalıntısı + düz üst yüzün ayak izine oranı +
+üst yüzün dolgusu); emin değilse `unknown` döner ve yönlü kutu yine verilir. Eşikler derinlik
+gürültüsü σ ≤ 3 mm için ayarlıdır (σ = 5 mm'de kutu bazen silindire kayar; Gazebo kamerası gürültüsüzdür).
+Doğrulama: `python3 -m robot_vision.validate` (`README.md`, "Görüntü çekirdeği").
+
+## Kamera platformu ve hedefe kilitlenme (`robot_vision_ros`, `tracking.sdf`)
+Kolsuz ayrı dünya: `ros2 launch robot_vision_ros tracking.launch.py [headless:=true] [tracker:=true]`. Hepsi
+simüle zamanda (`use_sim_time`).
+
+| Konu | Arayüz |
+|---|---|
+| Kamera | `/camera/{image,depth_image,camera_info}` (320×240, yatay FOV 1.047, 10 Hz); kamera platformla hareket eder, TF yayımlanmaz (konum `/platform/joint_states`'ten, `robot_vision.platform` ileri kinematiği) |
+| Eklem durumu | `/platform/joint_states` (`sensor_msgs/JointState`: `yaw_joint` rad, `slide_joint` m, `pitch_joint` rad; konum + hız; fizik adımı hızında, 100 Hz) |
+| Hız komutları | `/platform/{yaw,slide,pitch}_joint/cmd_vel` (`std_msgs/Float64`, rad/s ya da m/s). **Komut yeni komut gelene kadar sürer**: düğüm kapanırken sıfır yayımlar. Sınırlar: yaw ±1.2 rad (1.5 rad/s), slide 0-2.5 m (0.8 m/s), pitch -0.6..1.2 rad (1.0 rad/s); pitch artı = kamera AŞAĞI bakar |
+| Hedef | `/world/tracking/set_pose` (`ros_gz_interfaces/srv/SetEntityPose`, köprülü gz servisi); model adı `target`; yalnızca `set_pose` ile hareket eder |
+| Mod | `/tracking/mode` (`std_msgs/String`): `idle` (varsayılan, hızlar sıfır) · `track` (kırmızı nesneyi izle) · `home` (platformu başlangıç pozuna götür). Mod mesajını birkaç kez yayımla (tek mesaj keşif yarışında kaybolabilir) |
+| Durum | `/tracking/status` (`std_msgs/String`, JSON): `track` modunda her görüntüde `stamp` (görüntü damgası, sim s), `visible`, `pixel_error` (px), `distance_error` (m), `in_window`, `locked`, `timer`, `track`, `q`, `cmd`; `home` modunda `homed`, `q` |
+| Mesafe tanımı | Kırmızı segmentin **görünen yüzeyinin** ortalama z-derinliği (kürenin merkezi değil); varsayılan ayar noktası 2.0 m |
+
+Kontrol akışı: renk dedektörü → segmentin 3B merkezi (kamera çerçevesi) → görüntü zamanındaki eklemlerle dünya çerçevesine
+→ `robot_vision.Tracker` (dünya çerçevesinde, hedefin kendi hızı) → güncel kamera pozuna göre hata + görüş hattı hızının
+ileri beslemesi → PID → hız komutu. Gazebo notları (tasarım kararları, `tracking.sdf` içinde de yazılı): fizik motoru
+**bullet-featherstone** (varsayılan DART, tek zincirde üç hız-aktüatörüyle, ilk doygun hızı saniyelerce tutup sonraki komutları
+yok sayıyordu; yalın bir komut tekrarıyla yeniden üretildi), **yer çekimi kapalı** (hedef serbest cisim; bullet-featherstone
+bağlantı başına `<gravity>false</gravity>`'ı yok sayıp hedefi düşürüyordu), fizik adımı 10 ms ve gerçek zaman faktörü 0.4
+(2 CPU + yazılımsal görüntülemede köprü aç kalıp komutları gecikmeli iletiyordu).
+
+## Plugin v1 (paketler) — `robot_plugins`, `plugins/`
+Algı/beceri yeteneklerini paket olarak yazmak ve LLM'in çağıracağı **araç** olarak sunmak için (ROS'suz).
+Her paket `plugins/<ad>/` altında bir dizindir: `package.yaml` + giriş modülü (`main.py`). **Yalnızca bu
+depodan gelen, gözden geçirilmiş paketler** çalıştırılır; zip yükleme/uzaktan kod yüklemesi YOKTUR
+(tasarım: `docs/plugin-upload-design.md`). İzinler paketin eline verilen API nesneleriyle uygulanır,
+işletim sistemi sandbox'ı değildir: paket *güvenilir kod* sayılır.
+
+### `package.yaml`
+| Anahtar | Anlam |
+|---|---|
+| `name` | `a-z`, rakam, `_`; 2-40 karakter; **dizin adıyla aynı** |
+| `version` | `MAJOR.MINOR.PATCH` |
+| `description` | insan okur |
+| `entry` | `modül:Sınıf` (`main:Plugin`); modül paket dizinindeki `.py`, sınıf `robot_plugins.PluginBase` alt sınıfı |
+| `permissions` | `camera:read` (kare okuma), `camera:pan` (kamerayı döndürme: `ctx.camera.pan`), `robot:jobs` (Robot API v1 iş kuyruğu: `state`/`submit_job`/`job`/`cancel`). **`robot:stop` istenmez ve elinden alınamaz**: her pakette `ctx.robot.stop()` çalışır; manifestte `deny`/bilinmeyen izin geçersizdir. Paketin `reset` yetkisi yoktur (kilidi yalnızca insan açar) |
+| `parameters` | JSON-Schema alt kümesi (`type object`); varsayılanlar uygulanır, `enable` sırasında doğrulanır |
+| `tools[]` | `name`, `description` (LLM bunu okur), `input_schema` (JSON-Schema alt kümesi). **LLM araç katmanı (Robot sohbetinin Aşama 7'si) bu listeyi olduğu gibi alır:** `Manifest.describe()['tools']` |
+
+JSON-Schema alt kümesi (`robot_plugins.schema`): `type` (object/array/string/number/integer/boolean/null),
+`properties`, `required`, `additionalProperties: false`, `enum`, `minimum`/`maximum`, `minLength`/`maxLength`,
+`pattern`, `items`, `minItems`/`maxItems`, `default`. Başka anahtar **manifestte hata** verir (vaat edilip
+uygulanmayan doğrulama olmasın).
+
+### Araç sözleşmesi
+`PluginBase.call(tool, args) -> dict`; `args` şemaya göre doğrulanmış ve varsayılanları doldurulmuştur.
+Beklenen başarısızlıkta **istisna atma**: `{"ok": false, "error": "..."}` dön (LLM okur). Yönetici her çağrıyı
+`{"ok": true, "data": {...}}` ya da `{"ok": false, "code", "error"}` olarak sarar; `code`: `bad_arguments`,
+`unknown_tool`, `not_running`, `permission_denied`, `stopped`, `timeout`, `robot_<durum>` (ör. `robot_423`),
+`exception`. Uzun işler `ctx.stop` (StopToken) belirtecini en az 0.5 s'de bir yoklamalıdır.
+
+### `PluginContext` (`ctx`)
+`params`, `log(msg)`, `stop` (`is_set`/`wait`/`check`), `camera.latest_frame()` → `robot_vision.Frame`
+(`camera:read`), `robot.submit_job(komut)`, `robot.wait_for_job(id, ctx.stop)`, `robot.state()`,
+`robot.cancel(id)` (`robot:jobs`), `robot.stop(neden)` (her zaman), `camera.pan.limits/move_to(yaw)/frame()` (`camera:pan`; `robot_vision.scan.Panner` arayüzü). Hareket **yalnızca** Robot API v1
+üzerinden gider (beyaz listeli komutlar, güvenli çalışma kutusu, hız tavanı, acil dur); `423` alan paket
+yeniden denemez.
+
+### `PluginManager` ve alt süreçler
+Her etkin paket kendi alt sürecinde çalışır (`python -m robot_plugins.runner`; stdin/stdout'ta satır başına
+bir JSON: `call`/`stop` → `ready`/`result`/`log`). Durumlar: `stopped`, `starting`, `running`, `crashed`,
+`invalid` (manifest hatası; listede görünür). `disable`: önce durdurma belirteci, `grace_s` (3 s) sonra
+`SIGTERM`/`SIGKILL`. **Acil dur bağlantısı:** `PluginManager.emergency_stop()` tüm paketlere durdurma
+belirtecini koyar, robota `POST /api/stop` gönderir (başarısız olsa bile paketler durdurulur ve hata
+raporlanır), sonra süreçleri toplar; ardından insan `clear_estop()`/robot `reset` yapana dek paket
+etkinleştirilmez. `watch_robot()` robot `estopped` bildirince (düğme, Hub, herhangi biri) paketleri durdurur;
+ulaşılamayan Robot API'si acil dur sayılmaz.
+
+### Yönetim API (`python -m robot_plugins serve`, varsayılan `127.0.0.1:8770`, robot API'sinden AYRI port)
+| Uç nokta | Anlam |
+|---|---|
+| `GET /api/plugins` | `{"api_version": 1, "plugins": [durum...]}` (geçersiz paketler `status: invalid` + `error` ile) |
+| `GET /api/plugins/<ad>`, `.../logs` | tek paket (+ manifest özeti, araç kataloğu) / son günlük satırları |
+| `POST /api/plugins/<ad>/enable` | gövde `{"params": {...}}` (isteğe bağlı) → durum; `400` parametre, `404` yok, `423` acil dur |
+| `POST /api/plugins/<ad>/disable` | → durum |
+| `POST /api/plugins/estop` | gövde `{"reason": ...}`; tüm paketleri durdurur **ve** robota `/api/stop` yollar |
+
+Koruma, robotun web görünümüyle aynı: yalnızca loopback'e bağlanır (aksi kurucuda hata), `Host` loopback
+olmalı (`403`), yabancı `Origin`/`Sec-Fetch-Site: cross-site` `403`, POST `application/json` (`415`) ve ≤ 4 KB
+(`413`), `PUT/DELETE/PATCH` `405`. Kimlik doğrulama yok: erişim = bu makinede olmak. **Araç çağırma bilerek
+HTTP'ye açılmadı** (`404`): bu, LLM katmanının işidir (`PluginManager.call`). Hub'ın "paketler" paneli bu
+API'yi kullanacak.
+
+### İlk paketler (`plugins/`)
+| Paket | İzin | Araç |
+|---|---|---|
+| `find_object` | `camera:read` | `find_object(color)` → merkez, boyut, şekil, yönlü kutu, kenar noktaları, tutma adayları (`robot_vision`, PR-V1) |
+| `follow_color` | `camera:read`, `robot:jobs` | `follow_color(color, height_m, duration_s, min_move_m)` → nesne yer değiştirdikçe `above <renk> <yükseklik>` işi gönderir; acil dur/iptal/süre dolunca biter |
+| `scan_extent` (v0.2) | `camera:read`, `camera:pan` | `scan_extent(yaw_min_deg, yaw_max_deg, steps)` → kamerayı döndürerek tarar, görüntüleri birleştirir: nesne listesi + 3B ölçüler. Döndürülebilir kamera yoksa tek bakışa düşer ve `swept: false` + `note` ile söyler |
+
+**Robot API bağımlılığı (dürüst not):** `/api/jobs` ve `/api/stop` bu dalın tabanında (`main`) henüz yoktur;
+Robot sohbetinin açık PR'larındadır (#14 Aşama 6a, #15 Aşama 6b). `HttpRobotApi` bu belgedeki v1
+sözleşmesine göre yazıldı ve **bu sözleşmeyi uygulayan bir test sunucusuyla** doğrulandı; gerçek `web_view`
+ile uçtan uca denenmedi. Camera platformunu (PR-V2) süren bir paket için `platform:rates` izni henüz tanımlı
+değildir (ROS bağımlı; ileride).
+
+## Tarama, ONNX dedektörü ve LLM araç katmanı (PR-V4)
+**Pan taraması** (`robot_vision.scan`, ROS'suz): `scan(panner, ScanConfig(yaw_min, yaw_max, steps, merge_distance), ...)`.
+`Panner` = dönebilen kamera (`limits`, `move_to(yaw)`, `frame()`; kare, o açıdaki kamera pozunu taşır). Her görüntü normal
+dedektör + `measure()`'dan geçer; birden çok görüntüde görülen nesneler **etiket + dünya konumu** (`merge_distance`, 5 cm)
+ile birleştirilir; görüntü kenarında kesik görünen nesne, bütün göründüğü bir görüntü varsa onun ölçümünü **ezmez**
+(`partial` yalnızca hiçbir görüntüde bütün görünmediyse). Sınırlar: kamera nesnelerin üstünü görmeli (V1 varsayımı);
+aynı renkte `merge_distance`'tan yakın iki nesne tek sayılır. Doğrulama: `python3 -m robot_vision.scan_validate`
+(halka dünyası, 6 nesne, tek görüntü en çok 3 nesne görür; `README.md` "Tarama").
+
+**`OnnxDetector`** (`robot_vision.onnx_detector`, isteğe bağlı `onnxruntime`): `Detector` arayüzünü kullanıcının kendi ONNX
+modeliyle sağlar; **depoda model ağırlığı yok**. Girdi `[1,3,H,W]` float32 RGB 0-1 (letterbox), çıktı çözücüleri:
+`xyxy` (`[N,6]`), `yolov8` (`[1,4+C,N]`/`[1,N,4+C]`, NMS içeride), `yolox` (`[1,N,5+C]`, nesnelik × sınıf skoru).
+Kutu → piksel kümesi: kutunun içinde derinliği olan ve dünya çerçevesinde zeminin (`ground_margin`, 1.2 cm) üstündeki
+pikseller; böylece `measure()` zemini değil nesneyi ölçer. Etiketsiz sınıf atlanır. **Lisans:** `docs/vision-model-licenses.md`
+(Ultralytics = AGPL-3.0/Enterprise; Apache-2.0 alternatifleri YOLOX, RT-DETR).
+
+**Canlı kamera:** `PluginManager(..., frames='ros')` / `python3 -m robot_plugins --frames ros ...`
+(`robot_vision_ros.RosFrameSource`; ROS 2 ortamı gerekir, `/camera/{image,depth_image,camera_info}` abone olunur,
+kamera pozu `workspace.sdf`'ten alınan **sabit** kameradır; hareketli kamera platformu için kare başına poz hesabı yok).
+Gerçek Gazebo karesiyle `find_object`: kutu/silindir/küre merkezleri dünya dosyasına ≤ 0.15 cm.
+
+### LLM araç katmanıyla (Robot sohbetinin Aşama 7'si) birleşme noktası
+Araçların **tek kaynağı** paket manifestleridir: `PluginManager.manifest(ad).describe()['tools']` listesi (`name`,
+`description`, `input_schema`; JSON-Schema alt kümesi) doğrudan bir LLM'in araç tanımı olarak verilebilir. Çağrı:
+`PluginManager.call(paket, araç, argümanlar)` her zaman bir `dict` döner: `{"ok": true, "data": {...}}` ya da
+`{"ok": false, "code", "error"}` (`bad_arguments`, `not_running`, `permission_denied`, `stopped`, `timeout`,
+`robot_423`, `exception`); `error` insan/LLM okur, istisna fırlatmaz. Önerilen akış: katman açılışında
+`list()` ile `running` paketlerin araçlarını toplar (`<paket>.<araç>` adlandırması), kullanıcı bir paketi Hub
+panelinden (yönetim API) açıp kapattıkça katalog değişir; acil dur (`/api/plugins/estop` ya da `emergency_stop()`)
+her zaman tüm paketleri durdurur ve `robot_423` alan araç çağrısı **yeniden denenmemelidir**. Hareket yapan araçlar
+(`follow_color`) Robot API v1 iş kuyruğundan geçtiği için LLM katmanı ayrıca bir güvenlik denetimi eklemek zorunda
+değildir; ama araç açıklamaları "HAREKET ETTİRİR / ETTİRMEZ" ifadesini taşır ki LLM ona göre seçsin.
+
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
 imza ve açıklamayı düz veri olarak verir). Kurallar: **hiçbir beceri exception fırlatmaz**; her çağrı
