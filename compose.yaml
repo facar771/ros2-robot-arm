@@ -9,6 +9,7 @@
 # docker compose run --rm selftest-db        -> selftest with its events written to PostgreSQL
 # docker compose run --rm selftest-viz       -> + read-only browser view: viz_check (page, PNGs, overlay, JSON)
 # docker compose run --rm selftest-cmd      -> browser commands: white list, refusals, demo scenario (cmd_check)
+# docker compose run --rm selftest-tracking -> camera platform + moving target: lock behaviour (tracking_check, ~5 min)
 # docker compose up demo                     -> interactive demo, browser view + buttons at http://localhost:8080
 #                                               (second terminal: ./docker/cli.sh)
 # docker compose up hub-fake                 -> control hub with a FAKE robot (no ROS), http://localhost:8765
@@ -117,6 +118,14 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-cmd"]
+
+  selftest-tracking:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-tracking"]
 
   # Interactive demo: headless simulation + browser view with white-listed command buttons. No host networking: the only
   # thing reachable from the host is the web view, and only on the host's own 127.0.0.1.

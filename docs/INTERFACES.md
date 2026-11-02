@@ -176,6 +176,28 @@ en uzak noktadır. Şekil tahmini sezgiseldir (küre-uydurma kalıntısı + düz
 gürültüsü σ ≤ 3 mm için ayarlıdır (σ = 5 mm'de kutu bazen silindire kayar; Gazebo kamerası gürültüsüzdür).
 Doğrulama: `python3 -m robot_vision.validate` (`README.md`, "Görüntü çekirdeği").
 
+## Kamera platformu ve hedefe kilitlenme (`robot_vision_ros`, `tracking.sdf`)
+Kolsuz ayrı dünya: `ros2 launch robot_vision_ros tracking.launch.py [headless:=true] [tracker:=true]`. Hepsi
+simüle zamanda (`use_sim_time`).
+
+| Konu | Arayüz |
+|---|---|
+| Kamera | `/camera/{image,depth_image,camera_info}` (320×240, yatay FOV 1.047, 10 Hz); kamera platformla hareket eder, TF yayımlanmaz (konum `/platform/joint_states`'ten, `robot_vision.platform` ileri kinematiği) |
+| Eklem durumu | `/platform/joint_states` (`sensor_msgs/JointState`: `yaw_joint` rad, `slide_joint` m, `pitch_joint` rad; konum + hız; fizik adımı hızında, 100 Hz) |
+| Hız komutları | `/platform/{yaw,slide,pitch}_joint/cmd_vel` (`std_msgs/Float64`, rad/s ya da m/s). **Komut yeni komut gelene kadar sürer**: düğüm kapanırken sıfır yayımlar. Sınırlar: yaw ±1.2 rad (1.5 rad/s), slide 0-2.5 m (0.8 m/s), pitch -0.6..1.2 rad (1.0 rad/s); pitch artı = kamera AŞAĞI bakar |
+| Hedef | `/world/tracking/set_pose` (`ros_gz_interfaces/srv/SetEntityPose`, köprülü gz servisi); model adı `target`; yalnızca `set_pose` ile hareket eder |
+| Mod | `/tracking/mode` (`std_msgs/String`): `idle` (varsayılan, hızlar sıfır) · `track` (kırmızı nesneyi izle) · `home` (platformu başlangıç pozuna götür). Mod mesajını birkaç kez yayımla (tek mesaj keşif yarışında kaybolabilir) |
+| Durum | `/tracking/status` (`std_msgs/String`, JSON): `track` modunda her görüntüde `stamp` (görüntü damgası, sim s), `visible`, `pixel_error` (px), `distance_error` (m), `in_window`, `locked`, `timer`, `track`, `q`, `cmd`; `home` modunda `homed`, `q` |
+| Mesafe tanımı | Kırmızı segmentin **görünen yüzeyinin** ortalama z-derinliği (kürenin merkezi değil); varsayılan ayar noktası 2.0 m |
+
+Kontrol akışı: renk dedektörü → segmentin 3B merkezi (kamera çerçevesi) → görüntü zamanındaki eklemlerle dünya çerçevesine
+→ `robot_vision.Tracker` (dünya çerçevesinde, hedefin kendi hızı) → güncel kamera pozuna göre hata + görüş hattı hızının
+ileri beslemesi → PID → hız komutu. Gazebo notları (tasarım kararları, `tracking.sdf` içinde de yazılı): fizik motoru
+**bullet-featherstone** (varsayılan DART, tek zincirde üç hız-aktüatörüyle, ilk doygun hızı saniyelerce tutup sonraki komutları
+yok sayıyordu; yalın bir komut tekrarıyla yeniden üretildi), **yer çekimi kapalı** (hedef serbest cisim; bullet-featherstone
+bağlantı başına `<gravity>false</gravity>`'ı yok sayıp hedefi düşürüyordu), fizik adımı 10 ms ve gerçek zaman faktörü 0.4
+(2 CPU + yazılımsal görüntülemede köprü aç kalıp komutları gecikmeli iletiyordu).
+
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
 imza ve açıklamayı düz veri olarak verir). Kurallar: **hiçbir beceri exception fırlatmaz**; her çağrı

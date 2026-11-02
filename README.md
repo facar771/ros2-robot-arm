@@ -13,7 +13,8 @@ src/
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
   robot_data/            ROS'suz veri katmanı: SQLAlchemy 2 + Alembic (SQLite testler, PostgreSQL üretim)
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
-  robot_vision/          ROS'suz görüntü çekirdeği: Detector, Tracker, DepthGeometry (nesne ölçüleri, tutma adayları)
+  robot_vision/          ROS'suz görüntü çekirdeği: Detector, Tracker, DepthGeometry, servo (PID + kilit), takip simülasyonu
+  robot_vision_ros/      robot_vision'ın ROS adaptörleri: tracking_node (kamera platformunu hedefe kilitler) + tracking_check (selftest)
   robot_viz/             salt okunur tarayıcı görünümü: web_view düğümü + viz_check (mantık robot_core.viz / webview'de)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
@@ -34,6 +35,7 @@ docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit e
 docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
 docker compose run --rm selftest-skills      # Skills: aleti nesnenin üstüne götür, uç konumu TF ile ölç
 docker compose run --rm selftest-viz         # tarayıcı görünümü: sayfa, JSON, PNG'ler, bindirme ↔ dünya dosyası, eklem/TF, salt okunur
+docker compose run --rm selftest-tracking    # kamera platformu + hareketli hedef: kilitlenme metrikleri (~5 dk, kolsuz dünya)
 docker compose run --rm selftest-db          # selftest olayları PostgreSQL'e yazılır (compose'taki db servisi)
 docker compose up demo                       # etkileşimli demo + tarayıcıda canlı görünüm (aşağıya bak)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
@@ -214,6 +216,30 @@ PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.validate --ou
 ```
 Gazebo'dan gerçek kare yakalamak için (simülasyon açıkken, `dev` kabuğunda):
 `python3 src/robot_vision/tools/capture_frame.py /tmp/frame.npz`.
+
+## Hareketli hedefe kilitlenme (Vision V2)
+`robot_sim/worlds/tracking.sdf`: 3 serbestlik dereceli kamera platformu (**yaw** → **ileri-geri** (kamera
+yönünde kayma) → **pitch**; İHA'nın yönelme / ileri-geri / yükselme-alçalma eksenlerinin karşılığı) ve `set_pose`
+ile hareket ettirilen kırmızı küre hedef (r = 10 cm). Servo (`robot_vision.servo`): piksel hatası → yaw/pitch
+hızı, derinlik hatası → ileri-geri hız (PID + hedefin görüş hattı hızının ileri beslemesi); **kilit** =
+`|piksel hatası| < 12 px` ve `|mesafe hatası| < 0.15 m` durumunun kesintisiz **4.5 s** sürmesi (mesafe
+2.0 m; hepsi `ServoConfig`'te). Dört deterministik senaryo: doğrusal, sinüs, ani yön değişimi, 1 s kaybolma.
+
+```bash
+# Gazebo'suz hızlı kontrol (kontrol yasasını ayarlamak için; ROS gerekmez) — WSL'de
+pip install numpy matplotlib pyyaml
+PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.tracking_sim --out /tmp/takip
+# Gerçek Gazebo'da (Docker, ~5 dk) — WSL'de
+docker compose run --rm selftest-tracking
+# Elle denemek için: Terminal 1 — WSL'de (dev kabuğunda, colcon build sonrası)
+ros2 launch robot_vision_ros tracking.launch.py headless:=false
+# Terminal 2 — aynı kabukta: hedefi takip et / eve dön / dur
+ros2 topic pub --once /tracking/mode std_msgs/msg/String "{data: track}"
+```
+`ros2 run robot_vision_ros tracking_check --out DIR` dört senaryoyu koşar, `takip_gazebo.md/.json` yazar;
+PNG için (matplotlib'li ortamda) `python3 -m robot_vision.tracking_sim --from-json DIR/takip_gazebo.json --out DIR`.
+Metrikler: yakalama süresi (ilk kilide kadar), kilit tutma oranı, RMS piksel / mesafe hatası, kayıp sayısı,
+görüntü damgası → komut gecikmesi (sim saniyesi), yeniden kilit süresi. Eşikler `trajectories.py`'de.
 
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
