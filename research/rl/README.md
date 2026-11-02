@@ -13,3 +13,6 @@ python scripts/eval_baselines.py 100       # klasik taban -> results/baselines.j
 ```
 
 Ortamlar: `ArmReach-v0`, `ArmReachObstacle-v0`, `ArmTrack-v0` (bkz. `rl_arm/envs.py` başlık açıklaması).
+
+## R2: algoritma karşılaştırması
+`scripts/train.py` (tek koşu), `scripts/run_all.sh` (45 koşu), `scripts/aggregate.py` (tablo+grafik), sonuçlar `results/`, karar belgesi **`REPORT.md`**.

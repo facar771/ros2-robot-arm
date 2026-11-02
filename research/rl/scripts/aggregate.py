@@ -40,8 +40,8 @@ summ = {}
 for task in ("reach", "obstacle", "track"):
     k = PRIM[task]
     lines.append(f"\n## {task} — birincil metrik: {PRIM_TR[task]}\n")
-    lines.append("| algoritma | n tohum | adım | DR=0 | DR=0.5 | DR=1 | ort. mesafe DR=0 (cm) | eğitim (dk) | ilk ≥%50 (adım) |")
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+    lines.append("| algoritma | n tohum | adım | DR=0 | DR=0.5 | DR=1 | ort. mesafe DR=0 (cm) | eğitim (dk) | ilk ≥%50 (adım) | eşit adımda eğri* |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     vals = {}
     for algo in ("sac", "td3", "ppo"):
         rs = runs.get((task, algo), [])
@@ -56,16 +56,19 @@ for task in ("reach", "obstacle", "track"):
             hit = [c["timesteps"] for c in r["curve"] if c[k] >= 0.5]
             first.append(hit[0] if hit else np.nan)
         fs = f"{np.nanmedian(first):.0f} ({int(np.sum(~np.isnan(first)))}/{len(rs)})" if np.any(~np.isnan(first)) else f"ulaşılamadı (0/{len(rs)})"
+        OFF = {"reach": 60000, "obstacle": 80000, "track": 80000}[task]
+        eq = np.array([[c[k] for c in r["curve"] if c["timesteps"] <= OFF][-1] for r in rs])
         f = lambda x: f"{x.mean():.2f} ± {x.std(ddof=1) if len(x) > 1 else 0:.2f}"  # noqa: E731
         lines.append(f"| {NAME[algo]} | {len(rs)} | {rs[0]['args']['steps']} | {f(v[0.0])} | {f(v[0.5])} | {f(v[1.0])} | "
-                     f"{md.mean():.1f} ± {md.std(ddof=1) if len(md) > 1 else 0:.1f} | {tt:.1f} | {fs} |")
+                     f"{md.mean():.1f} ± {md.std(ddof=1) if len(md) > 1 else 0:.1f} | {tt:.1f} | {fs} | {eq.mean():.2f} ± {eq.std(ddof=1) if len(eq)>1 else 0:.2f} |")
         summ[f"{task}|{algo}"] = {str(d): v[d].tolist() for d in v}
     cl = CLASSIC[task]
     lines.append(f"| **{cl}** (öğrenme yok) | – | – | {bl(task,0.0,k):.2f} | {bl(task,0.5,k):.2f} | {bl(task,1.0,k):.2f} | "
-                 f"{bl(task,0.0,'mean_dist')*100:.1f} | ~0 | – |")
+                 f"{bl(task,0.0,'mean_dist')*100:.1f} | ~0 | – | – |")
     if task != "track":
         o = "klasik-DLS-hız"
-        lines.append(f"| {o} | – | – | {bl(task,0.0,k,o):.2f} | {bl(task,0.5,k,o):.2f} | {bl(task,1.0,k,o):.2f} | {bl(task,0.0,'mean_dist',o)*100:.1f} | ~0 | – |")
+        lines.append(f"| {o} | – | – | {bl(task,0.0,k,o):.2f} | {bl(task,0.5,k,o):.2f} | {bl(task,1.0,k,o):.2f} | {bl(task,0.0,'mean_dist',o)*100:.1f} | ~0 | – | – |")
+    lines.append("\n*eşit adımda eğri: aynı ortam-adımı bütçesinde (off-policy bütçesi) 20 bölümlük değerlendirme noktası; PPO'nun 5x fazla adımla kazandığı yanılgısını önlemek için.\n")
     # ikili anlamlılık (DR=0)
     algos = list(vals)
     lines.append("\nİkili karşılaştırma (DR=0 birincil metrik; Welch p / Mann-Whitney p):\n")
