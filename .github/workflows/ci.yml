@@ -18,7 +18,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic
+      # exact versions + hashes (requirements/ci-core.in -> ci-core.txt)
+      - run: pip install --require-hashes -r requirements/ci-core.txt
       - run: ruff check src
       - run: python -m pytest
 
@@ -27,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a
         env:
           POSTGRES_USER: robot
           POSTGRES_PASSWORD: robot
@@ -44,7 +45,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest pyyaml numpy "sqlalchemy>=2.0" alembic "psycopg[binary]>=3.1"
+      - run: pip install --require-hashes -r requirements/ci-data.txt
       - name: robot_data tests (SQLite + PostgreSQL)
         run: python -m pytest src/robot_data/tests
         env:

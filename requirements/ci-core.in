@@ -1,0 +1,8 @@
+# CI job "Lint + unit tests (no ROS)"
+pytest
+ruff
+pyyaml
+numpy
+python-fcl
+sqlalchemy>=2.0
+alembic

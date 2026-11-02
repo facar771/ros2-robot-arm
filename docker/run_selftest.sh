@@ -26,6 +26,7 @@
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
+export PYTHONUNBUFFERED=1     # a check killed by `timeout` must not lose its buffered output
 
 MODE=${1:-${SIM_MODE:-mock}}
 EXTRA=()    # a second launch that runs next to the simulation (browser view)
@@ -44,7 +45,7 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
     gazebo-jobs) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop]"; exit 64 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -52,6 +53,26 @@ source "/opt/ros/${ROS_DISTRO}/setup.bash"
 source /workspace/install/setup.bash
 
 LOG=/tmp/sim_launch.log
+CHECK_LOG=/tmp/selftest_check.log      # what the check printed (the annotation reads this)
+: >"$CHECK_LOG"
+
+# On failure, also write GitHub annotations: people who cannot open the raw CI log can still read
+# these (red boxes on the run page / PR checks). `::error` lines on stdout are picked up by the
+# Actions runner even from inside `docker run`. Harmless anywhere else (just a few extra lines).
+annotate_failure() {  # annotate_failure <headline> <exit code>
+    local headline=$1 code=$2
+    local tool=/usr/local/bin/annotate; [ -x "$tool" ] || tool=/workspace/docker/annotate.py
+    python3 "$tool" --level error --title "selftest $MODE: $headline (çıkış kodu $code)" \
+        --grep '(\[FAIL\]|\[!\]|Traceback|Error|=== )' --last 30 "$CHECK_LOG" || true
+    python3 "$tool" --level error --title "selftest $MODE: kontrol çıktısının sonu" --last 25 \
+        "$CHECK_LOG" || true
+    python3 "$tool" --level warning --title "selftest $MODE: simülasyon (launch) günlüğünün sonu" \
+        --last 20 "$LOG" || true
+    if [ -n "$EXTRA_PID" ]; then
+        python3 "$tool" --level warning --title "selftest $MODE: web_view günlüğünün sonu" \
+            --last 12 "$EXTRA_LOG" || true
+    fi
+}
 # setsid: own process group, so cleanup can stop launch *and* all nodes it started.
 setsid "${LAUNCH[@]}" >"$LOG" 2>&1 &
 LAUNCH_PID=$!
@@ -80,10 +101,12 @@ wait_for() {  # wait_for <description> <timeout_s> <command...>
     local deadline=$((SECONDS + timeout))
     until "$@" >/dev/null 2>&1; do
         if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
-            echo "[!] launch process died while waiting for: $what"; tail -n 60 "$LOG"; exit 2
+            echo "[!] launch process died while waiting for: $what" | tee -a "$CHECK_LOG"
+            tail -n 60 "$LOG"; annotate_failure "launch süreci ölmüş: $what" 2; exit 2
         fi
         if (( SECONDS > deadline )); then
-            echo "[!] timeout waiting for: $what"; tail -n 60 "$LOG"; exit 2
+            echo "[!] timeout waiting for: $what" | tee -a "$CHECK_LOG"
+            tail -n 60 "$LOG"; annotate_failure "zaman aşımı: $what" 2; exit 2
         fi
         sleep 1
     done
@@ -99,27 +122,28 @@ wait_for "controllers active" "$CTRL_TIMEOUT" controllers_active
 
 STATUS=0
 if [ "$MODE" = "gazebo-perception" ]; then
-    timeout 180 ros2 run robot_perception perception_check || STATUS=$?
+    timeout 180 ros2 run robot_perception perception_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-scene" ]; then
-    timeout 400 ros2 run robot_controller perception_scene_check || STATUS=$?
+    timeout 400 ros2 run robot_controller perception_scene_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-skills" ]; then
-    timeout 500 ros2 run robot_controller pose_check || STATUS=$?
+    timeout 500 ros2 run robot_controller pose_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-viz" ]; then
-    timeout 500 ros2 run robot_viz viz_check || STATUS=$?
+    timeout 500 ros2 run robot_viz viz_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-cmd" ]; then
-    timeout 900 ros2 run robot_viz cmd_check || STATUS=$?
+    timeout 900 ros2 run robot_viz cmd_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-stop" ]; then
-    timeout 900 ros2 run robot_viz stop_check || STATUS=$?
+    timeout 900 ros2 run robot_viz stop_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-jobs" ]; then
-    timeout 900 ros2 run robot_viz jobs_check || STATUS=$?
+    timeout 900 ros2 run robot_viz jobs_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 else
-    timeout 180 ros2 run robot_controller selftest || STATUS=$?
+    timeout 180 ros2 run robot_controller selftest 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 fi
 if [ "$MODE" = "gazebo-camera" ]; then
-    timeout 120 ros2 run robot_controller sensor_check || STATUS=$?
+    timeout 120 ros2 run robot_controller sensor_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 fi
 if [ $STATUS -ne 0 ]; then
     echo "----- last launch log lines -----"; tail -n 80 "$LOG"
     if [ -n "$EXTRA_PID" ]; then echo "----- last web_view log lines -----"; tail -n 40 "$EXTRA_LOG"; fi
+    annotate_failure "başarısız" "$STATUS"
 fi
 exit $STATUS
