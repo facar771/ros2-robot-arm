@@ -269,3 +269,15 @@ def test_the_manager_runs_the_shipped_plugins_end_to_end(tmp_path):
         assert out['ok'] and out['data']['objects'][0]['shape'] == 'box'
     finally:
         mgr.shutdown()
+
+
+def test_scan_extent_runs_in_its_own_process_with_the_synthetic_panner():
+    mgr = PluginManager(PLUGINS, panner='synthetic', grace_s=2.0)
+    try:
+        mgr.enable('scan_extent')
+        out = mgr.call('scan_extent', 'scan_extent', {'yaw_min_deg': -100, 'yaw_max_deg': 100,
+                                                      'steps': 9}, timeout=60)
+        assert out['ok'] and out['data']['count'] == 6 and out['data']['views'] == 9
+        assert mgr.call('scan_extent', 'scan_extent', {'steps': 99})['code'] == 'bad_arguments'
+    finally:
+        mgr.shutdown()

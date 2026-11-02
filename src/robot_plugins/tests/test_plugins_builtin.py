@@ -146,3 +146,62 @@ def test_follow_color_ends_when_the_object_disappears(frames):
     out = call(m, plugin, 'follow_color', {'color': 'red', 'duration_s': 30})
     assert out['reason'] == 'not_found' and time.monotonic() - t0 < 8
     assert np.isfinite(t0)
+
+
+# ---- scan_extent v0.2: the camera turns -------------------------------------------------------
+def _scan_ctx(permissions, panner):
+    from robot_plugins.frames import NoFrames
+    m = load_manifest(PLUGINS / 'scan_extent')
+    ctx = PluginContext('scan_extent', m.resolve_params(None), frozenset(permissions), NoFrames(),
+                        FakeRobotApi(), lambda lv, msg: None, panner=panner)
+    return m, load_plugin_class(m)(ctx), ctx
+
+
+def test_scan_extent_sweeps_the_ring_and_lists_all_six_objects():
+    from robot_vision.scan import SyntheticPanner, ring_world
+    cam, shapes = ring_world()
+    perms = {'camera:read', 'camera:pan', 'robot:stop'}
+    m, plugin, _ = _scan_ctx(perms, SyntheticPanner(cam, shapes))
+    out = call(m, plugin, 'scan_extent', {'yaw_min_deg': -100, 'yaw_max_deg': 100, 'steps': 9})
+    assert out['ok'] and out['swept'] and out['views'] == 9 and out['count'] == 6
+    assert {o['color'] for o in out['objects']} == {'red', 'green', 'blue'}
+    truth = {s.name: s for s in shapes}
+    for o in out['objects']:
+        nearest = min(truth.values(), key=lambda s: math.dist(s.center, o['center']))
+        assert math.dist(nearest.center, o['center']) < 0.01 and o['seen_in_views'] >= 1
+
+
+def test_scan_extent_without_the_pan_permission_cannot_turn_the_camera():
+    from robot_vision.scan import SyntheticPanner, ring_world
+
+    from robot_plugins import PermissionDenied
+    cam, shapes = ring_world()
+    _, _, ctx = _scan_ctx({'camera:read', 'robot:stop'}, SyntheticPanner(cam, shapes))
+    assert not ctx.camera.pan.available
+    with pytest.raises(PermissionDenied, match='camera:pan'):
+        ctx.camera.pan.move_to(0.3)
+
+
+def test_scan_extent_falls_back_to_one_view_when_the_camera_cannot_turn(frames):
+    from robot_plugins.panning import NoPanner
+    m, plugin, _ = _scan_ctx({'camera:read', 'camera:pan', 'robot:stop'}, NoPanner())
+    plugin.ctx.camera._source = frames                       # a fixed camera with frames
+    out = call(m, plugin, 'scan_extent', {})
+    assert out['ok'] and out['views'] == 1 and out['swept'] is False
+    assert 'döndürülemiyor' in out['note']
+    assert out['count'] == 3
+
+
+def test_scan_extent_stops_midway_when_the_stop_token_is_set():
+    from robot_vision.scan import SyntheticPanner, ring_world
+
+    from robot_plugins import Stopped, StopToken
+    cam, shapes = ring_world()
+    token = StopToken()
+    token.set()
+    panner = SyntheticPanner(cam, shapes)
+    m, plugin, ctx = _scan_ctx({'camera:read', 'camera:pan', 'robot:stop'}, panner)
+    ctx.stop.set()
+    with pytest.raises(Stopped):
+        call(m, plugin, 'scan_extent', {'steps': 9})
+    assert panner.moves == []                                 # it never even moved

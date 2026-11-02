@@ -21,6 +21,7 @@ from robot_plugins.context import PermissionDenied, PluginContext, Stopped, Stop
 from robot_plugins.frames import make_frame_source
 from robot_plugins.loader import load_plugin_class
 from robot_plugins.manifest import load_manifest
+from robot_plugins.panning import make_panner
 from robot_plugins.robot_api import FakeRobotApi, HttpRobotApi, RobotApiError
 from robot_plugins.schema import ValidationError, apply_defaults, validate
 
@@ -33,6 +34,7 @@ def main(argv=None) -> int:
     ap.add_argument('--params', default='{}')
     ap.add_argument('--frames', default='none')
     ap.add_argument('--robot', default='fake', help="'fake' ya da robot API adresi")
+    ap.add_argument('--panner', default='none', help='none | synthetic')
     args = ap.parse_args(argv)
 
     proto = sys.stdout
@@ -50,7 +52,8 @@ def main(argv=None) -> int:
     stop = StopToken()
     ctx = PluginContext(manifest.name, params, frozenset(manifest.granted),
                         make_frame_source(args.frames), api,
-                        lambda level, msg: send({'type': 'log', 'level': level, 'msg': msg}), stop)
+                        lambda level, msg: send({'type': 'log', 'level': level, 'msg': msg}), stop,
+                        make_panner(args.panner))
     plugin = load_plugin_class(manifest)(ctx)
     plugin.start()
     send({'type': 'ready', 'name': manifest.name, 'version': manifest.version})

@@ -212,7 +212,7 @@ işletim sistemi sandbox'ı değildir: paket *güvenilir kod* sayılır.
 | `version` | `MAJOR.MINOR.PATCH` |
 | `description` | insan okur |
 | `entry` | `modül:Sınıf` (`main:Plugin`); modül paket dizinindeki `.py`, sınıf `robot_plugins.PluginBase` alt sınıfı |
-| `permissions` | `camera:read` (kare okuma), `robot:jobs` (Robot API v1 iş kuyruğu: `state`/`submit_job`/`job`/`cancel`). **`robot:stop` istenmez ve elinden alınamaz**: her pakette `ctx.robot.stop()` çalışır; manifestte `deny`/bilinmeyen izin geçersizdir. Paketin `reset` yetkisi yoktur (kilidi yalnızca insan açar) |
+| `permissions` | `camera:read` (kare okuma), `camera:pan` (kamerayı döndürme: `ctx.camera.pan`), `robot:jobs` (Robot API v1 iş kuyruğu: `state`/`submit_job`/`job`/`cancel`). **`robot:stop` istenmez ve elinden alınamaz**: her pakette `ctx.robot.stop()` çalışır; manifestte `deny`/bilinmeyen izin geçersizdir. Paketin `reset` yetkisi yoktur (kilidi yalnızca insan açar) |
 | `parameters` | JSON-Schema alt kümesi (`type object`); varsayılanlar uygulanır, `enable` sırasında doğrulanır |
 | `tools[]` | `name`, `description` (LLM bunu okur), `input_schema` (JSON-Schema alt kümesi). **LLM araç katmanı (Robot sohbetinin Aşama 7'si) bu listeyi olduğu gibi alır:** `Manifest.describe()['tools']` |
 
@@ -231,7 +231,7 @@ Beklenen başarısızlıkta **istisna atma**: `{"ok": false, "error": "..."}` d�
 ### `PluginContext` (`ctx`)
 `params`, `log(msg)`, `stop` (`is_set`/`wait`/`check`), `camera.latest_frame()` → `robot_vision.Frame`
 (`camera:read`), `robot.submit_job(komut)`, `robot.wait_for_job(id, ctx.stop)`, `robot.state()`,
-`robot.cancel(id)` (`robot:jobs`), `robot.stop(neden)` (her zaman). Hareket **yalnızca** Robot API v1
+`robot.cancel(id)` (`robot:jobs`), `robot.stop(neden)` (her zaman), `camera.pan.limits/move_to(yaw)/frame()` (`camera:pan`; `robot_vision.scan.Panner` arayüzü). Hareket **yalnızca** Robot API v1
 üzerinden gider (beyaz listeli komutlar, güvenli çalışma kutusu, hız tavanı, acil dur); `423` alan paket
 yeniden denemez.
 
@@ -265,13 +265,41 @@ API'yi kullanacak.
 |---|---|---|
 | `find_object` | `camera:read` | `find_object(color)` → merkez, boyut, şekil, yönlü kutu, kenar noktaları, tutma adayları (`robot_vision`, PR-V1) |
 | `follow_color` | `camera:read`, `robot:jobs` | `follow_color(color, height_m, duration_s, min_move_m)` → nesne yer değiştirdikçe `above <renk> <yükseklik>` işi gönderir; acil dur/iptal/süre dolunca biter |
-| `scan_extent` | `camera:read` | `scan_extent()` → görünen tüm nesneler + ölçüleri (tek bakış; kamerayı döndüren tarama PR-V4'te) |
+| `scan_extent` (v0.2) | `camera:read`, `camera:pan` | `scan_extent(yaw_min_deg, yaw_max_deg, steps)` → kamerayı döndürerek tarar, görüntüleri birleştirir: nesne listesi + 3B ölçüler. Döndürülebilir kamera yoksa tek bakışa düşer ve `swept: false` + `note` ile söyler |
 
 **Robot API bağımlılığı (dürüst not):** `/api/jobs` ve `/api/stop` bu dalın tabanında (`main`) henüz yoktur;
 Robot sohbetinin açık PR'larındadır (#14 Aşama 6a, #15 Aşama 6b). `HttpRobotApi` bu belgedeki v1
 sözleşmesine göre yazıldı ve **bu sözleşmeyi uygulayan bir test sunucusuyla** doğrulandı; gerçek `web_view`
 ile uçtan uca denenmedi. Camera platformunu (PR-V2) süren bir paket için `platform:rates` izni henüz tanımlı
 değildir (ROS bağımlı; ileride).
+
+## Tarama, ONNX dedektörü ve LLM araç katmanı (PR-V4)
+**Pan taraması** (`robot_vision.scan`, ROS'suz): `scan(panner, ScanConfig(yaw_min, yaw_max, steps, merge_distance), ...)`.
+`Panner` = dönebilen kamera (`limits`, `move_to(yaw)`, `frame()`; kare, o açıdaki kamera pozunu taşır). Her görüntü normal
+dedektör + `measure()`'dan geçer; birden çok görüntüde görülen nesneler **etiket + dünya konumu** (`merge_distance`, 5 cm)
+ile birleştirilir; görüntü kenarında kesik görünen nesne, bütün göründüğü bir görüntü varsa onun ölçümünü **ezmez**
+(`partial` yalnızca hiçbir görüntüde bütün görünmediyse). Sınırlar: kamera nesnelerin üstünü görmeli (V1 varsayımı);
+aynı renkte `merge_distance`'tan yakın iki nesne tek sayılır. Doğrulama: `python3 -m robot_vision.scan_validate`
+(halka dünyası, 6 nesne, tek görüntü en çok 3 nesne görür; `README.md` "Tarama").
+
+**`OnnxDetector`** (`robot_vision.onnx_detector`, isteğe bağlı `onnxruntime`): `Detector` arayüzünü kullanıcının kendi ONNX
+modeliyle sağlar; **depoda model ağırlığı yok**. Girdi `[1,3,H,W]` float32 RGB 0-1 (letterbox), çıktı çözücüleri:
+`xyxy` (`[N,6]`), `yolov8` (`[1,4+C,N]`/`[1,N,4+C]`, NMS içeride), `yolox` (`[1,N,5+C]`, nesnelik × sınıf skoru).
+Kutu → piksel kümesi: kutunun içinde derinliği olan ve dünya çerçevesinde zeminin (`ground_margin`, 1.2 cm) üstündeki
+pikseller; böylece `measure()` zemini değil nesneyi ölçer. Etiketsiz sınıf atlanır. **Lisans:** `docs/vision-model-licenses.md`
+(Ultralytics = AGPL-3.0/Enterprise; Apache-2.0 alternatifleri YOLOX, RT-DETR).
+
+### LLM araç katmanıyla (Robot sohbetinin Aşama 7'si) birleşme noktası
+Araçların **tek kaynağı** paket manifestleridir: `PluginManager.manifest(ad).describe()['tools']` listesi (`name`,
+`description`, `input_schema`; JSON-Schema alt kümesi) doğrudan bir LLM'in araç tanımı olarak verilebilir. Çağrı:
+`PluginManager.call(paket, araç, argümanlar)` her zaman bir `dict` döner: `{"ok": true, "data": {...}}` ya da
+`{"ok": false, "code", "error"}` (`bad_arguments`, `not_running`, `permission_denied`, `stopped`, `timeout`,
+`robot_423`, `exception`); `error` insan/LLM okur, istisna fırlatmaz. Önerilen akış: katman açılışında
+`list()` ile `running` paketlerin araçlarını toplar (`<paket>.<araç>` adlandırması), kullanıcı bir paketi Hub
+panelinden (yönetim API) açıp kapattıkça katalog değişir; acil dur (`/api/plugins/estop` ya da `emergency_stop()`)
+her zaman tüm paketleri durdurur ve `robot_423` alan araç çağrısı **yeniden denenmemelidir**. Hareket yapan araçlar
+(`follow_color`) Robot API v1 iş kuyruğundan geçtiği için LLM katmanı ayrıca bir güvenlik denetimi eklemek zorunda
+değildir; ama araç açıklamaları "HAREKET ETTİRİR / ETTİRMEZ" ifadesini taşır ki LLM ona göre seçsin.
 
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,

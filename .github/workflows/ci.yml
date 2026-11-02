@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic
+      - run: pip install pytest ruff pyyaml numpy python-fcl "sqlalchemy>=2.0" alembic onnx onnxruntime
       - run: ruff check src
       - run: python -m pytest
       - name: Vision core validation report (measured vs. world-file geometry)

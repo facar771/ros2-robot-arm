@@ -69,12 +69,14 @@ def _python_path() -> str:
 
 class PluginManager:
     def __init__(self, plugins_dir: Path, *, robot_api: Optional[RobotApi] = None,
-                 robot_url: str = 'fake', frames: str = 'none', grace_s: float = 3.0,
+                 robot_url: str = 'fake', frames: str = 'none', panner: str = 'none',
+                 grace_s: float = 3.0,
                  state_file: Optional[Path] = None, python: str = sys.executable):
         self.plugins_dir = Path(plugins_dir)
         self.robot_api = robot_api
         self.robot_url = robot_url
         self.frames = frames
+        self.panner = panner
         self.grace_s = grace_s
         self.state_file = state_file
         self.python = python
@@ -173,7 +175,7 @@ class PluginManager:
             popen = subprocess.Popen(
                 [self.python, '-m', 'robot_plugins.runner', '--dir', str(m.directory),
                  '--params', json.dumps(resolved), '--frames', self.frames,
-                 '--robot', self.robot_url],
+                 '--robot', self.robot_url, '--panner', self.panner],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 bufsize=1, env=env, start_new_session=True)
             proc = _Running(m, resolved, popen)

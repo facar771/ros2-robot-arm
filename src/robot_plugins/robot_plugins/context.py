@@ -5,8 +5,10 @@ import threading
 from typing import Any, Callable, Dict, FrozenSet, Optional
 
 from robot_vision.frame import Frame
+from robot_vision.scan import Panner
 
 from robot_plugins.frames import FrameSource
+from robot_plugins.panning import NoPanner
 from robot_plugins.robot_api import RobotApi
 
 
@@ -40,9 +42,42 @@ class StopToken:
             raise Stopped()
 
 
+class PanView(Panner):
+    """The camera turning mechanism as a plugin sees it (``camera:pan``); implements
+    ``robot_vision.scan.Panner`` so it can be handed straight to ``scan()``."""
+
+    def __init__(self, panner: Panner, allowed: bool):
+        self._panner, self._allowed = panner, allowed
+
+    def _need(self) -> None:
+        if not self._allowed:
+            raise PermissionDenied(
+                "camera:pan izni yok (package.yaml'da 'permissions' içine ekle)")
+
+    @property
+    def available(self) -> bool:
+        """Permission granted AND the environment has a camera that can turn."""
+        return self._allowed and not isinstance(self._panner, NoPanner)
+
+    @property
+    def limits(self):
+        self._need()
+        return self._panner.limits
+
+    def move_to(self, yaw: float) -> None:
+        self._need()
+        self._panner.move_to(yaw)
+
+    def frame(self):
+        self._need()
+        return self._panner.frame()
+
+
 class CameraView:
-    def __init__(self, source: FrameSource, allowed: bool):
+    def __init__(self, source: FrameSource, allowed: bool, panner: Optional[Panner] = None,
+                 pan_allowed: bool = False):
         self._source, self._allowed = source, allowed
+        self.pan = PanView(panner or NoPanner(), pan_allowed)
 
     def latest_frame(self) -> Optional[Frame]:
         if not self._allowed:
@@ -91,12 +126,13 @@ class RobotView:
 class PluginContext:
     def __init__(self, name: str, params: Dict[str, Any], permissions: FrozenSet[str],
                  frames: FrameSource, robot: RobotApi, log: Callable[[str, str], None],
-                 stop: Optional[StopToken] = None):
+                 stop: Optional[StopToken] = None, panner: Optional[Panner] = None):
         self.name = name
         self.params = dict(params)
         self.permissions = permissions
         self.stop = stop or StopToken()
-        self.camera = CameraView(frames, 'camera:read' in permissions)
+        self.camera = CameraView(frames, 'camera:read' in permissions, panner,
+                                 'camera:pan' in permissions)
         self.robot = RobotView(robot, 'robot:jobs' in permissions)
         self._log = log
 

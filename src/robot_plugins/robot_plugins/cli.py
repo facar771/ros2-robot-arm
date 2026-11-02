@@ -18,7 +18,8 @@ def default_plugins_dir() -> Path:
 def build_manager(args) -> PluginManager:
     api = FakeRobotApi() if args.robot == 'fake' else HttpRobotApi(args.robot)
     return PluginManager(Path(args.plugins_dir), robot_api=api, robot_url=args.robot,
-                         frames=args.frames, state_file=Path(args.state) if args.state else None)
+                         frames=args.frames, panner=args.panner,
+                         state_file=Path(args.state) if args.state else None)
 
 
 def main(argv=None) -> int:
@@ -26,6 +27,7 @@ def main(argv=None) -> int:
     ap.add_argument('--plugins-dir', default=str(default_plugins_dir()))
     ap.add_argument('--robot', default='fake', help="'fake' ya da robot API adresi (http://127.0.0.1:8080)")
     ap.add_argument('--frames', default='synthetic', help='none | synthetic | npz:<yol>')
+    ap.add_argument('--panner', default='synthetic', help='none | synthetic')
     ap.add_argument('--state', default='', help='açık eklentileri hatırlayan JSON dosyası')
     sub = ap.add_subparsers(dest='cmd', required=True)
     sub.add_parser('list')

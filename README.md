@@ -260,6 +260,62 @@ PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_pl
 PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins serve    # sonra: curl -s localhost:8770/api/plugins
 ```
 
+## Yeni paket nasıl yazılır
+1. **Dizin aç:** `plugins/<ad>/` (`<ad>`: `a-z`, rakam, `_`). İçine iki dosya: `package.yaml` ve `main.py`.
+2. **`package.yaml`:**
+   ```yaml
+   name: benim_paketim            # dizin adıyla aynı
+   version: 0.1.0
+   description: Ne yaptığı (insan okur).
+   entry: main:Plugin
+   permissions: [camera:read]     # camera:read, camera:pan, robot:jobs; robot:stop zaten hep açık
+   parameters:                    # JSON-Schema alt kümesi; varsayılanlar uygulanır
+     type: object
+     properties:
+       esik: {type: number, minimum: 0, maximum: 1, default: 0.5}
+   tools:                         # LLM'in göreceği araçlar: açıklama onun tek bilgisi
+     - name: benim_aracim
+       description: Ne yapar, robotu HAREKET ETTİRİR mi, ne döndürür.
+       input_schema:
+         type: object
+         properties: {renk: {type: string, enum: [red, green, blue]}}
+         required: [renk]
+         additionalProperties: false
+   ```
+3. **`main.py`:** `PluginBase` alt sınıfı; `call(tool, args)` bir `dict` döner. Beklenen hatada istisna atma:
+   `{"ok": False, "error": "..."}` dön. Uzun iş yapıyorsan `self.ctx.stop` belirtecini en az 0.5 s'de bir yokla.
+   ```python
+   from robot_plugins import PluginBase
+   from robot_plugins.vision_tools import find_objects
+
+   class Plugin(PluginBase):
+       def call(self, tool, args):
+           frame = self.ctx.camera.latest_frame()          # camera:read gerekir
+           if frame is None:
+               return {'ok': False, 'error': 'kamera karesi yok'}
+           return {'ok': True, 'objects': find_objects(frame, [args['renk']])}
+   ```
+   Robotu hareket ettirmek için **yalnızca** `self.ctx.robot.submit_job('above red 0.30')` (+ `robot.wait_for_job`).
+   Acil dur (`423`) gelirse bırak, yeniden deneme.
+4. **Dene (Docker/ROS gerekmez), WSL'de:** `PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins list`
+   ve `... python3 -m robot_plugins call benim_paketim benim_aracim --args '{"renk": "red"}'` (sahte robot + sentetik kamera karesi).
+5. **Test yaz:** `src/robot_plugins/tests/test_plugins_builtin.py`'daki `make(...)`/`call(...)` yardımcıları paketi süreç içinde
+   çalıştırır (gerçek değerlere karşı, sahte robotla); alt süreç/izin davranışı için `test_plugins_manager.py`.
+6. **PR aç.** Yalnızca depoya giren paketler çalışır (zip yükleme yok: `docs/plugin-upload-design.md`).
+
+## Tarama ve model dedektörü (Vision V4)
+```bash
+# WSL'de — Docker/ROS gerekmez, tek terminal
+cd ~/ros2-robot-arm && pip install numpy matplotlib pyyaml
+PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.scan_validate --out /tmp/tarama   # tablo + üstten görünüm PNG
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins call scan_extent scan_extent \
+    --args '{"yaw_min_deg": -100, "yaw_max_deg": 100, "steps": 9}'                                    # 6 nesne (sentetik halka dünyası)
+```
+`OnnxDetector` (kendi ONNX modelin, `pip install onnxruntime`): `from robot_vision.onnx_detector import OnnxDetector`;
+`OnnxDetector('model.onnx', ['red_target', ...], decoder='yolov8')` → `ColorDetector` yerine `scan()` / `measure()` ile kullan.
+**Model lisansı:** Ultralytics YOLO = AGPL-3.0/Enterprise; ticari plan için Apache-2.0 YOLOX / RT-DETR →
+`docs/vision-model-licenses.md`.
+
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını
 (`motion_result`, `obstacle_added/removed`, `objects_changed`, `selftest_check`...) `runs` / `events` /

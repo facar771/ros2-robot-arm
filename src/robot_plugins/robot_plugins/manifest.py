@@ -4,7 +4,7 @@
     version: 0.1.0                    # semantic version
     description: ...
     entry: main:Plugin                # module (a .py file in the plugin directory) : class
-    permissions: [camera:read]        # camera:read, robot:jobs (robot:stop is implicit, see below)
+    permissions: [camera:read]        # camera:read, camera:pan, robot:jobs (robot:stop is implicit)
     parameters: {type: object, properties: {...}}      # JSON-Schema subset, defaults applied
     tools:                            # what an LLM (Robot chat, stage 7) may call
       - name: find_object
@@ -29,7 +29,7 @@ from robot_plugins.schema import SchemaError, apply_defaults, check_schema, vali
 NAME_RE = re.compile(r'^[a-z][a-z0-9_]{1,39}$')
 VERSION_RE = re.compile(r'^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)?$')
 ENTRY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*$')
-PERMISSIONS = ('camera:read', 'robot:jobs')
+PERMISSIONS = ('camera:read', 'camera:pan', 'robot:jobs')
 ALWAYS_GRANTED = ('robot:stop',)
 KNOWN_KEYS = {'name', 'version', 'description', 'entry', 'permissions', 'parameters', 'tools'}
 
