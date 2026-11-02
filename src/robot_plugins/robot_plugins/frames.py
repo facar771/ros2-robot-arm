@@ -60,11 +60,19 @@ class NoFrames(FrameSource):
 
 
 def make_frame_source(spec: str) -> FrameSource:
-    """``none`` | ``synthetic`` | ``npz:<path>``."""
+    """``none`` | ``synthetic`` | ``npz:<path>`` | ``ros`` (live ``/camera/*``, needs ROS 2 and the
+    ``robot_vision_ros`` package; fixed workspace camera only)."""
     if spec in ('', 'none'):
         return NoFrames()
     if spec == 'synthetic':
         return SyntheticFrameSource()
     if spec.startswith('npz:'):
         return NpzFrameSource(spec[4:])
-    raise ValueError(f'bilinmeyen kare kaynağı {spec!r}; none | synthetic | npz:<yol>')
+    if spec == 'ros':
+        try:
+            from robot_vision_ros.ros_frame_source import RosFrameSource
+        except ImportError as exc:
+            raise ImportError("frames='ros' için ROS 2 ortamı ve robot_vision_ros gerekli "
+                              '(source install/setup.bash)') from exc
+        return RosFrameSource()
+    raise ValueError(f'bilinmeyen kare kaynağı {spec!r}; none | synthetic | npz:<yol> | ros')

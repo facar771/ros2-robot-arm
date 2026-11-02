@@ -289,6 +289,11 @@ Kutu → piksel kümesi: kutunun içinde derinliği olan ve dünya çerçevesind
 pikseller; böylece `measure()` zemini değil nesneyi ölçer. Etiketsiz sınıf atlanır. **Lisans:** `docs/vision-model-licenses.md`
 (Ultralytics = AGPL-3.0/Enterprise; Apache-2.0 alternatifleri YOLOX, RT-DETR).
 
+**Canlı kamera:** `PluginManager(..., frames='ros')` / `python3 -m robot_plugins --frames ros ...`
+(`robot_vision_ros.RosFrameSource`; ROS 2 ortamı gerekir, `/camera/{image,depth_image,camera_info}` abone olunur,
+kamera pozu `workspace.sdf`'ten alınan **sabit** kameradır; hareketli kamera platformu için kare başına poz hesabı yok).
+Gerçek Gazebo karesiyle `find_object`: kutu/silindir/küre merkezleri dünya dosyasına ≤ 0.15 cm.
+
 ### LLM araç katmanıyla (Robot sohbetinin Aşama 7'si) birleşme noktası
 Araçların **tek kaynağı** paket manifestleridir: `PluginManager.manifest(ad).describe()['tools']` listesi (`name`,
 `description`, `input_schema`; JSON-Schema alt kümesi) doğrudan bir LLM'in araç tanımı olarak verilebilir. Çağrı:
