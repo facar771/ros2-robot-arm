@@ -39,6 +39,172 @@ Başlatma: `... gazebo.launch.py world:=workspace perception:=true perception_sc
 Algı düğümü tamamen susarsa nesneler bayat kalır (boş liste yayımlandığı sürece silinir).
 Doğrulama: `ros2 run robot_controller perception_scene_check`.
 
+## Robot API v1 (`api_version: 1`) — Hub, LLM ve otomasyon için sözleşme
+Robot tarafının dışa açtığı tek kapı: `robot_viz` `web_view commands:=true` (HTTP, JSON). **Yalnızca
+`127.0.0.1`'e bağlanır ve kimlik doğrulaması yoktur**; ağa açma, kimlik doğrulama, telefon arayüzü, `.exe`
+ve ESP32 girişi bu API'nin *üstündeki* Hub'ın işidir (`apps/control_hub`), robot tarafı bunları yapmaz.
+
+**Sürümleme.** `/api/state` hem üst düzeyde (`api_version`) hem `robot.api_version` olarak sürümü taşır.
+v1 içinde değişiklikler yalnızca *eklemelidir* (yeni alan, yeni uç nokta, yeni olay). Bir alanı silmek,
+anlamını ya da bir durum kodunu değiştirmek `api_version: 2` demektir. İstemci bilinmeyen alanları
+yok saymalıdır. Hata yanıtları her zaman JSON'dur ve `error` (Türkçe, insan okur) alanı taşır.
+
+| Uç nokta | Durum | Anlam |
+|---|---|---|
+| `GET /api/state` | **var** | tüm durum (aşağıda); `robot` bloğu Hub'ın birincil okuması |
+| `POST /api/command` | **var, KULLANIMDAN KALDIRILDI** (çalışmaya devam eder) | komutu çalıştırır, **bitince** döner (bloklar); yanıtta `Deprecation: true` başlığı ve `deprecated` alanı; içeride bir iş olarak çalışır (kimliği `/api/jobs`'ta görünür) |
+| `POST /api/stop` | **var** (PR-6a) | ACİL DUR, hiçbir şey tarafından engellenmez |
+| `POST /api/reset` | **var** (PR-6a) | kilidi açar (kol duruyorken) |
+| `POST /api/jobs` | **var** (PR-6b) | işi başlatır, **hemen** `202` döner |
+| `GET /api/jobs`, `GET /api/jobs/<id>` | **var** (PR-6b) | son işler (en yeni önce, ≤ 50 tutulur) / tek iş belgesi |
+| `POST /api/jobs/<id>/cancel` | **var** (PR-6b) | çalışan işi iptal eder (kilitlemez) |
+
+### `robot` bloğu (`GET /api/state` → `robot`; her zaman aynı anahtarlar)
+| Alan | Anlam |
+|---|---|
+| `api_version` | `1` |
+| `mode` | `mock` \| `gazebo` \| `real` (`web_view mode:=...`, varsayılan `gazebo`) |
+| `state` | `idle` hazır · `busy` bir komut çalışıyor · `estopped` acil dur kilitli · `error` son komut **iç hatayla** bitti (bir sonraki başarılı komut ya da `reset` temizler; ulaşılamayan hedef gibi 422'ler `error` DEĞİLDİR) |
+| `current_job` | çalışan komut: `id` (`j1`, `j2`...), `command`, `started_at` (epoch s), `elapsed_s`; yoksa `null` |
+| `last_error` | son başarısız komut: `command`, `message`, `time`, `internal` (iç hata mı); yoksa `null` |
+| `moving` | herhangi bir eklem hızı > 0.05 rad/s ise `true`; hız verisi yoksa ya da 1 s'den eskiyse `null` ("bilmiyorum", asla "duruyor" sayılmaz) |
+| `estop` | `tripped`, `reason`, `since` (epoch s) |
+| `safety` | `zone` (`frame`, `box` {x,y,z: [alt, üst]} m), `max_velocity_scale`, `velocity_scale` (MoveIt'e gerçekten istenen = min(0.5, tavan)); `web_view` komutsuz başlatıldıysa `null` |
+
+Öncelik: `estopped` > `busy` > `error` > `idle`. Her şey bilgi amaçlıdır; kararı sunucu verir
+(`423` / `409` yanıtları).
+
+### `POST /api/stop` — acil dur
+Gövde isteğe bağlıdır (donanım düğmesi/`curl -X POST` yeterli); varsa `{"reason": "<≤64 karakter>"}`.
+Çözülemeyen gövde bile reddedilmez. `Host` loopback değilse ya da yabancı `Origin` /
+`Sec-Fetch-Site: cross-site` varsa `403` (başka bir sayfa tetikleyemez). Sırasıyla:
+1. kilidi **hemen** koyar (bundan sonra hiçbir komut hareket başlatamaz, çalışan senaryo sonraki adımda biter);
+2. MoveIt'e `move_action` hedefini iptal ettirir ve `/trajectory_execution_event`'e `stop` yayımlar
+   (kol bu noktada tutma konumuna geçer); istek `0.5 s`'de bir tekrarlanır, kol durana kadar;
+3. **kolun gerçekten durduğunu `/joint_states` hızlarından doğrular**: tüm eklem hızları 0.25 s boyunca
+   ≤ 0.05 rad/s; en fazla 5 s bekler.
+
+Yanıt `200` (kilit her durumda konur): `{"ok": true, "state": "estopped", "latched": true,
+"stopped": bool, "stop_time_s": float, "max_joint_speed": float|null, "was_running": bool,
+"message": ...}`. **`stopped: false` ise robotun durduğu doğrulanamadı** (5 s içinde durmadı ya da hız
+okunamadı) ve istemci bunu bir arıza olarak ele almalıdır; kilit yine de geçerlidir. Kilitliyken
+çalışan komutun yanıtı `422`'dir (`PREEMPTED` / "acil dur etkin"), `last_error`'a düşer. Her stop bir
+`estop` olayıdır (ve `error_reports` satırı).
+
+**Kapsam (dürüst sınır):** bu, web_view'in başlattığı ve MoveIt üzerinden giden hareketlerin yazılım
+acil durudur. `/trajectory_execution_event` `stop`'u MoveIt'in tüm yürütmesini durdurur, ama kilit ve
+`423` yalnızca bu sunucuda geçerlidir (ör. ayrıca çalışan bir `cli_moveit` kilitlenmez). `mode: real`
+için **donanım acil durunun yerine geçmez**.
+
+### `POST /api/reset`
+Gövde `{}` (`Content-Type: application/json`). Kilidi (ve `error` durumunu) temizler. Yalnızca **kol
+duruyorken**: komut çalışıyorsa (kilitliyse sonlanması için ≤ 3 s beklenir) ya da `moving` `true`/`null`
+ise `409` + `error` (kilit korunur). Zaten hazırsa `200` + `"changed": false`. Yanıt:
+`{"ok", "changed", "message", "state"}`.
+
+### İşler: `POST /api/jobs` (Hub/otomasyonun asıl kapısı)
+Gövde (`Content-Type: application/json`): `{"command": "above green 0.35", "timeout_s": 60}`; komut aynı
+beyaz listeden geçer (`home`, `objects`, `above <renk> [m]`, `demo_scenario`), `timeout_s` isteğe bağlı
+(1-600 s; varsayılan: home 90, objects 30, above 120, demo_scenario 300). **Aynı anda tek iş.**
+
+| Durum | Anlam |
+|---|---|
+| `202` | iş başladı; gövde iş belgesi, `Location: /api/jobs/<id>` |
+| `400` | geçersiz komut/gövde/`timeout_s` (iş açılmaz) |
+| `409` | başka iş çalışıyor: `{"error", "job_id"}` |
+| `423` | acil dur kilitli |
+| `403`/`411`/`413`/`415` | `/api/command` ile aynı |
+
+İş belgesi (`GET /api/jobs/<id>`; bilinmeyen kimlik `404`):
+
+| Alan | Anlam |
+|---|---|
+| `id`, `command` | `j7`, normalleştirilmiş komut |
+| `state` | `running` · `done` (komut başardı) · `failed` (robot yapamadı, iç hata ya da zaman aşımı; neden `error`) · `cancelled` (`cancelled_by`: `user` ya da `estop`) |
+| `created_at`, `finished_at`, `elapsed_s`, `timeout_s` | zamanlar (epoch s) ve süreler |
+| `cancel_requested`, `cancelled_by`, `timed_out` | iptal/zaman aşımı bilgisi |
+| `progress` | `step`/`steps` (senaryonun `[k/n]` anlatımından; diğer komutlarda `null`), `say` (son anlatım), `log` (komutun canlı anlatımı) |
+| `result` | iş bitince `{ok, message, data, duration_s}` (`/api/command` yanıtıyla aynı `data`); öncesinde `null` |
+| `error` | `failed`/`cancelled` için Türkçe neden, aksi halde `null` |
+
+**İptal:** `POST /api/jobs/<id>/cancel` (gövde `{}`): çalışan MoveIt hedefi iptal edilir (kol durur),
+senaryo bir sonraki adıma geçmez, iş `cancelled` olur; yanıt işin bitmesini ≤ 3 s bekler (`200`,
+`{"ok", "job"}`). **Kilitlemez**: `state` `idle` olur ve yeni iş hemen kabul edilir (acil durdaki
+`reset` gerekmez). Bitmiş iş için `409`, bilinmeyen iş `404`. **Zaman aşımı** aynı yolu kullanır ve
+işi `failed` (`timed_out: true`) yapar. **Acil dur** (`/api/stop`) çalışan işi `cancelled` +
+`cancelled_by: "estop"` ile bitirir. Dürüst sınır: `cancel` ve zaman aşımı kolun durduğunu *hız
+doğrulamasıyla* kanıtlamaz (bunu yalnızca `/api/stop` yapar); `moving` alanını izle.
+
+### Güvenli çalışma kutusu ve hız tavanı (`robot_moveit_config/config/safe_zone.yaml`)
+`Skills`, **hedef noktası** kutunun dışında kalan her kartezyen hareketi (`go_to_position`,
+`go_above`) açık hatayla (`code_name: SAFE_ZONE`, "hedef güvenli çalışma kutusunun dışında (z=...,
+izin verilen aralık [...]), robot hareket etmedi") reddeder; robot oynamaz. Yalnızca hedef denetlenir,
+yol MoveIt'in çarpışma denetimindedir; adlandırılmış eklem pozları (`home`) denetlenmez. Varsayılan
+kutu (m, world): x [0.05, 0.75], y [-0.5, 0.5], z [0.02, 0.70]; `max_velocity_scale` (0.5) MoveIt'e
+istenebilecek hız/ivme ölçeğinin üst sınırıdır. Dosya eksik/bozuksa `web_view` ve `cli_moveit`
+**başlamaz** ("sınırsız" varsayılmaz). Yol `ROBOT_SAFETY` ortam değişkeniyle değiştirilir. Geçerli
+değerler `/api/state` → `robot.safety`'de görünür.
+
+### Durum kodları (`/api/command` ve `/api/jobs`; v1)
+`200` yapıldı · `400` geçersiz/beyaz liste dışı · `403` kapalı/yabancı Origin-Host · `405` yöntem ·
+`409` başka komut çalışıyor · `411/413` gövde uzunluğu · `415` içerik türü · `422` geçerli komut, robot
+yapamadı (neden `message`'da) · **`423` acil dur kilitli: komut hiç çalışmadı, gövde
+`{"error", "state": "estopped"}`; önce `/api/reset`** · `500` iç hata.
+
+## Ajan araç katmanı (`robot_agent`, Aşama 7): bir LLM'in robota güvenli erişimi
+Paket `robot_agent`; mantığın tamamı ROS'suz, robota **yalnızca Robot API v1 üzerinden (HTTP, 127.0.0.1)**
+ulaşır: istemci `127.0.0.1`/`localhost` dışındaki adresleri reddeder. **Serbest kod çalıştırma yoktur**:
+bir LLM'in yapabildiği tek şey aşağıdaki beyaz listeli araçları çağırmaktır.
+
+**Araçlar** (`robot_agent.tools.build_tools()`; şemalar `robot_core.webcmd` sabitlerinden ve
+`Skills` docstring'lerinden üretilir, Anthropic `input_schema` biçimindedir):
+
+| Araç | Risk | Ne yapar |
+|---|---|---|
+| `list_objects` | read | `objects` komutu (nesne adı/renk/konum/boyut) |
+| `get_robot_state` | read | `/api/state` → `robot` bloğu |
+| `go_home` | motion | `home` |
+| `go_above_object` `{color: red\|green\|blue, height_m: 0-0.5 (0.35)}` | motion | `above <renk> <h>` |
+| `run_demo_scenario` | long | `demo_scenario` |
+| `cancel_current_job` | safety | çalışan işi iptal eder (kilitlemez) |
+| `emergency_stop` `{reason?}` | safety | `POST /api/stop` |
+
+**Bilerek yok:** `reset` (acil durdan sonra kilidi **yalnızca insan** açar), ham koordinat/`goto`, kabuk, kod,
+`addbox`. Tüm şemalar `additionalProperties: false`; sayılar sonlu olmalı, bool sayı sayılmaz.
+
+**`ToolExecutor` boru hattı** (her çağrı bundan geçer; `safety` araçları orta kısmı atlar, hiçbir şey
+durdurmayı geciktiremez): 1) araç beyaz listede ve açık mı (`rejected`) → 2) argümanlar şemaya uyuyor mu
+(`rejected`, robot'a hiçbir şey gitmez) → 3) robot durumu: `estopped` → `estopped` (hareket yok), `busy` →
+`refused`, API yok → `refused` (körlemesine hareket verilmez) → 4) hareket çağrısı kotası
+(`Policy.max_motion_calls`, 10) → 5) `go_above_object` için **gerçek nesne konumundan hedef hesaplanır ve
+robotun bildirdiği güvenli kutuyla (`robot.safety.zone`) denetlenir** (`refused`, iş açılmaz) → 6) **kuru
+çalıştırma** (`dry_run`) burada biter ve ne çalışacağını söyler → 7) **onay** (`Policy.confirm_risks`, varsayılan
+`motion` ve `long`; onaylayan yoksa `refused`) → 8) iş olarak gönderilir ve sonuna kadar izlenir. Sunucu da
+kendi güvenli kutusunu/kilidini ayrıca uygular (savunma derinliği).
+
+**Acil dur önceliği:** (a) `emergency_stop` her denetimden önce, onaysız ve kotadan bağımsız gider;
+sonucunda robotun *durduğu hız doğrulamasıyla* bildirilir (`ok: true`) ya da "DOĞRULANAMADI" (`ok: false`);
+API'ye 3 deneme yapılır, olmazsa `failed` + "ACİL DUR GÖNDERİLEMEDİ, robotu elle durdur". (b) Bir araç çalışırken
+`ToolExecutor.request_stop()` (başka iş parçacığı, CLI'da **Ctrl-C**) acil durdu hemen gönderir. (c) Bir araç
+sonucu `estopped` ise (LLM durdurdu, bir insan butona bastı, iş `cancelled_by: estop` ile bitti) **koşu
+hemen biter**: modele ikinci tur verilmez, aynı yanıttaki kalan çağrılar yürütülmez ("acil dur: çağrı
+yürütülmedi") ve kullanıcıya modelin önceden yazdığı metin değil "Acil dur etkin ..." döner. (d) Acil dur
+verdiren yürütücü, insan kilidi açsa bile bir daha hareket vermez; yeni koşu yeni yürütücüyle başlar.
+
+**Olay günlüğü:** her çağrı, reddedilenler dahil `agent_tool_call` olayıdır (`ROBOT_DB_URL` varsa
+`error_reports`'a da düşer: `status` ok/dry_run değilse).
+
+**LLM'ler** (`robot_agent.llm`): `ScriptedLLM` (testler/CI, anahtarsız), `RuleLLM` (yerleşik Türkçe
+ifade çözücü, `--offline`; *LLM değildir*), `AnthropicLLM` (isteğe bağlı; yalnızca `ANTHROPIC_API_KEY`
+ortam değişkeni varsa açılır, yoksa katman kapalıdır; model `ROBOT_AGENT_MODEL`, varsayılan
+`claude-sonnet-5-5`; stdlib HTTP, anahtar yalnızca başlıkta, hata mesajlarında/günlükte geçmez).
+
+**CLI:** `robot_agent [--offline] [--yes] [--dry-run] [--max-motions N] [--url http://127.0.0.1:8080] "yeşil nesnenin üstüne git"`.
+Çıkış: `0` tamam, `1` bir araç reddedildi/başarısız, `2` kurulum sorunu (anahtar yok, kötü URL),
+`3` koşu acil durla bitti, `130` Ctrl-C (acil dur gönderilir). Etkileşimli terminalde hareketten önce `[e/H]`
+sorar; terminal yoksa `--yes` verilmedikçe hareket **verilmez**.
+Doğrulama: `run_selftest gazebo-agent` (`ros2 run robot_viz agent_check`).
+
 ## Tarayıcı görünümü (`robot_viz` `web_view`, mantık `robot_core.webview` / `robot_core.viz`)
 HTTP sunucusu (yalnızca `http.server`); varsayılan **salt okunur**, `commands:=true` ile beyaz listeli
 komutlar açılır (aşağıda). Başlatma: `ros2 launch robot_viz web_view.launch.py`
@@ -64,14 +230,16 @@ Diğer yollarda `GET`/`HEAD` dışındaki yöntemler `405` (`Allow: GET, HEAD`; 
 
 | Alan | Anlam |
 |---|---|
+| `api_version` | `1` (sözleşme sürümü) |
 | `time` | sunucu zamanı (epoch s) |
+| `robot` | durum makinesi, acil dur, çalışan iş: yukarıdaki "`robot` bloğu" |
 | `camera` | `width`, `height`, `rgb_age_s`, `depth_age_s` (son kareden beri geçen süre), `overlay` (bindirme çizilebiliyor mu) |
 | `objects[]` | `name` (`red#0`), `label`, `index`, `position` [x,y,z] ve `size` (world, m), `pixel`: `center` [u,v] (kutu merkezinin izdüşümü), `bbox` (8 köşenin izdüşüm zarfı), `rect` (PNG'de çizilen tam sayı kutu) |
 | `objects_age_s` | son `/perception/objects` mesajından beri geçen süre; 2 s'den eskiyse `objects` boş sayılır |
 | `joints[]` | `name`, `rad`, `deg` (robot tanımındaki sırayla; eksik eklem varsa `null`) |
 | `tool` | `link` (`link_6`), `position` [x,y,z] (TF, world) |
 | `commands` | `enabled` (komut ucu açık mı), `allowed` (beyaz liste, kapalıysa `[]`) |
-| `command` | `running`, `name` (çalışan komut), `log` (o komutun anlatımı, son 60 satır, canlı), `last` (`command`, `ok`, `message`, `finished_at`) |
+| `command` | `running`, `name` (çalışan komut), `job` (`id`, `command`, `started_at`, `elapsed_s`; yoksa `null`), `log` (o komutun anlatımı, son 60 satır, canlı), `last` (`command`, `ok`, `message`, `finished_at`), `last_error` (`command`, `message`, `time`, `internal`) |
 
 Piksel konumu, `robot_core.workspace.project` ile aynı kuralı kullanır (piksel *indeksi*, merkez +0.5).
 Doğrulama: `ros2 run robot_viz viz_check` (`run_selftest gazebo-viz`, komutlar kapalı) ve
@@ -87,7 +255,7 @@ nokta, virgül, alt çizgi dışındaki karakter, ≤ 64 karakter); büyük/kü�
 | `home` | `Skills.go_to_named_pose('home')` |
 | `objects` | `Skills.list_objects()`; `data.objects[]`: `name`, `label`, `position`, `size` |
 | `above <red\|green\|blue> [yükseklik_m]` | `Skills.go_above(renk, yükseklik)`, yükseklik 0-0.5 (varsayılan 0.10; `0,25` de olur); `kırmızı`, `yeşil`, `mavi` takma adları; `data.target` [x,y,z] |
-| `demo_scenario` | `home` → `above green 0.25` → `above red 0.30` → `home`; her adımdan sonra TF ile uç konum ölçülür: hedefe ≤ 1.5 cm, ikinci `home` birincisine ≤ 3 cm (kol yukarıda ~1 cm sallanır); ilk başarısız/doğrulanamayan adımda durur; `data.steps[]`: `step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm` |
+| `demo_scenario` | `home` → `above green 0.25` → `above red 0.35` → `home`; her adımdan sonra TF ile uç konum ölçülür: hedefe ≤ 1.5 cm, ikinci `home` birincisine ≤ 3 cm (kol yukarıda ~1 cm sallanır); ilk başarısız/doğrulanamayan adımda durur; `data.steps[]`: `step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm` |
 
 Yanıt: `{"ok", "command" (normalleştirilmiş), "message", "data", "duration_s"}`; komut **bitince**
 döner (planlama + yürütme birkaç saniye-dakika sürebilir; istemci zaman aşımını uzun tut).
@@ -99,6 +267,7 @@ döner (planlama + yürütme birkaç saniye-dakika sürebilir; istemci zaman aş
 | `403` | komut ucu kapalı; `Host` loopback değil; yabancı `Origin`; `Sec-Fetch-Site` ≠ same-origin/none |
 | `405` | `POST` dışı yöntem (`Allow: POST`) |
 | `409` | başka bir komut çalışıyor (aynı anda tek komut) |
+| `423` | acil dur kilitli (`/api/stop` sonrası); önce `/api/reset` |
 | `411` / `413` | `Content-Length` yok (ör. chunked) / geçersiz ya da 512 bayttan büyük |
 | `415` | `Content-Type` `application/json` değil |
 | `422` | komut geçerli ama robot yapamadı (erişilemeyen hedef, çarpışma, nesne yok...); `message` nedeni söyler, robot hareket etmedi |
@@ -141,15 +310,173 @@ Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. 
 | `motion_result` | cli_moveit | `target` [rad], `label`, `ok`, `code`, `code_name`, `message` |
 | `obstacle_added` | cli_moveit, perception_scene_sync | `name`, `pose` [x,y,z], `size` [sx,sy,sz] (taşınan nesne için yeniden gönderilir) |
 | `obstacle_removed` | cli_moveit, perception_scene_sync | `name` |
-| `command_rejected` | cli_moveit, web_view | `line`, `reason` (isteğe bağlı) |
+| `command_rejected` | cli_moveit, web_view | `line`, `reason` (isteğe bağlı); acil dur kilitliyken reddedilen komut için de |
+| `estop` | web_view | `reason`, `latched`, `stopped` (doğrulandı mı), `stop_time_s`, `max_joint_speed`, `was_running`, `message` |
+| `estop_reset` | web_view | `had_error` |
+| `agent_tool_call` | robot_agent | `tool`, `arguments`, `risk` (`read|motion|long|safety`), `status` (`ok|dry_run|rejected|refused|failed|cancelled|estopped`), `ok`, `message`, `dry_run`, `job_id`, `duration_s` — **her** çağrı, reddedilenler dahil |
 | `objects_changed` | perception | `objects`: `[{label, index, position, size, pixels}]` — görünen nesne kümesi değişince (her karede DEĞİL) |
 | `skill_result` | cli_moveit, web_view (Skills) | `skill`, `args`, `ok`, `message`, `code_name` |
 | `scenario_result` | cli_moveit, web_view (`demo_scenario`) | `name`, `ok`, `message`, `steps[]` (`step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm`) |
 | `selftest_check` | selftest | `name`, `ok`, `detail` |
 | `error` | herhangi | `component`, `code`, `message` |
 
-`error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`,
+`error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`, `estop` (her acil dur), `agent_tool_call` (`status` ok/dry_run değilse),
 `selftest_check` (`ok=false`), `skill_result` (`ok=false`), `scenario_result` (`ok=false`), `error`.
+
+## Görüntü çekirdeği (`robot_vision`, ROS'suz)
+`robot_vision` yalnızca numpy kullanır; ROS'a ve `robot_*` paketlerinin geri kalanına dokunmaz
+(`robot_core.perception`'dan renk sınıfları, `Intrinsics` ve `Transform`'u kullanır).
+
+| Parça | Arayüz |
+|---|---|
+| `Frame` | `rgb` (H,W,3 uint8), `depth` (H,W, z-derinliği m), `intrinsics`, `world_from_optical`, `stamp` (s) |
+| `Detector.detect(frame) -> [Segment]` | `Segment`: `label`, piksel indeksleri `rows`/`cols`, `score`. Hata fırlatmaz. `ColorDetector` HSV + bağlı bileşenler (`robot_core.perception` ile aynı renk sınıfları) |
+| `measure(frame, segment, cfg=None, origin=None) -> ObjectMeasure \| None` | Geçerli derinlikli < 20 nokta varsa `None` |
+| `Tracker.update(observations, stamp) -> [Track]` | `Observation(label, position, size)`; `Track`: `id` (asla yeniden kullanılmaz), `state` (`confirmed`/`lost`), `position`, `velocity`, `time_since_seen` |
+
+`ObjectMeasure` alanları (hepsi `world`, metre): `shape` (`box`/`cylinder`/`sphere`/`unknown`),
+`center`, `size` (eksen hizalı), `height` (= üst - zemin), `radius`, `obb_*` (yönlü kutu: `a ≥ b`,
+`yaw` rad), `nearest`/`farthest` (kameraya göre **görünür** en yakın/en uzak nokta),
+`edge_points` (kutu: 8 köşe; silindir: üst/alt kenar noktaları; küre: 6 uç nokta; ayrıca `nearest`,
+`top_center`), `distances_from(nokta)` (her kenar noktasına mesafe), `grasps` (tutma adayları:
+`kind` `top`/`side`, `position`, `approach`, `yaw`, `width`, `fits` = `width ≤ max_aperture`).
+
+Varsayımlar (kodda belgeli, testle sınanır): nesne zemine oturur ve ekseni dikeydir; üst yüz
+kameradan görünür; **arka yüz görünmez**, bu yüzden `farthest` nesnenin gerçek uzak ucu DEĞİL, görünür
+en uzak noktadır. Şekil tahmini sezgiseldir (küre-uydurma kalıntısı + düz üst yüzün ayak izine oranı +
+üst yüzün dolgusu); emin değilse `unknown` döner ve yönlü kutu yine verilir. Eşikler derinlik
+gürültüsü σ ≤ 3 mm için ayarlıdır (σ = 5 mm'de kutu bazen silindire kayar; Gazebo kamerası gürültüsüzdür).
+Doğrulama: `python3 -m robot_vision.validate` (`README.md`, "Görüntü çekirdeği").
+
+## Kamera platformu ve hedefe kilitlenme (`robot_vision_ros`, `tracking.sdf`)
+Kolsuz ayrı dünya: `ros2 launch robot_vision_ros tracking.launch.py [headless:=true] [tracker:=true]`. Hepsi
+simüle zamanda (`use_sim_time`).
+
+| Konu | Arayüz |
+|---|---|
+| Kamera | `/camera/{image,depth_image,camera_info}` (320×240, yatay FOV 1.047, 10 Hz); kamera platformla hareket eder, TF yayımlanmaz (konum `/platform/joint_states`'ten, `robot_vision.platform` ileri kinematiği) |
+| Eklem durumu | `/platform/joint_states` (`sensor_msgs/JointState`: `yaw_joint` rad, `slide_joint` m, `pitch_joint` rad; konum + hız; fizik adımı hızında, 100 Hz) |
+| Hız komutları | `/platform/{yaw,slide,pitch}_joint/cmd_vel` (`std_msgs/Float64`, rad/s ya da m/s). **Komut yeni komut gelene kadar sürer**: düğüm kapanırken sıfır yayımlar. Sınırlar: yaw ±1.2 rad (1.5 rad/s), slide 0-2.5 m (0.8 m/s), pitch -0.6..1.2 rad (1.0 rad/s); pitch artı = kamera AŞAĞI bakar |
+| Hedef | `/world/tracking/set_pose` (`ros_gz_interfaces/srv/SetEntityPose`, köprülü gz servisi); model adı `target`; yalnızca `set_pose` ile hareket eder |
+| Mod | `/tracking/mode` (`std_msgs/String`): `idle` (varsayılan, hızlar sıfır) · `track` (kırmızı nesneyi izle) · `home` (platformu başlangıç pozuna götür). Mod mesajını birkaç kez yayımla (tek mesaj keşif yarışında kaybolabilir) |
+| Durum | `/tracking/status` (`std_msgs/String`, JSON): `track` modunda her görüntüde `stamp` (görüntü damgası, sim s), `visible`, `pixel_error` (px), `distance_error` (m), `in_window`, `locked`, `timer`, `track`, `q`, `cmd`; `home` modunda `homed`, `q` |
+| Mesafe tanımı | Kırmızı segmentin **görünen yüzeyinin** ortalama z-derinliği (kürenin merkezi değil); varsayılan ayar noktası 2.0 m |
+
+Kontrol akışı: renk dedektörü → segmentin 3B merkezi (kamera çerçevesi) → görüntü zamanındaki eklemlerle dünya çerçevesine
+→ `robot_vision.Tracker` (dünya çerçevesinde, hedefin kendi hızı) → güncel kamera pozuna göre hata + görüş hattı hızının
+ileri beslemesi → PID → hız komutu. Gazebo notları (tasarım kararları, `tracking.sdf` içinde de yazılı): fizik motoru
+**bullet-featherstone** (varsayılan DART, tek zincirde üç hız-aktüatörüyle, ilk doygun hızı saniyelerce tutup sonraki komutları
+yok sayıyordu; yalın bir komut tekrarıyla yeniden üretildi), **yer çekimi kapalı** (hedef serbest cisim; bullet-featherstone
+bağlantı başına `<gravity>false</gravity>`'ı yok sayıp hedefi düşürüyordu), fizik adımı 10 ms ve gerçek zaman faktörü 0.4
+(2 CPU + yazılımsal görüntülemede köprü aç kalıp komutları gecikmeli iletiyordu).
+
+## Plugin v1 (paketler) — `robot_plugins`, `plugins/`
+Algı/beceri yeteneklerini paket olarak yazmak ve LLM'in çağıracağı **araç** olarak sunmak için (ROS'suz).
+Her paket `plugins/<ad>/` altında bir dizindir: `package.yaml` + giriş modülü (`main.py`). **Yalnızca bu
+depodan gelen, gözden geçirilmiş paketler** çalıştırılır; zip yükleme/uzaktan kod yüklemesi YOKTUR
+(tasarım: `docs/plugin-upload-design.md`). İzinler paketin eline verilen API nesneleriyle uygulanır,
+işletim sistemi sandbox'ı değildir: paket *güvenilir kod* sayılır.
+
+### `package.yaml`
+| Anahtar | Anlam |
+|---|---|
+| `name` | `a-z`, rakam, `_`; 2-40 karakter; **dizin adıyla aynı** |
+| `version` | `MAJOR.MINOR.PATCH` |
+| `description` | insan okur |
+| `entry` | `modül:Sınıf` (`main:Plugin`); modül paket dizinindeki `.py`, sınıf `robot_plugins.PluginBase` alt sınıfı |
+| `permissions` | `camera:read` (kare okuma), `camera:pan` (kamerayı döndürme: `ctx.camera.pan`), `robot:jobs` (Robot API v1 iş kuyruğu: `state`/`submit_job`/`job`/`cancel`). **`robot:stop` istenmez ve elinden alınamaz**: her pakette `ctx.robot.stop()` çalışır; manifestte `deny`/bilinmeyen izin geçersizdir. Paketin `reset` yetkisi yoktur (kilidi yalnızca insan açar) |
+| `parameters` | JSON-Schema alt kümesi (`type object`); varsayılanlar uygulanır, `enable` sırasında doğrulanır |
+| `tools[]` | `name`, `description` (LLM bunu okur), `input_schema` (JSON-Schema alt kümesi). **LLM araç katmanı (Robot sohbetinin Aşama 7'si) bu listeyi olduğu gibi alır:** `Manifest.describe()['tools']` |
+
+JSON-Schema alt kümesi (`robot_plugins.schema`): `type` (object/array/string/number/integer/boolean/null),
+`properties`, `required`, `additionalProperties: false`, `enum`, `minimum`/`maximum`, `minLength`/`maxLength`,
+`pattern`, `items`, `minItems`/`maxItems`, `default`. Başka anahtar **manifestte hata** verir (vaat edilip
+uygulanmayan doğrulama olmasın).
+
+### Araç sözleşmesi
+`PluginBase.call(tool, args) -> dict`; `args` şemaya göre doğrulanmış ve varsayılanları doldurulmuştur.
+Beklenen başarısızlıkta **istisna atma**: `{"ok": false, "error": "..."}` dön (LLM okur). Yönetici her çağrıyı
+`{"ok": true, "data": {...}}` ya da `{"ok": false, "code", "error"}` olarak sarar; `code`: `bad_arguments`,
+`unknown_tool`, `not_running`, `permission_denied`, `stopped`, `timeout`, `robot_<durum>` (ör. `robot_423`),
+`exception`. Uzun işler `ctx.stop` (StopToken) belirtecini en az 0.5 s'de bir yoklamalıdır.
+
+### `PluginContext` (`ctx`)
+`params`, `log(msg)`, `stop` (`is_set`/`wait`/`check`), `camera.latest_frame()` → `robot_vision.Frame`
+(`camera:read`), `robot.submit_job(komut)`, `robot.wait_for_job(id, ctx.stop)`, `robot.state()`,
+`robot.cancel(id)` (`robot:jobs`), `robot.stop(neden)` (her zaman), `camera.pan.limits/move_to(yaw)/frame()` (`camera:pan`; `robot_vision.scan.Panner` arayüzü). Hareket **yalnızca** Robot API v1
+üzerinden gider (beyaz listeli komutlar, güvenli çalışma kutusu, hız tavanı, acil dur); `423` alan paket
+yeniden denemez.
+
+### `PluginManager` ve alt süreçler
+Her etkin paket kendi alt sürecinde çalışır (`python -m robot_plugins.runner`; stdin/stdout'ta satır başına
+bir JSON: `call`/`stop` → `ready`/`result`/`log`). Durumlar: `stopped`, `starting`, `running`, `crashed`,
+`invalid` (manifest hatası; listede görünür). `disable`: önce durdurma belirteci, `grace_s` (3 s) sonra
+`SIGTERM`/`SIGKILL`. **Acil dur bağlantısı:** `PluginManager.emergency_stop()` tüm paketlere durdurma
+belirtecini koyar, robota `POST /api/stop` gönderir (başarısız olsa bile paketler durdurulur ve hata
+raporlanır), sonra süreçleri toplar; ardından insan `clear_estop()`/robot `reset` yapana dek paket
+etkinleştirilmez. `watch_robot()` robot `estopped` bildirince (düğme, Hub, herhangi biri) paketleri durdurur;
+ulaşılamayan Robot API'si acil dur sayılmaz.
+
+### Yönetim API (`python -m robot_plugins serve`, varsayılan `127.0.0.1:8770`, robot API'sinden AYRI port)
+| Uç nokta | Anlam |
+|---|---|
+| `GET /api/plugins` | `{"api_version": 1, "plugins": [durum...]}` (geçersiz paketler `status: invalid` + `error` ile) |
+| `GET /api/plugins/<ad>`, `.../logs` | tek paket (+ manifest özeti, araç kataloğu) / son günlük satırları |
+| `POST /api/plugins/<ad>/enable` | gövde `{"params": {...}}` (isteğe bağlı) → durum; `400` parametre, `404` yok, `423` acil dur |
+| `POST /api/plugins/<ad>/disable` | → durum |
+| `POST /api/plugins/estop` | gövde `{"reason": ...}`; tüm paketleri durdurur **ve** robota `/api/stop` yollar |
+
+Koruma, robotun web görünümüyle aynı: yalnızca loopback'e bağlanır (aksi kurucuda hata), `Host` loopback
+olmalı (`403`), yabancı `Origin`/`Sec-Fetch-Site: cross-site` `403`, POST `application/json` (`415`) ve ≤ 4 KB
+(`413`), `PUT/DELETE/PATCH` `405`. Kimlik doğrulama yok: erişim = bu makinede olmak. **Araç çağırma bilerek
+HTTP'ye açılmadı** (`404`): bu, LLM katmanının işidir (`PluginManager.call`). Hub'ın "paketler" paneli bu
+API'yi kullanacak.
+
+### İlk paketler (`plugins/`)
+| Paket | İzin | Araç |
+|---|---|---|
+| `find_object` | `camera:read` | `find_object(color)` → merkez, boyut, şekil, yönlü kutu, kenar noktaları, tutma adayları (`robot_vision`, PR-V1) |
+| `follow_color` | `camera:read`, `robot:jobs` | `follow_color(color, height_m, duration_s, min_move_m)` → nesne yer değiştirdikçe `above <renk> <yükseklik>` işi gönderir; acil dur/iptal/süre dolunca biter |
+| `scan_extent` (v0.2) | `camera:read`, `camera:pan` | `scan_extent(yaw_min_deg, yaw_max_deg, steps)` → kamerayı döndürerek tarar, görüntüleri birleştirir: nesne listesi + 3B ölçüler. Döndürülebilir kamera yoksa tek bakışa düşer ve `swept: false` + `note` ile söyler |
+
+**Robot API bağımlılığı (dürüst not):** `/api/jobs` ve `/api/stop` bu dalın tabanında (`main`) henüz yoktur;
+Robot sohbetinin açık PR'larındadır (#14 Aşama 6a, #15 Aşama 6b). `HttpRobotApi` bu belgedeki v1
+sözleşmesine göre yazıldı ve **bu sözleşmeyi uygulayan bir test sunucusuyla** doğrulandı; gerçek `web_view`
+ile uçtan uca denenmedi. Camera platformunu (PR-V2) süren bir paket için `platform:rates` izni henüz tanımlı
+değildir (ROS bağımlı; ileride).
+
+## Tarama, ONNX dedektörü ve LLM araç katmanı (PR-V4)
+**Pan taraması** (`robot_vision.scan`, ROS'suz): `scan(panner, ScanConfig(yaw_min, yaw_max, steps, merge_distance), ...)`.
+`Panner` = dönebilen kamera (`limits`, `move_to(yaw)`, `frame()`; kare, o açıdaki kamera pozunu taşır). Her görüntü normal
+dedektör + `measure()`'dan geçer; birden çok görüntüde görülen nesneler **etiket + dünya konumu** (`merge_distance`, 5 cm)
+ile birleştirilir; görüntü kenarında kesik görünen nesne, bütün göründüğü bir görüntü varsa onun ölçümünü **ezmez**
+(`partial` yalnızca hiçbir görüntüde bütün görünmediyse). Sınırlar: kamera nesnelerin üstünü görmeli (V1 varsayımı);
+aynı renkte `merge_distance`'tan yakın iki nesne tek sayılır. Doğrulama: `python3 -m robot_vision.scan_validate`
+(halka dünyası, 6 nesne, tek görüntü en çok 3 nesne görür; `README.md` "Tarama").
+
+**`OnnxDetector`** (`robot_vision.onnx_detector`, isteğe bağlı `onnxruntime`): `Detector` arayüzünü kullanıcının kendi ONNX
+modeliyle sağlar; **depoda model ağırlığı yok**. Girdi `[1,3,H,W]` float32 RGB 0-1 (letterbox), çıktı çözücüleri:
+`xyxy` (`[N,6]`), `yolov8` (`[1,4+C,N]`/`[1,N,4+C]`, NMS içeride), `yolox` (`[1,N,5+C]`, nesnelik × sınıf skoru).
+Kutu → piksel kümesi: kutunun içinde derinliği olan ve dünya çerçevesinde zeminin (`ground_margin`, 1.2 cm) üstündeki
+pikseller; böylece `measure()` zemini değil nesneyi ölçer. Etiketsiz sınıf atlanır. **Lisans:** `docs/vision-model-licenses.md`
+(Ultralytics = AGPL-3.0/Enterprise; Apache-2.0 alternatifleri YOLOX, RT-DETR).
+
+**Canlı kamera:** `PluginManager(..., frames='ros')` / `python3 -m robot_plugins --frames ros ...`
+(`robot_vision_ros.RosFrameSource`; ROS 2 ortamı gerekir, `/camera/{image,depth_image,camera_info}` abone olunur,
+kamera pozu `workspace.sdf`'ten alınan **sabit** kameradır; hareketli kamera platformu için kare başına poz hesabı yok).
+Gerçek Gazebo karesiyle `find_object`: kutu/silindir/küre merkezleri dünya dosyasına ≤ 0.15 cm.
+
+### LLM araç katmanıyla (Robot sohbetinin Aşama 7'si) birleşme noktası
+Araçların **tek kaynağı** paket manifestleridir: `PluginManager.manifest(ad).describe()['tools']` listesi (`name`,
+`description`, `input_schema`; JSON-Schema alt kümesi) doğrudan bir LLM'in araç tanımı olarak verilebilir. Çağrı:
+`PluginManager.call(paket, araç, argümanlar)` her zaman bir `dict` döner: `{"ok": true, "data": {...}}` ya da
+`{"ok": false, "code", "error"}` (`bad_arguments`, `not_running`, `permission_denied`, `stopped`, `timeout`,
+`robot_423`, `exception`); `error` insan/LLM okur, istisna fırlatmaz. Önerilen akış: katman açılışında
+`list()` ile `running` paketlerin araçlarını toplar (`<paket>.<araç>` adlandırması), kullanıcı bir paketi Hub
+panelinden (yönetim API) açıp kapattıkça katalog değişir; acil dur (`/api/plugins/estop` ya da `emergency_stop()`)
+her zaman tüm paketleri durdurur ve `robot_423` alan araç çağrısı **yeniden denenmemelidir**. Hareket yapan araçlar
+(`follow_color`) Robot API v1 iş kuyruğundan geçtiği için LLM katmanı ayrıca bir güvenlik denetimi eklemek zorunda
+değildir; ama araç açıklamaları "HAREKET ETTİRİR / ETTİRMEZ" ifadesini taşır ki LLM ona göre seçsin.
 
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
@@ -169,8 +496,10 @@ MoveIt'e hiç sorulmadan reddedilir; MoveIt'in reddettiği hedeflerde hata kodu 
 **Erişim kısıtı:** alet düz aşağı bakarken eklem 3 (±2.0) ve eklem 5 (±1.57) limitleri, her nesne için
 yalnızca dar bir yükseklik *penceresi* bırakır: çok alçak da çok yüksek de ulaşılamaz (tabana ~0.30 m
 uzaktaki bir hedef için hiç pencere yoktur; mavi top bu yüzden x=0.45'e taşındı). `workspace.sdf`'teki
-pencereler (nesne üstünden, m): mavi ≈0.08-0.42, kırmızı ≈0.30-0.42, yeşil ≈0.20-0.40; **0.30 üçü için de
-çalışır** (arayüz varsayılanı). `go_above` pencere dışında açık hatayla reddeder, robot oynamaz. Poz hedefi MoveIt'e konum + yönelim kısıtı olarak verilir (IK: KDL,
+pencereler (nesne üstünden, m): mavi ≈0.08-0.42, kırmızı ≈0.30-0.42, yeşil ≈0.20-0.40; **0.35 üçü için de
+çalışır** (arayüz varsayılanı). Pencerenin *kenarı* güvenilmezdir: `red 0.30` eklem 3 limitine ~0.01 rad
+kalır, simülasyonda kol limiti hafifçe aşınca MoveIt sonraki planı `START_STATE_INVALID` ile reddeder;
+bu yüzden demo ve varsayılan pencerenin içinden seçilir (limit payı ≥ 0.05 rad). `go_above` pencere dışında açık hatayla reddeder, robot oynamaz. Poz hedefi MoveIt'e konum + yönelim kısıtı olarak verilir (IK: KDL,
 `kinematics_solver_timeout` 0.05 s); alet ekseni etrafındaki dönüş serbesttir.
 
 CLI: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`, `demo_scenario` (Skills üstünde, uç konum

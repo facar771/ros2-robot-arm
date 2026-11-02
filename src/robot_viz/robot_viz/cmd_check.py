@@ -162,8 +162,8 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer) -> list:
     home_ref = tool_from_tf(buffer, config.tip_link)
     record('home -> 200', status == 200 and body['ok'] and home_ref is not None,
            f'(durum {status}, uç konum {home_ref})')
-    # 0.3 = the page's default height: every colour button must work out of the box
-    for line in ('above green 0.25', 'above red 0.3', 'above green 0.3', 'above blue 0.3'):
+    # 0.35 = the page's default height: every colour button must work out of the box
+    for line in ('above green 0.25', 'above red 0.35', 'above green 0.35', 'above blue 0.35'):
         status, _, body = http_.post(line)
         time.sleep(1.5)
         tool = tool_from_tf(buffer, config.tip_link)

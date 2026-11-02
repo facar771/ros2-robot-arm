@@ -1,0 +1,48 @@
+name: scan_extent
+version: 0.2.0
+description: >-
+  Kamerayı döndürerek (pan) ortamı tarar; görünen tüm renkli nesneleri listeler ve her birinin 3B
+  ölçülerini verir. Döndürülebilir kamera yoksa tek bakışa düşer.
+entry: main:Plugin
+permissions: [camera:read, camera:pan]
+parameters:
+  type: object
+  properties:
+    max_aperture:
+      type: number
+      minimum: 0.01
+      maximum: 0.2
+      default: 0.08
+    merge_distance_m:
+      type: number
+      minimum: 0.005
+      maximum: 0.3
+      default: 0.05
+      description: Aynı renkte, birbirine bu kadar yakın görülen nesneler tek sayılır.
+tools:
+  - name: scan_extent
+    description: >-
+      Kamerayı yaw_min_deg ile yaw_max_deg arasında steps adımda döndürüp ortamı tarar ve bulunan
+      tüm renkli nesneleri (renk, şekil, dünya çerçevesinde merkez/boyut, tutma adayları, kaç
+      görüntüde görüldüğü) döndürür. Kamera döndürülemiyorsa yalnızca şu anki görüntüyü kullanır.
+      Robotun kolunu HAREKET ETTİRMEZ (yalnızca kamera döner).
+    input_schema:
+      type: object
+      properties:
+        yaw_min_deg:
+          type: number
+          minimum: -180
+          maximum: 180
+          default: -90
+        yaw_max_deg:
+          type: number
+          minimum: -180
+          maximum: 180
+          default: 90
+        steps:
+          type: integer
+          minimum: 1
+          maximum: 36
+          default: 7
+          description: Tarama sırasında alınacak görüntü sayısı (komşu görüntüler örtüşmeli).
+      additionalProperties: false

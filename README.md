@@ -13,6 +13,10 @@ src/
   robot_moveit_config/   MoveIt yapılandırması (sahte donanım ya da Gazebo) ve launch dosyaları
   robot_data/            ROS'suz veri katmanı: SQLAlchemy 2 + Alembic (SQLite testler, PostgreSQL üretim)
   robot_perception/      renkli nesne algısı düğümü + perception_check (mantık robot_core.perception'da)
+  robot_vision/          ROS'suz görüntü çekirdeği: Detector, Tracker, DepthGeometry, servo (PID + kilit), takip simülasyonu
+  robot_vision_ros/      robot_vision'ın ROS adaptörleri: tracking_node (kamera platformunu hedefe kilitler) + tracking_check (selftest)
+  robot_plugins/         paket (plugin) SDK'sı ve yöneticisi (ROS'suz): manifest, izinler, alt süreç yaşam döngüsü, yönetim API'si
+plugins/                 paketler: find_object, follow_color, scan_extent
   robot_viz/             salt okunur tarayıcı görünümü: web_view düğümü + viz_check (mantık robot_core.viz / webview'de)
   robot_sim/             Gazebo dünyaları (nesneli çalışma alanı + RGB-D kamera)
 docker/                  Dockerfile (base / ci / dev) ve selftest betiği
@@ -33,6 +37,7 @@ docker compose run --rm selftest-perception  # + renkli nesne algısı: tespit e
 docker compose run --rm selftest-scene       # + tespitler MoveIt sahnesinde: engel belirir, plan reddedilir, nesne kalkınca plan geçer
 docker compose run --rm selftest-skills      # Skills: aleti nesnenin üstüne götür, uç konumu TF ile ölç
 docker compose run --rm selftest-viz         # tarayıcı görünümü: sayfa, JSON, PNG'ler, bindirme ↔ dünya dosyası, eklem/TF, salt okunur
+docker compose run --rm selftest-tracking    # kamera platformu + hareketli hedef: kilitlenme metrikleri (~5 dk, kolsuz dünya)
 docker compose run --rm selftest-db          # selftest olayları PostgreSQL'e yazılır (compose'taki db servisi)
 docker compose up demo                       # etkileşimli demo + tarayıcıda canlı görünüm (aşağıya bak)
 docker compose run --rm dev           # RViz destekli geliştirme kabuğu (WSLg)
@@ -125,7 +130,7 @@ Tarayıcıdan komut ve demo senaryosu için aşağıdaki bölüme bak. Güvenlik
 | `home` | robot `home` pozuna |
 | `objects` | bilinen nesneleri (ad, renk, konum, boyut) listeler |
 | `above <red\|green\|blue> [yükseklik_m]` | aleti o renkteki nesnenin üstüne götürür (varsayılan 0.10 m, en çok 0.5 m); `kırmızı/yeşil/mavi` de olur |
-| `demo_scenario` | `home` → yeşil silindirin 25 cm üstü → kırmızı kutunun 30 cm üstü → `home`; her adım Türkçe anlatılır, her hareketten sonra uç konum **TF ile ölçülüp** hedefle karşılaştırılır (≤ 1.5 cm; `home` tekrarı ≤ 3 cm), ilk başarısız adımda durur |
+| `demo_scenario` | `home` → yeşil silindirin 25 cm üstü → kırmızı kutunun 35 cm üstü → `home`; her adım Türkçe anlatılır, her hareketten sonra uç konum **TF ile ölçülüp** hedefle karşılaştırılır (≤ 1.5 cm; `home` tekrarı ≤ 3 cm), ilk başarısız adımda durur |
 
 Anlatım sayfada canlı akar; aynı komutu komut satırında `demo_scenario` yazarak da çalıştırabilirsin.
 Aynı anda tek komut çalışır (ikincisi `409`). Erişilemeyen hedef (ör. tabana yakın nesnede çok alçak
@@ -138,6 +143,48 @@ türü `415`, başka bir sitenin isteği `403`. Ayrıntı ve durum kodları: `do
 curl -s localhost:8080/api/command -H 'Content-Type: application/json' -d '{"command": "above green 0.25"}'
 curl -s localhost:8080/api/command -H 'Content-Type: application/json' -d '{"command": "demo_scenario"}'
 ```
+
+**ACİL DUR.** Sayfanın üstündeki kırmızı **ACİL DUR** düğmesi (ya da `POST /api/stop`) çalışan hareketi
+iptal eder, komutları kilitler (`423`) ve kolun gerçekten durduğunu eklem hızlarından doğrular;
+**Sıfırla** (`POST /api/reset`) kol duruyorken kilidi açar. Hub/otomasyon için sürümlü sözleşme
+(`api_version: 1`, `robot.state`, `moving`, ...): `docs/INTERFACES.md` → "Robot API v1".
+
+```bash
+# WSL'de (komutlar açık simülasyon çalışırken)
+curl -s -X POST localhost:8080/api/stop                       # acil dur
+curl -s localhost:8080/api/state | python3 -c 'import json,sys; print(json.load(sys.stdin)["robot"])'
+curl -s localhost:8080/api/reset -H 'Content-Type: application/json' -d '{}'   # kilidi aç
+```
+Otomatik doğrulama (kolun hareket ortasında durması ölçülür): `docker compose run --rm selftest-stop`.
+
+**Asenkron işler** (Hub/otomasyon için; `/api/command` kullanımdan kalktı): `POST /api/jobs` hemen `202`
+döner, `GET /api/jobs/<id>` ilerlemeyi ve sonucu verir, `POST /api/jobs/<id>/cancel` kolu durdurur
+(kilitlemeden). **Güvenli çalışma kutusu** (`robot_moveit_config/config/safe_zone.yaml`): dışındaki kartezyen
+hedefler açık hatayla reddedilir, robot oynamaz.
+
+```bash
+# WSL'de (komutlar açık simülasyon çalışırken)
+curl -s localhost:8080/api/jobs -H 'Content-Type: application/json' -d '{"command": "demo_scenario"}'
+curl -s localhost:8080/api/jobs/j1 | python3 -m json.tool
+curl -s localhost:8080/api/jobs/j1/cancel -H 'Content-Type: application/json' -d '{}'
+```
+Otomatik doğrulama: `docker compose run --rm selftest-jobs`.
+
+**LLM araç katmanı (`robot_agent`).** Bir LLM robota yalnızca beyaz listeli araçlarla (nesneleri listele,
+home, nesnenin üstüne git, demo, iptal, **acil dur**) ve yalnızca `127.0.0.1` üzerindeki API ile erişir;
+serbest kod/koordinat yoktur, acil dur kilidini açan araç **yoktur** (bunu insan yapar). Her çağrı
+doğrulanır, güvenli kutuyla denetlenir, hareketten önce onay ister, `--dry-run` ile hareketsiz denenir;
+acil dur her zaman önceliklidir (Ctrl-C de acil dur gönderir). Anahtarsız denemek için yerleşik kural çözücü:
+
+```bash
+# Terminal 1 — WSL'de
+docker compose up demo
+# Terminal 2 — WSL'de
+./docker/agent.sh --offline --dry-run "yeşil nesnenin üstüne git"   # hareket etmez, ne olacağını söyler
+./docker/agent.sh --offline --yes "yeşil nesnenin üstüne git"       # gider (onay otomatik)
+ANTHROPIC_API_KEY=... ./docker/agent.sh "kırmızı kutunun üstüne git"   # gerçek LLM (isteğe bağlı)
+```
+Otomatik doğrulama (anahtarsız, betikli sahte LLM): `docker compose run --rm selftest-agent`.
 Docker'sız: `ros2 launch robot_viz web_view.launch.py commands:=true`. Otomatik test (WSL'de):
 `docker compose run --rm selftest-cmd` (reddedilmesi gerekenler, TF ile ölçülen hareketler, canlı
 anlatım, meşgulken `409`).
@@ -194,6 +241,122 @@ Ayrıca Terminal 1'in ilk 60 ve son 40 satırını, RViz'de **Displays** panelin
 (Error/Warning) görünen ekranın adını ve altındaki mesajı ekle. Pencere hiç açılmıyorsa (dev
 kabuğunda) `ros2 run rviz2 rviz2` ve `LIBGL_ALWAYS_SOFTWARE=1 ros2 launch ... headless:=false ...`
 komutlarını ayrı ayrı dene ve çıktılarını yapıştır.
+
+## Görüntü çekirdeği (Vision V1)
+`src/robot_vision` ROS'a bağımlı değildir (yalnızca numpy). Algı paketlerinin ve ileride "paketlerin"
+(plugin) kullanacağı yapı taşlarını verir: `ColorDetector` (yerine ONNX/YOLO tipi bir dedektör
+takılabilir; arayüz `Detector.detect(frame) -> [Segment]`), `Tracker` (kimlik sürekliliği, kayıp/yeniden
+bulma, Kalman süzgeci) ve `measure()` (segmentten 3B ölçüler: nesne merkezi, boyut, yönlü kutu,
+kameraya en yakın/en uzak görünür nokta, kenar noktaları, tutma adayları). Ayrıntı ve varsayımlar:
+`docs/INTERFACES.md`.
+
+Doğrulama, `workspace.sdf`'teki gerçek ölçülerle (kutu 6 cm, küre r=4 cm, silindir r=3 cm h=10 cm)
+yapılır ve hata tablosu üretir:
+```bash
+# WSL'de (repo kökünde; ROS ya da Docker gerekmez)
+pip install numpy matplotlib
+PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.validate --out /tmp/vision
+# -> /tmp/vision/vision_v1_dogrulama.md (tablo) + vision_v1_hata.png (hata / tolerans)
+```
+Gazebo'dan gerçek kare yakalamak için (simülasyon açıkken, `dev` kabuğunda):
+`python3 src/robot_vision/tools/capture_frame.py /tmp/frame.npz`.
+
+## Hareketli hedefe kilitlenme (Vision V2)
+`robot_sim/worlds/tracking.sdf`: 3 serbestlik dereceli kamera platformu (**yaw** → **ileri-geri** (kamera
+yönünde kayma) → **pitch**; İHA'nın yönelme / ileri-geri / yükselme-alçalma eksenlerinin karşılığı) ve `set_pose`
+ile hareket ettirilen kırmızı küre hedef (r = 10 cm). Servo (`robot_vision.servo`): piksel hatası → yaw/pitch
+hızı, derinlik hatası → ileri-geri hız (PID + hedefin görüş hattı hızının ileri beslemesi); **kilit** =
+`|piksel hatası| < 12 px` ve `|mesafe hatası| < 0.15 m` durumunun kesintisiz **4.5 s** sürmesi (mesafe
+2.0 m; hepsi `ServoConfig`'te). Dört deterministik senaryo: doğrusal, sinüs, ani yön değişimi, 1 s kaybolma.
+
+```bash
+# Gazebo'suz hızlı kontrol (kontrol yasasını ayarlamak için; ROS gerekmez) — WSL'de
+pip install numpy matplotlib pyyaml
+PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.tracking_sim --out /tmp/takip
+# Gerçek Gazebo'da (Docker, ~5 dk) — WSL'de
+docker compose run --rm selftest-tracking
+# Elle denemek için: Terminal 1 — WSL'de (dev kabuğunda, colcon build sonrası)
+ros2 launch robot_vision_ros tracking.launch.py headless:=false
+# Terminal 2 — aynı kabukta: hedefi takip et / eve dön / dur
+ros2 topic pub --once /tracking/mode std_msgs/msg/String "{data: track}"
+```
+`ros2 run robot_vision_ros tracking_check --out DIR` dört senaryoyu koşar, `takip_gazebo.md/.json` yazar;
+PNG için (matplotlib'li ortamda) `python3 -m robot_vision.tracking_sim --from-json DIR/takip_gazebo.json --out DIR`.
+Metrikler: yakalama süresi (ilk kilide kadar), kilit tutma oranı, RMS piksel / mesafe hatası, kayıp sayısı,
+görüntü damgası → komut gecikmesi (sim saniyesi), yeniden kilit süresi. Eşikler `trajectories.py`'de.
+
+## Paketler / plugin'ler (Vision V3)
+Görüntü işleme yetenekleri `plugins/<ad>/` altında **paket** olarak yazılır (`package.yaml` + `main.py`):
+ad, sürüm, **izinler** (`camera:read`, `robot:jobs`; acil dur `robot:stop` her pakette hep açık), parametre
+şeması ve LLM'in çağıracağı **araçlar** (`tools`, JSON-Schema). `src/robot_plugins` (ROS'suz) paketleri
+alt süreçlerde çalıştırır, acil durla bağlar ve `127.0.0.1:8770`'te küçük bir yönetim API'si sunar. Hareket
+yalnızca Robot API v1 üzerinden (güvenli kutu, hız tavanı, acil dur). İlk paketler: `find_object`,
+`follow_color`, `scan_extent`. Ayrıntı: `docs/INTERFACES.md` ("Plugin v1"); zip yükleme yalnızca tasarım:
+`docs/plugin-upload-design.md`.
+
+```bash
+# WSL'de — Docker/ROS gerekmez, tek terminal (sahte robot + sentetik kamera karesiyle)
+cd ~/ros2-robot-arm && pip install pytest numpy pyyaml
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins list
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins call find_object find_object --args '{"color": "red"}'
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins serve    # sonra: curl -s localhost:8770/api/plugins
+```
+
+## Yeni paket nasıl yazılır
+1. **Dizin aç:** `plugins/<ad>/` (`<ad>`: `a-z`, rakam, `_`). İçine iki dosya: `package.yaml` ve `main.py`.
+2. **`package.yaml`:**
+   ```yaml
+   name: benim_paketim            # dizin adıyla aynı
+   version: 0.1.0
+   description: Ne yaptığı (insan okur).
+   entry: main:Plugin
+   permissions: [camera:read]     # camera:read, camera:pan, robot:jobs; robot:stop zaten hep açık
+   parameters:                    # JSON-Schema alt kümesi; varsayılanlar uygulanır
+     type: object
+     properties:
+       esik: {type: number, minimum: 0, maximum: 1, default: 0.5}
+   tools:                         # LLM'in göreceği araçlar: açıklama onun tek bilgisi
+     - name: benim_aracim
+       description: Ne yapar, robotu HAREKET ETTİRİR mi, ne döndürür.
+       input_schema:
+         type: object
+         properties: {renk: {type: string, enum: [red, green, blue]}}
+         required: [renk]
+         additionalProperties: false
+   ```
+3. **`main.py`:** `PluginBase` alt sınıfı; `call(tool, args)` bir `dict` döner. Beklenen hatada istisna atma:
+   `{"ok": False, "error": "..."}` dön. Uzun iş yapıyorsan `self.ctx.stop` belirtecini en az 0.5 s'de bir yokla.
+   ```python
+   from robot_plugins import PluginBase
+   from robot_plugins.vision_tools import find_objects
+
+   class Plugin(PluginBase):
+       def call(self, tool, args):
+           frame = self.ctx.camera.latest_frame()          # camera:read gerekir
+           if frame is None:
+               return {'ok': False, 'error': 'kamera karesi yok'}
+           return {'ok': True, 'objects': find_objects(frame, [args['renk']])}
+   ```
+   Robotu hareket ettirmek için **yalnızca** `self.ctx.robot.submit_job('above red 0.30')` (+ `robot.wait_for_job`).
+   Acil dur (`423`) gelirse bırak, yeniden deneme.
+4. **Dene (Docker/ROS gerekmez), WSL'de:** `PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins list`
+   ve `... python3 -m robot_plugins call benim_paketim benim_aracim --args '{"renk": "red"}'` (sahte robot + sentetik kamera karesi).
+5. **Test yaz:** `src/robot_plugins/tests/test_plugins_builtin.py`'daki `make(...)`/`call(...)` yardımcıları paketi süreç içinde
+   çalıştırır (gerçek değerlere karşı, sahte robotla); alt süreç/izin davranışı için `test_plugins_manager.py`.
+6. **PR aç.** Yalnızca depoya giren paketler çalışır (zip yükleme yok: `docs/plugin-upload-design.md`).
+
+## Tarama ve model dedektörü (Vision V4)
+```bash
+# WSL'de — Docker/ROS gerekmez, tek terminal
+cd ~/ros2-robot-arm && pip install numpy matplotlib pyyaml
+PYTHONPATH=src/robot_core:src/robot_vision python3 -m robot_vision.scan_validate --out /tmp/tarama   # tablo + üstten görünüm PNG
+PYTHONPATH=src/robot_core:src/robot_vision:src/robot_plugins python3 -m robot_plugins call scan_extent scan_extent \
+    --args '{"yaw_min_deg": -100, "yaw_max_deg": 100, "steps": 9}'                                    # 6 nesne (sentetik halka dünyası)
+```
+`OnnxDetector` (kendi ONNX modelin, `pip install onnxruntime`): `from robot_vision.onnx_detector import OnnxDetector`;
+`OnnxDetector('model.onnx', ['red_target', ...], decoder='yolov8')` → `ColorDetector` yerine `scan()` / `measure()` ile kullan.
+**Model lisansı:** Ultralytics YOLO = AGPL-3.0/Enterprise; ticari plan için Apache-2.0 YOLOX / RT-DETR →
+`docs/vision-model-licenses.md`.
 
 ## Veri katmanı (Aşama 3)
 `ROBOT_DB_URL` ayarlıysa `cli_moveit`, `selftest`, algı düğümü ve sahne senkronizasyonu olaylarını

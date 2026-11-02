@@ -1,0 +1,10 @@
+# Safe working box for tool-tip goals + speed cap (read by robot_core.safezone, used by Skills and
+# the MoveIt adapter). A Cartesian goal whose target is outside the box is refused with an explicit
+# error and the robot does not move. Only the *target* is checked; the path is MoveIt's collision
+# checking. Named joint poses (home) are not checked.
+frame: world
+box:               # metres, world frame
+  x: [0.05, 0.75]
+  y: [-0.50, 0.50]
+  z: [0.02, 0.70]
+max_velocity_scale: 0.5   # upper bound for MoveIt velocity/acceleration scaling, 0 < scale <= 1

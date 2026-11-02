@@ -3,7 +3,7 @@
 :mod:`robot_core.webview`.
 
     ros2 launch robot_viz web_view.launch.py                    # read-only, http://127.0.0.1:8080
-    ros2 launch robot_viz web_view.launch.py commands:=true     # + POST /api/command
+    ros2 launch robot_viz web_view.launch.py commands:=true     # + POST /api/command, /api/stop
 
 Subscribes /camera/{image,depth_image,camera_info}, /perception/objects, /joint_states; TF is
 looked up per request (world <- camera_optical_frame for the overlay, world <- tip link for the
@@ -29,9 +29,11 @@ from robot_controller.adapters import (
     PlanningSceneReader,
     TfToolPosition,
 )
-from robot_controller.config_loader import load_robot_config
+from robot_controller.config_loader import load_robot_config, load_safety_config
+from robot_core.jobs import JobManager
 from robot_core.perception import Intrinsics, Transform
 from robot_core.skills import Skills
+from robot_core.supervisor import CancelFlag, EStop, GuardedMotion, Supervisor
 from robot_core.webcmd import CommandRunner
 from robot_core.webview import SceneObject, Snapshot, WebView
 from robot_perception.images import depth_array, rgb_array
@@ -62,6 +64,7 @@ class WebViewNode(Node):
         self.declare_parameter('depth_far', 1.7)
         self.declare_parameter('objects_stale_s', 2.0)   # detections older than this are dropped
         self.declare_parameter('commands', False)        # True: POST /api/command is enabled
+        self.declare_parameter('mode', 'gazebo')         # mock | gazebo | real
         self._world = self.get_parameter('world_frame').value
         self._optical = self.get_parameter('optical_frame').value
         self._stale_s = float(self.get_parameter('objects_stale_s').value)
@@ -84,14 +87,26 @@ class WebViewNode(Node):
                                  qos_profile_sensor_data)
         self.create_subscription(MarkerArray, TOPIC_OBJECTS, self._on_objects, 10)
 
+        self.mode = str(self.get_parameter('mode').value)
         self.events = None
         self.runner = None
+        self.supervisor = None
+        self.jobs = None
         if bool(self.get_parameter('commands').value):
             self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
-            motion = MoveItMotion(self, config)
-            skills = Skills(config, motion, motion, PlanningSceneReader(self), self.events)
+            safety = load_safety_config()                    # missing/bad file: refuse to start
+            estop, cancel = EStop(), CancelFlag()
+            motion = MoveItMotion(self, config, estop=estop, cancel=cancel,
+                                  max_velocity_scale=safety.max_velocity_scale)
+            guarded = GuardedMotion(motion, estop, cancel)   # no new goals while latched/cancelling
+            skills = Skills(config, guarded, guarded, PlanningSceneReader(self), self.events,
+                            zone=safety.zone)
             self.runner = CommandRunner(
-                skills, TfToolPosition(self._tf, self._tip, self._world), self.events)
+                skills, TfToolPosition(self._tf, self._tip, self._world), self.events, estop=estop)
+            self.jobs = JobManager(self.runner, cancel, estop)
+            self.supervisor = Supervisor(estop, self._joints, self._joint_names, stop_port=motion,
+                                         runner=self.runner, mode=self.mode, events=self.events,
+                                         safety=safety.as_dict(motion.velocity_scale))
 
     @property
     def depth_range(self) -> Tuple[float, float]:
@@ -162,6 +177,7 @@ class WebViewNode(Node):
             objects_age_s=_age(None if objects is None else objects[1], now),
             intrinsics=intr, world_from_optical=world_from_optical,
             joint_names=self._joint_names, joint_positions=self._joints.joint_positions(),
+            joint_velocities=self._joints.joint_velocities(),
             tool_link=self._tip, tool_position=tool_position)
 
 
@@ -172,7 +188,8 @@ def main(args=None):
     port = int(node.get_parameter('port').value)
     try:
         view = WebView(node, host=host, port=port, depth_range=node.depth_range,
-                       commands=node.runner)
+                       commands=node.runner, supervisor=node.supervisor, mode=node.mode,
+                       jobs=node.jobs)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()
