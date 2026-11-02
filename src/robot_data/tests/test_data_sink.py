@@ -94,6 +94,11 @@ def test_error_report_mapping():
     assert error_report_for('estop', {'reason': 'buton', 'message': 'robot durdu'}) == {
         'component': 'estop', 'code': 'buton', 'message': 'robot durdu'}
     assert error_report_for('estop_reset', {'had_error': False}) is None
+    assert error_report_for('agent_tool_call', {'tool': 'go_home', 'status': 'ok'}) is None
+    assert error_report_for('agent_tool_call', {'tool': 'x', 'status': 'dry_run'}) is None
+    assert error_report_for('agent_tool_call', {'tool': 'go_home', 'status': 'refused',
+                                                'message': 'onay gerekli'}) == {
+        'component': 'agent', 'code': 'refused', 'message': 'go_home: onay gerekli'}
     assert error_report_for('scenario_result', {'name': 'demo_scenario', 'ok': False,
                                                 'message': '2. adımda durdu'}) == {
         'component': 'scenario', 'code': 'demo_scenario', 'message': '2. adımda durdu'}

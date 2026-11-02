@@ -62,6 +62,21 @@ olduğu durumlar ayrıca işaretli.
 | İş `cancelled`, `cancelled_by: estop` | İş sırasında acil dur | `reset`, sonra işi yeniden ver |
 | `GET /api/jobs/j9` → `404` | Geçmiş bellekte son 50 iş; süreç yeniden başladıysa silinir | Yeniden iş ver |
 
+## 5b. LLM araç katmanı (`robot_agent`)
+
+| Belirti | Neden | Çözüm |
+|---|---|---|
+| `[!] ANTHROPIC_API_KEY ayarlı değil: LLM katmanı kapalı` (çıkış 2) | Anahtar yok; katman bilerek kapalı | Anahtarsız denemek için `--offline`; gerçek LLM için anahtarı ver: `ANTHROPIC_API_KEY=... ./docker/agent.sh "..."` |
+| `refused: onay gerekli ve onaylayan yok` | Terminal etkileşimli değil ve `--yes` yok | Etkileşimli terminalde `[e/H]` sorusuna `e` de ya da `--yes` ekle |
+| `refused: robot meşgul: j3 (...)` | Başka iş çalışıyor | Bitmesini bekle ya da `POST /api/jobs/j3/cancel` |
+| `estopped: acil dur etkin: hiçbir hareket verilmez` (çıkış 3) | Robot kilitli ya da bu koşuda acil dur verildi | Kolun durduğunu doğrula, **insan** `POST /api/reset` yapar; ajan kilidi açamaz (aracı yok) |
+| `refused: ... güvenli çalışma kutusunun dışında` | Hesaplanan hedef kutu dışında | Daha düşük/yüksek `height_m` ya da kutuyu bilerek ayarla (`safe_zone.yaml`) |
+| `refused: ... nesne şu an görünmüyor` | Algı nesneyi görmüyor | `list_objects` ile bak; kameranın canlı olduğunu kontrol et |
+| `refused: robot API ... yanıt vermedi` | `web_view commands:=true` çalışmıyor ya da yanlış port | Önce `docker compose up demo`; `--url http://127.0.0.1:8080` |
+| `ACİL DUR GÖNDERİLEMEDİ` | Acil dur isteği API'ye ulaşmadı | **Robotu elle durdur** (güç/donanım acil durdurma), sonra API'yi düzelt |
+| `robot adresi http://127.0.0.1:<port> olmalı` | Başka bir makineyi hedefledin | Robot API yalnızca `127.0.0.1`'dedir; bu bilerek |
+| Ctrl-C sonrası çıkış 130, robot kilitli | Ctrl-C acil dur gönderir | Beklenen; insan `reset` ile kilidi açar |
+
 ## 6. Veritabanı
 
 | Belirti | Neden | Çözüm |

@@ -17,6 +17,7 @@
   <depend>tf2_ros</depend>
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>robot_sim</exec_depend>
+  <exec_depend>robot_agent</exec_depend>   <!-- agent_check drives the agent against the stack -->
   <exec_depend>launch_ros</exec_depend>
 
   <export>

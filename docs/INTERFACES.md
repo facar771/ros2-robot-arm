@@ -151,6 +151,60 @@ değerler `/api/state` → `robot.safety`'de görünür.
 yapamadı (neden `message`'da) · **`423` acil dur kilitli: komut hiç çalışmadı, gövde
 `{"error", "state": "estopped"}`; önce `/api/reset`** · `500` iç hata.
 
+## Ajan araç katmanı (`robot_agent`, Aşama 7): bir LLM'in robota güvenli erişimi
+Paket `robot_agent`; mantığın tamamı ROS'suz, robota **yalnızca Robot API v1 üzerinden (HTTP, 127.0.0.1)**
+ulaşır: istemci `127.0.0.1`/`localhost` dışındaki adresleri reddeder. **Serbest kod çalıştırma yoktur**:
+bir LLM'in yapabildiği tek şey aşağıdaki beyaz listeli araçları çağırmaktır.
+
+**Araçlar** (`robot_agent.tools.build_tools()`; şemalar `robot_core.webcmd` sabitlerinden ve
+`Skills` docstring'lerinden üretilir, Anthropic `input_schema` biçimindedir):
+
+| Araç | Risk | Ne yapar |
+|---|---|---|
+| `list_objects` | read | `objects` komutu (nesne adı/renk/konum/boyut) |
+| `get_robot_state` | read | `/api/state` → `robot` bloğu |
+| `go_home` | motion | `home` |
+| `go_above_object` `{color: red\|green\|blue, height_m: 0-0.5 (0.35)}` | motion | `above <renk> <h>` |
+| `run_demo_scenario` | long | `demo_scenario` |
+| `cancel_current_job` | safety | çalışan işi iptal eder (kilitlemez) |
+| `emergency_stop` `{reason?}` | safety | `POST /api/stop` |
+
+**Bilerek yok:** `reset` (acil durdan sonra kilidi **yalnızca insan** açar), ham koordinat/`goto`, kabuk, kod,
+`addbox`. Tüm şemalar `additionalProperties: false`; sayılar sonlu olmalı, bool sayı sayılmaz.
+
+**`ToolExecutor` boru hattı** (her çağrı bundan geçer; `safety` araçları orta kısmı atlar, hiçbir şey
+durdurmayı geciktiremez): 1) araç beyaz listede ve açık mı (`rejected`) → 2) argümanlar şemaya uyuyor mu
+(`rejected`, robot'a hiçbir şey gitmez) → 3) robot durumu: `estopped` → `estopped` (hareket yok), `busy` →
+`refused`, API yok → `refused` (körlemesine hareket verilmez) → 4) hareket çağrısı kotası
+(`Policy.max_motion_calls`, 10) → 5) `go_above_object` için **gerçek nesne konumundan hedef hesaplanır ve
+robotun bildirdiği güvenli kutuyla (`robot.safety.zone`) denetlenir** (`refused`, iş açılmaz) → 6) **kuru
+çalıştırma** (`dry_run`) burada biter ve ne çalışacağını söyler → 7) **onay** (`Policy.confirm_risks`, varsayılan
+`motion` ve `long`; onaylayan yoksa `refused`) → 8) iş olarak gönderilir ve sonuna kadar izlenir. Sunucu da
+kendi güvenli kutusunu/kilidini ayrıca uygular (savunma derinliği).
+
+**Acil dur önceliği:** (a) `emergency_stop` her denetimden önce, onaysız ve kotadan bağımsız gider;
+sonucunda robotun *durduğu hız doğrulamasıyla* bildirilir (`ok: true`) ya da "DOĞRULANAMADI" (`ok: false`);
+API'ye 3 deneme yapılır, olmazsa `failed` + "ACİL DUR GÖNDERİLEMEDİ, robotu elle durdur". (b) Bir araç çalışırken
+`ToolExecutor.request_stop()` (başka iş parçacığı, CLI'da **Ctrl-C**) acil durdu hemen gönderir. (c) Bir araç
+sonucu `estopped` ise (LLM durdurdu, bir insan butona bastı, iş `cancelled_by: estop` ile bitti) **koşu
+hemen biter**: modele ikinci tur verilmez, aynı yanıttaki kalan çağrılar yürütülmez ("acil dur: çağrı
+yürütülmedi") ve kullanıcıya modelin önceden yazdığı metin değil "Acil dur etkin ..." döner. (d) Acil dur
+verdiren yürütücü, insan kilidi açsa bile bir daha hareket vermez; yeni koşu yeni yürütücüyle başlar.
+
+**Olay günlüğü:** her çağrı, reddedilenler dahil `agent_tool_call` olayıdır (`ROBOT_DB_URL` varsa
+`error_reports`'a da düşer: `status` ok/dry_run değilse).
+
+**LLM'ler** (`robot_agent.llm`): `ScriptedLLM` (testler/CI, anahtarsız), `RuleLLM` (yerleşik Türkçe
+ifade çözücü, `--offline`; *LLM değildir*), `AnthropicLLM` (isteğe bağlı; yalnızca `ANTHROPIC_API_KEY`
+ortam değişkeni varsa açılır, yoksa katman kapalıdır; model `ROBOT_AGENT_MODEL`, varsayılan
+`claude-sonnet-5-5`; stdlib HTTP, anahtar yalnızca başlıkta, hata mesajlarında/günlükte geçmez).
+
+**CLI:** `robot_agent [--offline] [--yes] [--dry-run] [--max-motions N] [--url http://127.0.0.1:8080] "yeşil nesnenin üstüne git"`.
+Çıkış: `0` tamam, `1` bir araç reddedildi/başarısız, `2` kurulum sorunu (anahtar yok, kötü URL),
+`3` koşu acil durla bitti, `130` Ctrl-C (acil dur gönderilir). Etkileşimli terminalde hareketten önce `[e/H]`
+sorar; terminal yoksa `--yes` verilmedikçe hareket **verilmez**.
+Doğrulama: `run_selftest gazebo-agent` (`ros2 run robot_viz agent_check`).
+
 ## Tarayıcı görünümü (`robot_viz` `web_view`, mantık `robot_core.webview` / `robot_core.viz`)
 HTTP sunucusu (yalnızca `http.server`); varsayılan **salt okunur**, `commands:=true` ile beyaz listeli
 komutlar açılır (aşağıda). Başlatma: `ros2 launch robot_viz web_view.launch.py`
@@ -259,13 +313,14 @@ Robot programları `event_sink_from_env(kaynak)` ile bir olay alıcısı alır. 
 | `command_rejected` | cli_moveit, web_view | `line`, `reason` (isteğe bağlı); acil dur kilitliyken reddedilen komut için de |
 | `estop` | web_view | `reason`, `latched`, `stopped` (doğrulandı mı), `stop_time_s`, `max_joint_speed`, `was_running`, `message` |
 | `estop_reset` | web_view | `had_error` |
+| `agent_tool_call` | robot_agent | `tool`, `arguments`, `risk` (`read|motion|long|safety`), `status` (`ok|dry_run|rejected|refused|failed|cancelled|estopped`), `ok`, `message`, `dry_run`, `job_id`, `duration_s` — **her** çağrı, reddedilenler dahil |
 | `objects_changed` | perception | `objects`: `[{label, index, position, size, pixels}]` — görünen nesne kümesi değişince (her karede DEĞİL) |
 | `skill_result` | cli_moveit, web_view (Skills) | `skill`, `args`, `ok`, `message`, `code_name` |
 | `scenario_result` | cli_moveit, web_view (`demo_scenario`) | `name`, `ok`, `message`, `steps[]` (`step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm`) |
 | `selftest_check` | selftest | `name`, `ok`, `detail` |
 | `error` | herhangi | `component`, `code`, `message` |
 
-`error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`, `estop` (her acil dur),
+`error_reports` satırı otomatik oluşan olaylar: `motion_result` (`ok=false`), `command_rejected`, `estop` (her acil dur), `agent_tool_call` (`status` ok/dry_run değilse),
 `selftest_check` (`ok=false`), `skill_result` (`ok=false`), `scenario_result` (`ok=false`), `error`.
 
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü

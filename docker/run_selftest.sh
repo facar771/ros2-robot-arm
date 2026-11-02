@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs]
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent]
 #   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
@@ -23,6 +23,8 @@
 #                 the middle of a motion: the arm is measured to stop, 423 while latched, reset rules)
 # gazebo-jobs   = same stack + the browser with commands enabled; runs only jobs_check (POST /api/jobs:
 #                 202 + progress, cancel/timeout/e-stop mid-motion with the arm measured to stop)
+# gazebo-agent  = same stack + the browser with commands enabled; runs only agent_check (robot_agent: valid /
+#                 invalid / unsafe / e-stop requests through a scripted LLM, the real CLI incl. Ctrl-C)
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -45,7 +47,9 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
     gazebo-jobs) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs]"; exit 64 ;;
+    gazebo-agent) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -135,6 +139,8 @@ elif [ "$MODE" = "gazebo-stop" ]; then
     timeout 900 ros2 run robot_viz stop_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-jobs" ]; then
     timeout 900 ros2 run robot_viz jobs_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+elif [ "$MODE" = "gazebo-agent" ]; then
+    timeout 900 ros2 run robot_viz agent_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 else
     timeout 180 ros2 run robot_controller selftest 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 fi

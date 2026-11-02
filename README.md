@@ -164,6 +164,22 @@ curl -s localhost:8080/api/jobs/j1 | python3 -m json.tool
 curl -s localhost:8080/api/jobs/j1/cancel -H 'Content-Type: application/json' -d '{}'
 ```
 Otomatik doğrulama: `docker compose run --rm selftest-jobs`.
+
+**LLM araç katmanı (`robot_agent`).** Bir LLM robota yalnızca beyaz listeli araçlarla (nesneleri listele,
+home, nesnenin üstüne git, demo, iptal, **acil dur**) ve yalnızca `127.0.0.1` üzerindeki API ile erişir;
+serbest kod/koordinat yoktur, acil dur kilidini açan araç **yoktur** (bunu insan yapar). Her çağrı
+doğrulanır, güvenli kutuyla denetlenir, hareketten önce onay ister, `--dry-run` ile hareketsiz denenir;
+acil dur her zaman önceliklidir (Ctrl-C de acil dur gönderir). Anahtarsız denemek için yerleşik kural çözücü:
+
+```bash
+# Terminal 1 — WSL'de
+docker compose up demo
+# Terminal 2 — WSL'de
+./docker/agent.sh --offline --dry-run "yeşil nesnenin üstüne git"   # hareket etmez, ne olacağını söyler
+./docker/agent.sh --offline --yes "yeşil nesnenin üstüne git"       # gider (onay otomatik)
+ANTHROPIC_API_KEY=... ./docker/agent.sh "kırmızı kutunun üstüne git"   # gerçek LLM (isteğe bağlı)
+```
+Otomatik doğrulama (anahtarsız, betikli sahte LLM): `docker compose run --rm selftest-agent`.
 Docker'sız: `ros2 launch robot_viz web_view.launch.py commands:=true`. Otomatik test (WSL'de):
 `docker compose run --rm selftest-cmd` (reddedilmesi gerekenler, TF ile ölçülen hareketler, canlı
 anlatım, meşgulken `409`).

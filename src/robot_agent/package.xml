@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_agent</name>
+  <version>0.1.0</version>
+  <description>Safe LLM tool layer: white-listed tools over the Robot API v1 (HTTP, 127.0.0.1), no free code execution</description>
+  <maintainer email="facar7711@gmail.com">facar771</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>robot_core</depend>
+  <exec_depend>robot_data</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

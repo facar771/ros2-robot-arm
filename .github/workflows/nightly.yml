@@ -36,6 +36,7 @@ jobs:
           - gazebo-cmd
           - gazebo-stop
           - gazebo-jobs
+          - gazebo-agent
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

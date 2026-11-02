@@ -24,6 +24,7 @@ setup(
             'cmd_check = robot_viz.cmd_check:main',
             'stop_check = robot_viz.stop_check:main',
             'jobs_check = robot_viz.jobs_check:main',
+            'agent_check = robot_viz.agent_check:main',
         ],
     },
 )
