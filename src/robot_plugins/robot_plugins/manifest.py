@@ -30,6 +30,10 @@ NAME_RE = re.compile(r'^[a-z][a-z0-9_]{1,39}$')
 VERSION_RE = re.compile(r'^\d+\.\d+\.\d+([+-][0-9A-Za-z.-]+)?$')
 ENTRY_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z_][A-Za-z0-9_]*$')
 PERMISSIONS = ('camera:read', 'camera:pan', 'robot:jobs')
+TOOL_KEYS = {'name', 'description', 'input_schema', 'motion', 'timeout_s'}
+MOTIONS = ('none', 'camera', 'arm')
+# a tool that moves something needs the permission to do it; declared motion must be backed by it
+MOTION_PERMISSION = {'camera': 'camera:pan', 'arm': 'robot:jobs'}
 ALWAYS_GRANTED = ('robot:stop',)
 KNOWN_KEYS = {'name', 'version', 'description', 'entry', 'permissions', 'parameters', 'tools'}
 
@@ -43,6 +47,8 @@ class Tool:
     name: str
     description: str
     input_schema: Dict[str, Any]
+    motion: str = 'none'          # 'none' | 'camera' | 'arm' (what the tool may physically move)
+    timeout_s: float = 60.0       # how long a caller should wait for one call
 
 
 @dataclass(frozen=True)
@@ -78,7 +84,8 @@ class Manifest:
         return {'name': self.name, 'version': self.version, 'description': self.description,
                 'permissions': list(self.granted), 'parameters': self.parameters,
                 'tools': [{'name': t.name, 'description': t.description,
-                           'input_schema': t.input_schema} for t in self.tools]}
+                           'input_schema': t.input_schema, 'motion': t.motion,
+                           'timeout_s': t.timeout_s} for t in self.tools]}
 
 
 def parse_manifest(data: Any, directory: Union[str, Path] = '.') -> Manifest:
@@ -113,8 +120,9 @@ def parse_manifest(data: Any, directory: Union[str, Path] = '.') -> Manifest:
         raise ManifestError(str(exc)) from exc
     tools: List[Tool] = []
     for i, raw in enumerate(data.get('tools', [])):
-        if not isinstance(raw, dict) or set(raw) - {'name', 'description', 'input_schema'}:
-            raise ManifestError(f'tools[{i}]: yalnızca name, description, input_schema olabilir')
+        if not isinstance(raw, dict) or set(raw) - TOOL_KEYS:
+            raise ManifestError(
+                f'tools[{i}]: yalnızca name, description, input_schema, motion, timeout_s olabilir')
         name, desc = raw.get('name'), raw.get('description')
         if not isinstance(name, str) or not NAME_RE.match(name):
             raise ManifestError(f'tools[{i}].name: geçersiz')
@@ -129,7 +137,19 @@ def parse_manifest(data: Any, directory: Union[str, Path] = '.') -> Manifest:
             raise ManifestError(f"tools[{i}].input_schema: kök tür 'object' olmalı")
         if name in {t.name for t in tools}:
             raise ManifestError(f'tools[{i}].name: {name!r} tekrar ediyor')
-        tools.append(Tool(name, desc.strip(), schema))
+        motion = raw.get('motion')
+        if motion not in MOTIONS:
+            raise ManifestError(
+                f"tools[{i}].motion: zorunlu, {'/'.join(MOTIONS)} olmalı (aracın neyi hareket "
+                'ettirdiğini açıkça yaz)')
+        need = MOTION_PERMISSION.get(motion)
+        if need is not None and need not in perms:
+            raise ManifestError(f'tools[{i}].motion={motion!r} için {need} izni gerekir')
+        timeout = raw.get('timeout_s', 60.0)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) \
+                or not 1.0 <= timeout <= 900.0:
+            raise ManifestError(f'tools[{i}].timeout_s: 1-900 arası sayı olmalı')
+        tools.append(Tool(name, desc.strip(), schema, motion, float(timeout)))
     return Manifest(name=data['name'], version=data['version'], description=data['description'],
                     entry=data['entry'], permissions=perms, parameters=params,
                     tools=tuple(tools), directory=Path(directory))

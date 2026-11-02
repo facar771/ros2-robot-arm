@@ -26,10 +26,11 @@ class Plugin(PluginBase):
             return {'ok': reason in ('duration', 'stopped'), 'reason': reason, 'jobs': jobs,
                     'last_target': last_target, **extra}
 
+        ctx.camera.latest_frame()          # wait for the first frame once (live camera start-up)
         while time.monotonic() < deadline:
             if ctx.stop.is_set():
                 return finish('stopped')
-            frame = ctx.camera.latest_frame()
+            frame = ctx.camera.latest_frame(wait_s=0)    # the loop handles None itself
             found = find_objects(frame, [color]) if frame is not None else []
             if not found:
                 lost += 1

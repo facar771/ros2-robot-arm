@@ -21,6 +21,8 @@ parameters:
       description: Aynı renkte, birbirine bu kadar yakın görülen nesneler tek sayılır.
 tools:
   - name: scan_extent
+    motion: camera
+    timeout_s: 120
     description: >-
       Kamerayı yaw_min_deg ile yaw_max_deg arasında steps adımda döndürüp ortamı tarar ve bulunan
       tüm renkli nesneleri (renk, şekil, dünya çerçevesinde merkez/boyut, tutma adayları, kaç

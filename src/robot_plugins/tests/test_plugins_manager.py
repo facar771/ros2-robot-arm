@@ -38,7 +38,7 @@ SLOW_CODE = '''
 
 
 def tool(name, props=None, required=()):
-    return {'name': name, 'description': f'{name} aracı',
+    return {'name': name, 'description': f'{name} aracı', 'motion': 'none',
             'input_schema': {'type': 'object', 'properties': props or {},
                              'required': list(required), 'additionalProperties': False}}
 

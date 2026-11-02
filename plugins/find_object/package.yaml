@@ -16,6 +16,8 @@ parameters:
       description: Tutucunun açabildiği en geniş aralık (m); tutma adaylarının 'fits' alanını belirler.
 tools:
   - name: find_object
+    motion: none
+    timeout_s: 30
     description: >-
       Verilen renkteki nesneyi kamerada bulur. Bulursa dünya çerçevesinde (metre) konumunu, boyutunu,
       şeklini (box/cylinder/sphere), kenar noktalarını ve tutma adaylarını döndürür. color='any' ise

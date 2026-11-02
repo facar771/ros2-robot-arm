@@ -506,3 +506,77 @@ CLI: `objects`, `above <nesne> [yükseklik_m]`, `goto x y z`, `demo_scenario` (S
 TF ile doğrulanır; ayrıntı yukarıdaki `POST /api/command` tablosunda). Doğrulama:
 `ros2 run robot_controller pose_check`.
 
+
+## Eklentiler: dışarıdan çağırma sözleşmesi (PR-V5, `robot_plugins.invoke`)
+
+Ajan katmanı (Robot_3), betikler ve CLI bir eklentiyi **tek bir Python girişinden** çağırır; yönetici,
+alt süreç protokolü ya da `PluginContext` ayrıntılarına bakmaz.
+
+```python
+from robot_plugins.invoke import run_plugin, catalog
+
+catalog()                                   # tüm araçlar: LLM'e verilecek açıklama + şema + motion
+r = run_plugin('find_object', 'find_object', {'color': 'red'},
+               robot_url='http://127.0.0.1:8080', frames='ros')
+```
+
+Aynısı komut satırından: `python -m robot_plugins [--robot URL] [--frames ros] call <eklenti> [araç]
+--args '{...}' [--params '{...}'] [--timeout S]` (JSON basar; çıkış kodu 0 = `ok`, 1 = hata, 2 = JSON bozuk) ve
+`python -m robot_plugins catalog`.
+
+### `run_plugin(plugin, tool=None, args=None, *, params, robot_url='fake', frames='none', panner='none', timeout_s=None, frame_wait_s=5.0, grace_s=3.0, stop_event=None)`
+Eklentiyi kendi alt sürecinde başlatır, **tek** araç çağrısı yapar ve süreci her durumda (zaman aşımı,
+Ctrl-C, hata) kapatır. **İstisna atmaz**; her zaman aynı anahtarlarla bir `dict` döner (`api_version: 1`):
+
+| anahtar | anlam |
+|---|---|
+| `ok` | çağrı gitti **ve** eklenti kendi içinde `ok: false` demedi (tek seviye; ayrıca bakmaya gerek yok) |
+| `plugin`, `tool` | çağrılan; `tool` verilmediyse ve eklentide tek araç varsa o seçilir |
+| `motion` | aracın neyi hareket ettirebildiği (aşağıda); bulunamayan araçta `null` |
+| `data` | eklentinin kendi sonucu (nesne listesi, iş sayısı, `reason` …); hata olsa da varsa doludur |
+| `error`, `code` | `ok` false iken dolu; `code` aşağıdaki listeden |
+| `warning` | `null` ya da insan okunur uyarı (benzetim robotu, iptal doğrulanamadı …) |
+| `robot`, `frames`, `duration_s` | hangi robot / kare kaynağıyla, kaç saniyede |
+
+`code` değerleri: `unknown_plugin`, `unknown_tool`, `bad_parameters`, `bad_arguments` (şemaya uymayan
+`args`), `bad_robot_url`, `start_failed`, `not_running`, `permission_denied`, `timeout`, `stopped`
+(`stop_event` ya da eklenti durduruldu), `interrupted` (Ctrl-C), **`estop`**, `robot_<HTTP durumu>`,
+`plugin_error` (eklenti `ok: false` döndü; ayrıntı `data`'da, ör. `reason`), `exception`.
+
+* **`estop`**: robotun acil durdurması kilitli (HTTP 423 ya da eklenti `reason: estop`). **Yeniden
+  deneme.** Eklentilerin reset yetkisi yoktur; kilidi yalnızca bir insan açar.
+* **Zaman aşımı**: `timeout_s` verilmezse aracın `package.yaml`'daki `timeout_s` değeri (1-900 s) geçerlidir.
+  Süre dolunca eklentiye önce durdurma belirteci verilir (`follow_color` çalışan robot işini iptal eder),
+  `grace_s` sonra süreç öldürülür. `stop_event.set()` aynı yolu işletir; acil dur işleyicisi bunu
+  çağırabilir. `run_plugin` robotun **acil dur**unu kendisi göndermez (robotu kilitler; çağıranın kararı).
+* **`motion == 'arm'` araçlarda** `timeout` / `stopped` / `interrupted` / `exception` sonuçlarına `warning`
+  eklenir: iş iptal edilmiş olmayabilir, `GET /api/state` ile bak, gerekirse acil dur gönder.
+* **`robot_url`**: `'fake'` (bellekte benzetim; **hiçbir şey hareket etmez**, `motion == 'arm'` sonuçlarına bu
+  `warning` olarak yazılır) ya da yalnızca loopback (`127.0.0.1`, `localhost`) bir Robot API adresi
+  (API kimliksizdir; başka adres `bad_robot_url`).
+* **İlk kare**: canlı kamerada (`frames='ros'`) süreç başladığında henüz kare yoktur; `latest_frame()`
+  `frame_wait_s` (varsayılan 5 s) kadar ilk kareyi bekler. Kare yine gelmezse `plugin_error`
+  (`kamera karesi yok`) döner; yeşil bir `ok` asla verilmez.
+* **Maliyet**: her çağrı bir süreç başlatır (≈1-3 s, bunun içinde ilk kare). Çok sayıda çağrı için tek bir
+  `PluginManager` tut; `run_plugin` onun üstüne kurulu tek-atımlık sarmalayıcıdır.
+
+### Hareket sınıfı (`package.yaml` → `tools[].motion`, **zorunlu**)
+| `motion` | anlam | gereken izin | araçlar |
+|---|---|---|---|
+| `none` | yalnızca **bakar**; hiçbir şeyi hareket ettirmez | `camera:read` | `find_object` |
+| `camera` | yalnızca **kamerayı** (pan) çevirebilir, kolu oynatmaz | `camera:pan` | `scan_extent` |
+| `arm` | **robot kolunu** Robot API v1 işleriyle hareket ettirir | `robot:jobs` | `follow_color` |
+
+`catalog()` her araç için `motion`, `timeout_s`, `input_schema`, `description` ve izinleri verir. Ajan katmanı
+`none` araçları onaysız, `arm` araçları kendi onay/güvenlik kurallarıyla çalıştırmalıdır. `timeout_s` de
+manifestte zorunlu değildir (varsayılan 60 s) ama hareket eden araçlarda açık yazılmalıdır.
+
+### Eklenti başına
+* `find_object(color: red|green|blue|any, …)` → `data.objects[]` (renk, şekil, merkez, boyut, kenar noktaları,
+  tutuş adayları); kare yoksa `plugin_error`. Kameradan çıkan her sayı **tahmindir** (derinlik gürültüsü).
+* `scan_extent` → kamerayı süpürüp görünen her nesnenin kapladığı alanı verir. **Yalnızca kamerayı
+  çevirir.** ROS tarafında panner yoktur: `frames='ros'` ile tek görünüme düşer (`data.swept: false`);
+  gerçek süpürme `panner='synthetic'` ile (benzetim) denenmiştir.
+* `follow_color(color, height_m, duration_s, min_move_m)` → `data.reason`: `duration` (başarılı), `stopped`,
+  `not_found`, `refused`, `estop`; `data.jobs` kaç `above <renk> <yükseklik>` işi gönderildiği. Hareket
+  yalnızca Robot API işlerinden geçer (güvenli kutu, hız tavanı, acil dur geçerli).
