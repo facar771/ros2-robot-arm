@@ -26,6 +26,7 @@ from typing import Any, Deque, Dict, List, Optional
 from robot_core.ports import EventSink, NullEventSink, ToolPositionPort
 from robot_core.scenario import run_demo_scenario
 from robot_core.skills import Skills
+from robot_core.supervisor import ESTOP_MESSAGE, EStop, EStopped
 
 log = logging.getLogger('robot_core.webcmd')
 
@@ -44,6 +45,10 @@ class CommandError(ValueError):
 
 class Busy(RuntimeError):
     """A command is already running."""
+
+
+__all__ = ['Busy', 'Command', 'CommandError', 'CommandOutcome', 'CommandRunner', 'EStopped',
+           'parse_command']
 
 
 @dataclass(frozen=True)
@@ -112,16 +117,19 @@ class CommandRunner:
     """Runs white-listed commands, one at a time. Thread-safe; ``run`` blocks until it is done."""
 
     def __init__(self, skills: Skills, tool: ToolPositionPort, events: Optional[EventSink] = None,
-                 *, log_lines: int = 60, clock=time.monotonic, wall=time.time,
-                 scenario=run_demo_scenario):
-        self._skills, self._tool = skills, tool
+                 *, estop: Optional[EStop] = None, log_lines: int = 60, clock=time.monotonic,
+                 wall=time.time, scenario=run_demo_scenario):
+        self._skills, self._tool, self._estop = skills, tool, estop
         self._events = events or NullEventSink()
         self._clock, self._wall, self._scenario = clock, wall, scenario
         self._gate = threading.Lock()          # held while a command runs: single flight
         self._lock = threading.Lock()          # guards the status fields below
-        self._running: Optional[str] = None
+        self._running: Optional[Dict[str, Any]] = None    # id, command, started_at, started_mono
+        self._job_count = 0
         self._log: Deque[str] = deque(maxlen=log_lines)
         self._last: Optional[Dict[str, Any]] = None
+        self._last_error: Optional[Dict[str, Any]] = None
+        self._error_latched = False       # the last command ended in an internal error
 
     @property
     def allowed(self) -> List[str]:
@@ -129,9 +137,25 @@ class CommandRunner:
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
-            return {'running': self._running is not None, 'name': self._running,
+            job = None
+            if self._running is not None:
+                job = {'id': self._running['id'], 'command': self._running['command'],
+                       'started_at': round(self._running['started_at'], 3),
+                       'elapsed_s': round(self._clock() - self._running['started_mono'], 2)}
+            return {'running': job is not None, 'name': job and job['command'], 'job': job,
                     'log': list(self._log),
-                    'last': None if self._last is None else dict(self._last)}
+                    'last': None if self._last is None else dict(self._last),
+                    'last_error': None if self._last_error is None else dict(self._last_error)}
+
+    @property
+    def error_latched(self) -> bool:
+        with self._lock:
+            return self._error_latched
+
+    def clear_error(self) -> None:
+        with self._lock:
+            self._error_latched = False
+            self._last_error = None
 
     def reject(self, line: Any, reason: str) -> None:
         """Record a refused request (event for the run history); never raises."""
@@ -144,12 +168,21 @@ class CommandRunner:
         with self._lock:
             self._log.append(text)
 
-    def run(self, command: Command) -> CommandOutcome:
+    def new_job_id(self) -> str:
+        with self._lock:
+            self._job_count += 1
+            return f'j{self._job_count}'
+
+    def run(self, command: Command, job_id: Optional[str] = None) -> CommandOutcome:
+        if self._estop is not None and self._estop.is_set:
+            raise EStopped(ESTOP_MESSAGE)
         if not self._gate.acquire(blocking=False):
             raise Busy(f"başka bir komut çalışıyor: {self.status()['name']}")
         started = self._clock()
+        job_id = job_id or self.new_job_id()
         with self._lock:
-            self._running = command.line
+            self._running = {'id': job_id, 'command': command.line,
+                             'started_at': self._wall(), 'started_mono': started}
             self._log.clear()
         self._say(f'> {command.line}')
         try:
@@ -163,8 +196,15 @@ class CommandRunner:
         if self.status()['log'][-1:] != [verdict]:      # the scenario already narrates its verdict
             self._say(verdict)
         with self._lock:
+            finished = round(self._wall(), 3)
             self._last = {'command': command.line, 'ok': ok, 'message': message,
-                          'finished_at': round(self._wall(), 3)}
+                          'finished_at': finished}
+            if ok:
+                self._error_latched = False
+            else:
+                self._last_error = {'command': command.line, 'message': message,
+                                    'time': finished, 'internal': internal}
+                self._error_latched = internal
             self._running = None
         self._gate.release()
         return outcome

@@ -77,6 +77,13 @@ def error_report_for(kind: str, payload: Dict[str, Any]) -> Optional[Dict[str, A
     if kind == 'scenario_result' and payload.get('ok') is False:
         return {'component': 'scenario', 'code': payload.get('name'),
                 'message': payload.get('message') or str(payload.get('name', ''))}
+    if kind == 'agent_tool_call' and payload.get('status') not in ('ok', 'dry_run'):
+        detail = payload.get('message') or payload.get('status')
+        return {'component': 'agent', 'code': str(payload.get('status'))[:128],
+                'message': f"{payload.get('tool')}: {detail}"}
+    if kind == 'estop':       # every emergency stop is an incident worth a row
+        return {'component': 'estop', 'code': str(payload.get('reason') or 'api')[:128],
+                'message': payload.get('message') or 'acil dur'}
     if kind == 'error':
         return {'component': str(payload.get('component', 'unknown')),
                 'code': payload.get('code'), 'message': str(payload.get('message', ''))}

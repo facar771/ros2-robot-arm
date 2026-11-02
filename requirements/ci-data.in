@@ -1,0 +1,7 @@
+# CI job "Data layer on PostgreSQL"
+pytest
+pyyaml
+numpy
+sqlalchemy>=2.0
+alembic
+psycopg[binary]>=3.1

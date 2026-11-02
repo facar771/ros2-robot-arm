@@ -29,10 +29,23 @@ const FOOTER_READ_ONLY = $('footer').textContent;
 const FOOTER_COMMANDS = 'Komutlar açık: yalnızca beyaz listedeki komutlar çalışır '
   + '(home, objects, above, demo_scenario); aynı anda tek komut. Yenileme ~5 Hz.';
 let busy = false;
+let jobId = null;            // the job this page started (its result is shown when it ends)
 
 function setBusy(running) {
   busy = running;
-  document.querySelectorAll('#commands button').forEach((b) => { b.disabled = running; });
+  document.querySelectorAll('#commands button:not(.cancel)').forEach((b) => { b.disabled = running; });
+  $('cancel').disabled = !running;
+}
+
+async function showJobResult(id) {
+  const msg = $('cmd-msg');
+  try {
+    const j = await (await fetch('/api/jobs/' + id, { cache: 'no-store' })).json();
+    const text = (j.result && j.result.message) || j.error || j.state;
+    const ok = j.state === 'done';
+    msg.className = ok ? 'msg' : 'msg err';
+    msg.textContent = (ok ? '[+] ' : '[-] (' + j.state + ') ') + text;
+  } catch (e) { msg.className = 'msg err'; msg.textContent = '[-] iş sonucu okunamadı'; }
 }
 
 async function sendCommand(line) {
@@ -41,20 +54,44 @@ async function sendCommand(line) {
   msg.textContent = '> ' + line + ' ...';
   setBusy(true);
   try {
-    const r = await fetch('/api/command', {
+    const r = await fetch('/api/jobs', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: line }),
     });
     const j = await r.json();
-    const text = j.message || j.error || ('HTTP ' + r.status);
-    msg.className = r.ok ? 'msg' : 'msg err';
-    msg.textContent = (r.ok ? '[+] ' : '[-] (' + r.status + ') ') + text;
+    if (r.status === 202) { jobId = j.id; }
+    else {
+      msg.className = 'msg err';
+      msg.textContent = '[-] (' + r.status + ') ' + (j.error || ('HTTP ' + r.status));
+    }
   } catch (e) {
     msg.className = 'msg err';
     msg.textContent = '[-] sunucuya ulaşılamadı';
   }
   refreshState();
 }
+
+$('cancel').addEventListener('click', async () => {
+  if (!jobId) return;
+  try { await fetch('/api/jobs/' + jobId + '/cancel', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) { /* state shows it */ }
+  refreshState();
+});
+
+async function postEmpty(path, body) {
+  const msg = $('estop-msg');
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body });
+    const j = await r.json();
+    msg.className = r.ok ? 'msg' : 'msg err';
+    msg.textContent = j.message || j.error || ('HTTP ' + r.status);
+  } catch (e) { msg.className = 'msg err'; msg.textContent = 'sunucuya ulaşılamadı'; }
+  refreshState();
+}
+$('estop').addEventListener('click', () => postEmpty('/api/stop', JSON.stringify({ reason: 'web sayfası' })));
+$('reset').addEventListener('click', () => postEmpty('/api/reset', '{}'));
+
+const STATE_TEXT = { idle: 'hazır', busy: 'çalışıyor', estopped: 'ACİL DUR', error: 'hata' };
 
 document.querySelectorAll('[data-cmd]').forEach((b) =>
   b.addEventListener('click', () => sendCommand(b.dataset.cmd)));
@@ -72,9 +109,17 @@ async function refreshState() {
     $('tool').textContent = s.tool ? 'x, y, z = ' + fmt(s.tool.position) + ' m' : 'TF yok';
     const enabled = s.commands.enabled;
     $('commands').hidden = !enabled;
+    $('estop-bar').hidden = !enabled;
+    if (enabled && s.robot) {
+      const st = s.robot.state;
+      $('robot-state').textContent = (STATE_TEXT[st] || st) + (s.robot.moving ? ' - hareket ediyor' : '');
+      $('robot-state').className = 'badge ' + (st === 'idle' ? 'ok' : 'bad');
+      $('reset').disabled = st !== 'estopped' && st !== 'error';
+    }
     $('footer').textContent = enabled ? FOOTER_COMMANDS : FOOTER_READ_ONLY;
     if (enabled) {
       setBusy(s.command.running);
+      if (jobId && !s.command.running) { const id = jobId; jobId = null; showJobResult(id); }
       if (s.command.log.length) $('cmd-log').textContent = s.command.log.join('\n');
     }
     const age = s.camera.rgb_age_s;
