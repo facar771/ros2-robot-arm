@@ -114,7 +114,22 @@ elif [ "$MODE" = "gazebo-viz" ]; then
 elif [ "$MODE" = "gazebo-cmd" ]; then
     timeout 900 ros2 run robot_viz cmd_check || STATUS=$?
 elif [ "$MODE" = "gazebo-tracking" ]; then
-    timeout 1500 ros2 run robot_vision_ros tracking_check --out /tmp/tracking || STATUS=$?
+    timeout 1500 ros2 run robot_vision_ros tracking_check --out /tmp/tracking 2>&1 | tee /tmp/tracking_check.log
+    STATUS=${PIPESTATUS[0]}
+    # CI logs cannot be read through the API, annotations can: publish the outcome as annotations
+    annotate() {  # annotate <level> <title> <file> <lines>
+        local body
+        body=$(tail -n "$4" "$3" 2>/dev/null | tr -d '\r' | head -c 3000 | sed 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+        echo "::$1 title=$2::$body"
+    }
+    annotate "$([ $STATUS -eq 0 ] && echo notice || echo error)" "tracking_check exit=$STATUS" /tmp/tracking_check.log 40
+    if [ $STATUS -ne 0 ]; then
+        annotate error "tracking launch log (tail)" "$LOG" 40
+        annotate error "gz / bridge processes and topics" /dev/null 1
+        { ps -eo pid,args | grep -E "gz sim|parameter_bridge|tracking_node" | grep -v grep | cut -c1-160; \
+          timeout 20 ros2 topic list 2>&1 | head -30; } > /tmp/diag.txt 2>&1
+        annotate error "diag: processes + topics" /tmp/diag.txt 40
+    fi
 else
     timeout 180 ros2 run robot_controller selftest || STATUS=$?
 fi
