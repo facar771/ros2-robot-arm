@@ -122,7 +122,6 @@ jobs:
       - name: Selftest - camera platform tracks a moving target (4 scenarios, lock criteria)
         # Not verified in Docker when it was written (the sandbox has no Docker Hub access); the
         # world needs the bullet-featherstone physics plugin. Does not block the other jobs.
-        continue-on-error: true
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-tracking
       - name: Data layer - selftest events end up in SQLite
         run: >-
