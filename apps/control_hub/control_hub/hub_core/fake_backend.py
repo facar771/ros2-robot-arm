@@ -10,7 +10,7 @@ import math
 import threading
 from typing import Any, Dict, List, Tuple
 
-from control_hub.hub_core.backend import BackendResult
+from control_hub.hub_core.backend import BackendResult, ResetResult, StopReport
 from control_hub.hub_core.commands import CommandError, parse_robot_command
 
 Vec = Tuple[float, float, float]
@@ -80,11 +80,14 @@ class FakeBackend:
         res = self._move_to(target, cancel, f'{key} nesnesinin {clearance * 100:.0f} cm üstüne gidildi')
         return BackendResult(res.ok, res.message, {**res.data, 'target': list(target)})
 
-    def emergency_stop(self) -> None:
+    def emergency_stop(self) -> StopReport:
         self._halt.set()
+        return StopReport(True, 'sahte robot durdu',
+                          {'stop_time_s': 0.0, 'was_running': self._moving})
 
-    def reset_emergency_stop(self) -> None:
+    def reset_emergency_stop(self) -> ResetResult:
         self._halt.clear()
+        return ResetResult(True, 'sıfırlandı')
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
@@ -93,7 +96,9 @@ class FakeBackend:
             moving = self._moving
         return {
             'name': self.name, 'connected': True, 'can_interrupt': self.can_interrupt,
-            'moving': moving, 'tool': [round(v, 4) for v in tool],
+            'mode': 'fake', 'moving': moving,
+            'estop': {'tripped': self._halt.is_set(), 'reason': None, 'since': None},
+            'tool': [round(v, 4) for v in tool],
             'joints': [{'name': n, 'rad': round(v, 4), 'deg': round(math.degrees(v), 1)}
                        for n, v in zip(JOINTS, joints)],
             'objects': self._objects_list(),

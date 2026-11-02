@@ -25,10 +25,10 @@ scenarios:
     label: Kırmızı nesne
     icon: "🔴"
     color: "#f85149"
-    description: Aleti kırmızı kutunun 30 cm üstüne götürür.
+    description: Aleti kırmızı kutunun 35 cm üstüne götürür.
     steps:
-      - say: "Kırmızı kutunun 30 cm üstüne gidiyorum."
-        robot: above red 0.30
+      - say: "Kırmızı kutunun 35 cm üstüne gidiyorum."
+        robot: above red 0.35
 
   - id: above_blue
     label: Mavi nesne
@@ -49,7 +49,7 @@ scenarios:
         robot: home
       - say: "Yeşil silindirin 25 cm üstüne gidiyorum."
         robot: above green 0.25
-      - say: "Şimdi kırmızı kutunun 30 cm üstüne geçiyorum."
-        robot: above red 0.30
+      - say: "Şimdi kırmızı kutunun 35 cm üstüne geçiyorum."
+        robot: above red 0.35
       - say: "İş bitti: 'home' pozuna dönüyorum."
         robot: home

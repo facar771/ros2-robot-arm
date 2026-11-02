@@ -32,6 +32,9 @@ button.link { background: none; border: 0; color: var(--muted); text-decoration:
           background: #3b2f0b; border: 1px solid #6a5113; color: #f0d58a; font-size: .9rem; }
 .banner.danger { background: #3d1412; border-color: #8e2a26; color: #ffb4b0; }
 .banner { width: calc(100% - 32px); }
+.banner.alarm { font-weight: 700; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { background: #6b1a17; } }
+@media (prefers-reduced-motion: reduce) { .banner.alarm { animation: none; } }
 
 main { max-width: 1100px; margin: 0 auto; padding: 8px 16px 24px; }
 @media (min-width: 900px) {

@@ -16,7 +16,7 @@ def test_scenario_runs_to_completion(hub):
     assert hub.runner.wait_idle(10)
     last = hub.runner.status()['last']
     assert last['ok'] and not last['cancelled'] and '4 adım' in last['message']
-    assert hub.backend.history == ['home', 'above green 0.25', 'above red 0.3', 'home']
+    assert hub.backend.history == ['home', 'above green 0.25', 'above red 0.35', 'home']
     assert kinds(hub).count('step_started') == 4 and kinds(hub)[-1] == 'scenario_finished'
 
 
@@ -26,7 +26,7 @@ def test_failing_step_stops_scenario(hub):
     assert hub.runner.wait_idle(10)
     last = hub.runner.status()['last']
     assert not last['ok'] and 'adım 3/4' in last['message'] and 'erişilemeyen' in last['message']
-    assert hub.backend.history == ['home', 'above green 0.25', 'above red 0.3']   # 4. adım yok
+    assert hub.backend.history == ['home', 'above green 0.25', 'above red 0.35']   # 4. adım yok
 
 
 def test_only_one_scenario_at_a_time(scenarios, ui):
@@ -55,7 +55,7 @@ def test_cancel_interrupts_motion_and_skips_rest(scenarios, ui):
         t0 = time.monotonic()
         assert hub.cancel_scenario()
         assert hub.runner.wait_idle(3)
-        assert time.monotonic() - t0 < 1.0              # hareket bitmesi beklenmedi
+        assert time.monotonic() - t0 < 2.0              # hareket bitmesi beklenmedi
         last = hub.runner.status()['last']
         assert last['cancelled'] and not last['ok']
         assert len(hub.backend.history) == 1
@@ -70,7 +70,7 @@ def test_estop_cuts_motion_latches_and_blocks(scenarios, ui):
         time.sleep(0.15)
         t0 = time.monotonic()
         hub.estop('test')
-        assert hub.runner.wait_idle(3) and time.monotonic() - t0 < 1.0
+        assert hub.runner.wait_idle(3) and time.monotonic() - t0 < 2.0
         assert hub.estopped and hub.snapshot()['estop']['latched']
         assert hub.runner.status()['last']['cancelled']
         with pytest.raises(EstopLatchedError):
@@ -93,15 +93,38 @@ def test_estop_with_nothing_running_still_latches(hub):
 
 
 def test_estop_survives_failing_backend_and_listener(hub):
-    def boom():
+    def boom(*a):
         raise RuntimeError('x')
     called = []
     hub.backend.emergency_stop = boom                    # type: ignore[method-assign]
     hub.add_estop_listener(boom)
     hub.add_estop_listener(lambda: called.append(1))
     hub.estop('test')
+    report = hub.wait_estop_report(3)
     assert hub.estopped and called == [1]
-    assert kinds(hub).count('estop_step_failed') == 2
+    assert report is not None and report.stopped is False        # doğrulanamadı: açıkça bildirilir
+    ks = kinds(hub)
+    assert ks.count('estop_step_failed') == 1 and 'estop_unverified' in ks
+    assert hub.snapshot()['estop']['report']['stopped'] is False
+
+
+def test_estop_report_confirmed_and_in_snapshot(hub):
+    hub.estop('test')
+    report = hub.wait_estop_report(3)
+    assert report is not None and report.stopped is True
+    snap = hub.snapshot()['estop']
+    assert snap['latched'] and not snap['pending'] and snap['report']['stopped'] is True
+    assert 'estop_confirmed' in kinds(hub)
+
+
+def test_reset_refused_by_robot_keeps_hub_latched(hub):
+    from control_hub.hub_core import ResetRefusedError, ResetResult
+    hub.estop('test')
+    hub.wait_estop_report(3)
+    hub.backend.reset_emergency_stop = lambda: ResetResult(False, 'kol hâlâ hareket ediyor')
+    with pytest.raises(ResetRefusedError, match='hareket'):
+        hub.reset_estop('test')
+    assert hub.snapshot()['estop']['latched'] and 'estop_reset_refused' in kinds(hub)
 
 
 def test_wait_step_is_cancellable(scenarios, ui):

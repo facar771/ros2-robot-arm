@@ -13,7 +13,7 @@ def test_default_files_are_valid(scenarios, ui):
 
 def test_demo_tour_matches_robot_demo_steps(scenarios):
     cmds = [s.command for s in scenarios['demo_tour'].steps]
-    assert cmds == ['home', 'above green 0.25', 'above red 0.3', 'home']
+    assert cmds == ['home', 'above green 0.25', 'above red 0.35', 'home']
 
 
 def test_all_problems_reported_at_once():

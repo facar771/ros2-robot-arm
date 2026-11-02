@@ -3,8 +3,8 @@
 Robot **senaryolarını** bilgisayardan ve telefondan (aynı Wi-Fi) çalıştıran web arayüzü. Robot
 yığınından (ROS) ayrı çalışır, mevcut paketlere dokunmaz.
 
-> Durum: **PR-H1** — çekirdek + web arayüzü, sahte robotla (`--fake`). Gerçek robota bağlantı PR-H2,
-> Windows `.exe` PR-H3, ESP32 cihazları + kural motoru PR-H4.
+> Durum: **PR-H1** çekirdek + web arayüzü (birleşti) · **PR-H2** gerçek robota bağlantı (Robot API v1) ·
+> sırada: Windows `.exe` (H3), ESP32 cihazları + kural motoru (H4).
 
 ## Hızlı başlangıç
 
@@ -19,7 +19,44 @@ Terminalde adresler, **PIN** ve (aynı Wi-Fi'dan) telefon için **QR kod** çık
 `http://localhost:8765`, telefonda `http://<bilgisayarın IP'si>:8765`. Docker ile:
 `docker compose up --build hub-fake` (PIN'i loglarda yazar; sabitlemek için `HUB_PIN=123456 docker compose up hub-fake`).
 
-Seçenekler: `--port`, `--host`, `--access-mode open|pin|locked`, `--pin`, `--config-dir`,
+## Gerçek robota bağlanmak (Robot API v1)
+
+`--fake` olmadan Hub robotun HTTP API'sine bağlanır (`docs/INTERFACES.md`, "Robot API v1"):
+
+```bash
+# Terminal 1 — WSL'de (robot yığını: Gazebo + MoveIt + algı + komutlar açık web_view; "Hazır." yazısını bekle)
+cd ~/ros2-robot-arm && docker compose up --build demo
+```
+```bash
+# Terminal 2 — WSL'de (Hub; robot API'si Docker'ın yayımladığı 127.0.0.1:8080'de)
+cd ~/ros2-robot-arm/apps/control_hub
+python -m control_hub --robot-url http://127.0.0.1:8080 --pin 123456
+```
+Windows'ta (`.exe` gelene dek) aynısı PowerShell'de: `python -m control_hub --robot-url http://127.0.0.1:8080`
+(Docker Desktop portu Windows'un `127.0.0.1`'ine de yayımlar). `HUB_ROBOT_URL` ortam değişkeni de olur.
+
+| Hub'da | Robot API'sinde |
+|---|---|
+| senaryo adımı (`robot: above green 0.25`) | `POST /api/jobs` → `GET /api/jobs/<id>` yoklaması (≤ 4 Hz) |
+| senaryoyu iptal et | `POST /api/jobs/<id>/cancel` (kolu durdurur, **kilitlemez**) |
+| **ACİL DUR** | `POST /api/stop` (kol durana dek; robot hızdan **doğrular**, ≤ 5 s); 3 deneme |
+| "Kilidi aç" | `POST /api/reset`; robot reddederse (kol hâlâ hareketli/bilinmiyor) Hub da kilitli kalır |
+| canlı durum | `GET /api/state` (0,5 sn yoklama, önbellekten sunulur) |
+
+`POST /api/command` **kullanılmaz** (sözleşmede kullanımdan kaldırıldı; iş API'si onun üst kümesi).
+
+* **ACİL DUR sonucu arayüzde görünür:** "Robotun durduğu doğrulandı (0.33 sn)" ya da kırmızı yanıp sönen
+  **"ROBOTUN DURDUĞU DOĞRULANAMADI"** (robot 5 s içinde durmadı, hız okunamadı ya da robota ulaşılamadı;
+  kilit yine de Hub'da ve robotta geçerli). Doğrulanamazsa **fiziksel acil durdurmayı kullan**.
+* **Robot tarafındaki kilit Hub'a yansır:** başka bir istemci/düğme robotu durdurduysa Hub da "ACİL DUR
+  aktif (robot tarafında)" der ve senaryo başlatmaz; kilidi açmak yine `/api/reset` ister.
+* `mode: real` ise arayüz sürekli uyarır: bu **yazılım** acil durdur, donanım acil durdurmanın yerine geçmez.
+* Sürüm denetimi: `api_version` 1 değilse Hub komut göndermez ("robot API sürümü ... uyumsuz").
+* Robot API'si yalnızca `127.0.0.1` kabul eder (`Host` başka bir şeyse `403`) ve kimlik doğrulaması yoktur:
+  **robot adresini ağa açma**; ağa açılan tek şey Hub'dır (PIN'li).
+* Robot kapalıyken Hub açılır, "Robot bağlı değil" der ve yeniden dener.
+
+Seçenekler: `--robot-url`, `--port`, `--host`, `--access-mode open|pin|locked`, `--pin`, `--config-dir`,
 `--fake-speed 0.2` (sahte robotu 5 kat hızlandırır), `--allow-host`, `--check-config`.
 
 ## Yapı
@@ -28,7 +65,8 @@ Seçenekler: `--port`, `--host`, `--access-mode open|pin|locked`, `--pin`, `--co
 control_hub/
   hub_core/   GUI'siz, ROS'suz çekirdek (tüm mantık burada, test edilir)
     backend.py        RobotBackend protokolü (execute / emergency_stop / snapshot ...)
-    fake_backend.py   donanımsız simülasyon (PR-H2: RobotApiBackend eklenir)
+    fake_backend.py   donanımsız simülasyon (--fake)
+    robot_api_backend.py  robotun HTTP API v1'i (iş/stop/reset/state), yalnızca standart kütüphane
     commands.py       robot komut beyaz listesi (home | objects | above <renk> [m])
     scenarios.py      scenarios.yaml + ui.config.json okuma/doğrulama
     runner.py         ScenarioRunner: tek anda tek senaryo, iptal edilebilir
@@ -38,6 +76,7 @@ control_hub/
   server/     FastAPI + WebSocket (çekirdeği HTTP'ye açar)
   web/        düz HTML/CSS/JS, derleme yok, mobil öncelikli, PWA manifest
 config/       scenarios.yaml (butonlar), ui.config.json (yerleşim + tema)
+tools/        geliştirme araçları (üretimde kullanılmaz): robot_stub.py, e2e_check.py
 tests/
 ```
 
@@ -87,12 +126,29 @@ cd ~/ros2-robot-arm/apps/control_hub
 pip install -r requirements-dev.txt
 ruff check . && python -m pytest
 ```
+`tests/test_robot_api_contract.py`, Hub'ı robotun **gerçek HTTP sunucu koduna** (`robot_core.webview` /
+`CommandRunner` / `JobManager` / `Supervisor`, kol simüle) karşı sınar (`tools/robot_stub.py`; ROS gerekmez,
+yalnızca `numpy` ve repodaki `src/robot_core`; yoksa dosya atlanır). Aynı sunucuyu elle denemek için:
+`python -m tools.robot_stub --port 8080 --speed 0.3` (WSL'de), sonra Hub'ı `--robot-url http://127.0.0.1:8080` ile aç.
+
+**Gerçek yığına karşı uçtan uca** (robot HAREKET EDER: home, demo turu, iptal, ACİL DUR, reset):
+```bash
+# Terminal 1 — WSL'de
+cd ~/ros2-robot-arm && docker compose up --build demo
+```
+```bash
+# Terminal 2 — WSL'de ("Hazır." göründükten sonra)
+cd ~/ros2-robot-arm/apps/control_hub && python -m tools.e2e_check --robot-url http://127.0.0.1:8080
+```
 Ayrıca CI'daki `hub` işi Docker imajını derleyip `/health`'i ve PIN korumasını dener.
 
-## Bilinen sınırlar (PR-H1)
+## Bilinen sınırlar
 
-* Robot **sahte**: eklem değerleri yalnızca görsel; gerçek kinematik yok.
+* `--fake` robotunda eklem değerleri yalnızca görsel; gerçek kinematik yok.
 * Canlı durum 5 Hz yoklanır (200 ms'den kısa olaylar arayüzde görünmeyebilir).
-* Gerçek robot API'sinde şu an hareketi ortasında kesen bir uç nokta yok (`/api/stop` ayrı küçük bir
-  PR olacak); o zamana dek gerçek robotta ACİL DUR yalnızca **sonraki adımları** engeller. Backend
-  bunu `can_interrupt` ile bildirir ve arayüz uyarır.
+* Hub'ın senaryoları adım adım iş gönderir; robotun kendi `demo_scenario` komutundaki **TF ile uç konum
+  doğrulaması** (≤ 1,5 cm) Hub senaryolarında yoktur. Doğrulama gerekirse `demo_scenario` adım türü sonra.
+* Robot API'sinin acil durdu yalnızca `web_view`'in başlattığı hareketleri durdurur (INTERFACES.md "Kapsam"):
+  ayrıca çalışan bir `cli_moveit` kilitlenmez. `mode: real`'de donanım acil durdurmanın yerine geçmez.
+* `hub-fake` Docker servisi yalnızca sahte robotla çalışır: robot API'si `127.0.0.1` dışındaki `Host`'u
+  reddettiği için Hub konteyneri robot konteynerine ağdan bağlanamaz (bkz. PR gövdesi, "Robot_3'ten istek").

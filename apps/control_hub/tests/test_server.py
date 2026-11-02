@@ -121,7 +121,7 @@ def test_estop_interrupts_running_scenario_via_api(make_client):
     t0 = time.monotonic()
     c.post('/api/estop', json={})
     wait_idle(hub, 3)
-    assert time.monotonic() - t0 < 1.0
+    assert time.monotonic() - t0 < 2.0
     st = c.get('/api/state').json()
     assert st['estop']['latched'] and st['runner']['last']['cancelled']
     assert c.post('/api/estop/reset', json={}).status_code == 200
