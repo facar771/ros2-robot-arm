@@ -26,7 +26,7 @@ from pydantic import BaseModel
 from starlette.websockets import WebSocketDisconnect
 
 from control_hub import __version__
-from control_hub.hub_core import BusyError, EstopLatchedError, Hub, UnknownScenarioError
+from control_hub.hub_core import BusyError, EstopLatchedError, Hub, ResetRefusedError, UnknownScenarioError
 from control_hub.hub_core.access import Decision
 
 log = logging.getLogger('control_hub.server')
@@ -179,7 +179,8 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
     @app.post('/api/estop')
     async def estop(request: Request):
         hub.estop(source=request.client.host if request.client else 'api')
-        return {'ok': True, 'estop': True, 'interrupts_motion': hub.backend.can_interrupt}
+        return {'ok': True, 'estop': True, 'interrupts_motion': hub.backend.can_interrupt,
+                'verification': 'pending'}
 
     # --- oturum gerektirenler ------------------------------------------------------------------
     def state_for(conn) -> Dict[str, Any]:
@@ -223,11 +224,14 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
     @app.post('/api/estop/reset')
     async def estop_reset(request: Request, _: EmptyBody):
         need_control(request)
-        try:
-            hub.reset_estop(source=request.client.host if request.client else 'api')
+        try:       # robot birkaç sn bekleyebilir: olay döngüsünü tıkama
+            await asyncio.to_thread(hub.reset_estop,
+                                    request.client.host if request.client else 'api')
         except BusyError:
-            raise ApiError(409, 'busy', 'Senaryo henüz durmadı; birkaç saniye sonra tekrar dene') \
-                from None
+            raise ApiError(409, 'busy', 'Senaryo/durdurma doğrulaması henüz bitmedi; birkaç sn '
+                           'sonra tekrar dene') from None
+        except ResetRefusedError as exc:
+            raise ApiError(409, 'reset_refused', f'Robot kilidi açmayı reddetti: {exc}') from None
         return {'ok': True, 'estop': False}
 
     # --- canlı akış ----------------------------------------------------------------------------

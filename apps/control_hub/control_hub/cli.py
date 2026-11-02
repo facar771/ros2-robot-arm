@@ -1,4 +1,5 @@
-"""``python -m control_hub --fake``: Hub'ı başlatır (PR-H3 masaüstü uygulaması aynı çekirdeği kullanır)."""
+"""``python -m control_hub [--fake | --robot-url URL]``: Hub'ı başlatır (masaüstü uygulaması aynı çekirdeği
+kullanacak)."""
 from __future__ import annotations
 
 import argparse
@@ -14,12 +15,14 @@ from control_hub.hub_core import (
     ConfigError,
     FakeBackend,
     Hub,
+    RobotApiBackend,
     load_scenarios,
     load_ui_config,
 )
 
 DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
 DEFAULT_PORT = 8765
+DEFAULT_ROBOT_URL = 'http://127.0.0.1:8080'
 
 
 def lan_ip() -> str:
@@ -37,7 +40,10 @@ def lan_ip() -> str:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog='control_hub', description='Robot Kontrol Merkezi (Hub)')
     p.add_argument('--fake', action='store_true',
-                   help='sahte robot (ROS/donanım yok). Gerçek robot bağlantısı PR-H2 ile gelir.')
+                   help='sahte robot (ROS/donanım yok). Verilmezse gerçek robot API v1 kullanılır.')
+    p.add_argument('--robot-url', default=os.environ.get('HUB_ROBOT_URL', DEFAULT_ROBOT_URL),
+                   help=f'robot API adresi (varsayılan {DEFAULT_ROBOT_URL}; robot yalnızca '
+                        '127.0.0.1 dinler). --fake ile birlikte yok sayılır.')
     p.add_argument('--host', default='0.0.0.0', help='dinlenen adres (varsayılan: 0.0.0.0, LAN)')
     p.add_argument('--port', type=int, default=int(os.environ.get('HUB_PORT', DEFAULT_PORT)))
     p.add_argument('--access-mode', choices=('open', 'pin', 'locked'),
@@ -58,10 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
 def build_hub(args: argparse.Namespace) -> Hub:
     scenarios = load_scenarios(args.config_dir / 'scenarios.yaml')
     ui = load_ui_config(args.config_dir / 'ui.config.json', scenarios)
-    if not args.fake:
-        raise SystemExit('Gerçek robot bağlantısı PR-H2 ile gelecek; şimdilik --fake ile başlat.')
     access = AccessControl(args.access_mode, args.pin or None)   # boş string = rastgele PIN
-    return Hub(FakeBackend(time_scale=args.fake_speed), scenarios, ui, access)
+    if args.fake:
+        backend = FakeBackend(time_scale=args.fake_speed)
+    else:
+        backend = RobotApiBackend(args.robot_url, autostart=not args.check_config)
+    return Hub(backend, scenarios, ui, access)
 
 
 def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
@@ -75,6 +83,21 @@ def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
     else:
         print(f'  Telefondan    : {url}   (aynı Wi-Fi)')
     print(f'  Erişim kipi   : {hub.access.mode}')
+    backend = hub.backend
+    if isinstance(backend, RobotApiBackend):
+        backend.wait_first_poll(3.0)
+        snap = backend.snapshot()
+        where = f'{backend.host}:{backend.port}'
+        if snap['connected'] and snap['compatible']:
+            print(f'  Robot         : {where} bağlı (API v{snap["api_version"]}, mod {snap["mode"]})')
+        else:
+            print(f'  Robot         : {where} HENÜZ BAĞLI DEĞİL: {snap["problem"]}')
+            print('                  (Hub açık kalır ve yeniden dener; robotu başlat: '
+                  'docker compose up demo)')
+        if not backend.loopback:
+            print('  UYARI: robot adresi loopback değil; robot API\'si yalnızca 127.0.0.1 kabul eder.')
+    else:
+        print('  Robot         : SAHTE (--fake)')
     if hub.access.mode == 'pin':
         print(f'  PIN           : {hub.access.pin}')
     if hub.access.mode == 'open' and host not in ('127.0.0.1', 'localhost', '::1'):

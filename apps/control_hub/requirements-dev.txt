@@ -3,3 +3,4 @@ pytest
 httpx
 websockets
 ruff
+numpy

@@ -155,7 +155,7 @@ async function onEstop() {
   for (let i = 0; i < 3; i++) {
     try {
       const r = await api('/api/estop', 'POST');
-      if (r && r.interrupts_motion === false) toast('Dikkat: bu robot hareketi ortasında kesilemiyor; sonraki adımlar iptal edildi.', true);
+      if (r && r.interrupts_motion === false) toast('Dikkat: bu robot API v1 konuşmuyor; hareket ortasında kesilemeyebilir, sonraki adımlar iptal edildi.', true);
       return;
     } catch (e) {
       if (i === 2) toast('ACİL DUR gönderilemedi: ' + e.message + ' — robotun fiziksel durdurmasını kullan!', true);
@@ -184,19 +184,30 @@ function render() {
   mode.hidden = !readOnly; mode.textContent = 'Salt okunur'; mode.className = 'pill warn';
   $('btn-logout').hidden = s.access.mode !== 'pin';
   const banner = $('banner');
-  if (s.estop.latched) { banner.hidden = false; banner.className = 'banner danger';
-    banner.textContent = 'ACİL DUR aktif: senaryolar kilitli. Güvenliyse “Kilidi aç”a bas.'; }
-  else if (readOnly) { banner.hidden = false; banner.className = 'banner';
-    banner.textContent = 'Kontroller kilitli (salt okunur kip). ACİL DUR yine de çalışır.'; }
-  else if (s.robot && s.robot.connected === false) { banner.hidden = false; banner.className = 'banner';
-    banner.textContent = 'Robot bağlı değil: butonlar çalışmaz.'; }
+  const rb = s.robot || {}, est = s.estop, rep = est.report;
+  const show = (cls, text) => { banner.hidden = false; banner.className = 'banner ' + cls; banner.textContent = text; };
+  if (est.latched) {
+    let t = est.by_robot_only ? 'Robot tarafında ACİL DUR aktif (başka bir istemci ya da düğme). '
+                              : 'ACİL DUR aktif: senaryolar kilitli. ';
+    if (est.pending) t += 'Robotun durduğu doğrulanıyor…';
+    else if (rep && rep.stopped === true) {
+      const sec = rep.details && rep.details.stop_time_s;
+      t += `Robotun durduğu doğrulandı${sec != null ? ` (${sec} sn)` : ''}. Güvenliyse “Kilidi aç”a bas.`;
+    } else if (rep && rep.stopped !== true) {
+      t = `⚠ ROBOTUN DURDUĞU DOĞRULANAMADI: ${rep.message} Fiziksel acil durdurmayı kullan!`;
+    } else t += 'Güvenliyse “Kilidi aç”a bas.';
+    show(rep && rep.stopped === false ? 'danger alarm' : 'danger', t);
+  } else if (rb.compatible === false && rb.connected) show('', `Robot API uyumsuz: ${rb.problem}`);
+  else if (rb.connected === false) show('', `Robot bağlı değil: ${rb.problem || 'yanıt yok'}. Butonlar çalışmaz.`);
+  else if (readOnly) show('', 'Kontroller kilitli (salt okunur kip). ACİL DUR yine de çalışır.');
+  else if (rb.mode === 'real') show('', 'Gerçek robot: bu yazılım acil durdur; fiziksel acil durdurmanın yerine geçmez.');
   else banner.hidden = true;
 
   for (const [id, b] of Object.entries(S.buttons)) {
     const mine = run.running && run.scenario === id;
     b.classList.toggle('running', mine);
     b.classList.toggle('armed', S.armed === id);
-    b.disabled = !canControl || run.running || (s.robot && s.robot.connected === false);
+    b.disabled = !canControl || run.running || (s.robot && (s.robot.connected === false || s.robot.compatible === false));
     if (mine) b.disabled = true;
     b.querySelector('.ds').textContent = S.armed === id ? 'Emin misin? Tekrar dokun.' : S.ui.scenarios[id].description;
     b.querySelector('.bar').style.width = mine && run.steps_total ? `${Math.round(((run.step - 1) / run.steps_total) * 100)}%` : '0';
@@ -221,10 +232,19 @@ function render() {
   const kv = $('rb-kv');
   if (kv && s.robot) {
     const r = s.robot;
-    kv.replaceChildren(...[['Arka uç', r.name], ['Bağlantı', r.connected ? 'bağlı' : 'yok'],
-      ['Hareket', r.moving ? 'hareket ediyor' : 'duruyor'],
-      ['Uç konum (m)', r.tool ? r.tool.map(fmt).join('  ') : '—']]
-      .flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: String(v) })]));
+    const STATE = { idle: 'hazır', busy: 'çalışıyor', estopped: 'ACİL DUR', error: 'hata (son komut)' };
+    const rows = [['Arka uç', r.mode && r.mode !== r.name ? `${r.name} (${r.mode})` : r.name],
+      ['Bağlantı', r.connected ? 'bağlı' : 'yok'],
+      ['Robot durumu', STATE[r.state] || '—'],
+      ['Hareket', r.moving === true ? 'hareket ediyor' : r.moving === false ? 'duruyor' : 'bilinmiyor'],
+      ['Uç konum (m)', r.tool ? r.tool.map(fmt).join('  ') : '—']];
+    if (r.current_job) rows.push(['Çalışan iş', `${r.current_job.id}: ${r.current_job.command}`]);
+    if (r.last_error) rows.push(['Son hata', r.last_error.message]);
+    if (r.safety && r.safety.zone) {
+      const z = r.safety.zone.box;
+      rows.push(['Güvenli kutu', ['x', 'y', 'z'].map((k) => `${k} ${z[k][0]}…${z[k][1]}`).join(', ')]);
+    }
+    kv.replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: String(v) })]));
     $('rb-joints').replaceChildren(...(r.joints || []).map((j) => el('div', { class: 'joint' }, [
       el('b', { text: j.deg == null ? '—' : `${j.deg.toFixed(1)}°` }), el('span', { text: j.name })])));
   }
