@@ -16,6 +16,8 @@ parameters:
       description: Kamera/izleme döngüsünün periyodu (s).
 tools:
   - name: follow_color
+    motion: arm
+    timeout_s: 330
     description: >-
       Verilen renkteki nesnenin üstünde kalmaya çalışır: nesne min_move_m'den fazla yer değiştirdikçe
       'above <renk> <yükseklik>' işi gönderir. duration_s dolunca, nesne kaybolunca, acil dur olunca

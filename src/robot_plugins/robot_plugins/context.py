@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable, Dict, FrozenSet, Optional
 
 from robot_vision.frame import Frame
@@ -75,15 +76,31 @@ class PanView(Panner):
 
 class CameraView:
     def __init__(self, source: FrameSource, allowed: bool, panner: Optional[Panner] = None,
-                 pan_allowed: bool = False):
+                 pan_allowed: bool = False, default_wait_s: float = 0.0,
+                 stop: Optional['StopToken'] = None):
         self._source, self._allowed = source, allowed
+        self._default_wait, self._stop = default_wait_s, stop
         self.pan = PanView(panner or NoPanner(), pan_allowed)
 
-    def latest_frame(self) -> Optional[Frame]:
+    def latest_frame(self, wait_s: Optional[float] = None) -> Optional[Frame]:
+        """The newest frame. A live camera has no frame yet right after the plugin process starts
+        (first message still in flight), so this WAITS up to ``wait_s`` seconds for one (default:
+        the context's ``frame_wait_s``, 5 s under the runner) and returns None only if none came.
+        ``wait_s=0`` never waits (use it inside loops that handle None themselves). A set stop
+        token ends the wait at once."""
         if not self._allowed:
             raise PermissionDenied(
                 "camera:read izni yok (package.yaml'da 'permissions' içine ekle)")
-        return self._source.latest()
+        wait = self._default_wait if wait_s is None else wait_s
+        deadline = time.monotonic() + max(0.0, wait)
+        while True:
+            frame = self._source.latest()
+            if frame is not None or time.monotonic() >= deadline:
+                return frame
+            if self._stop is not None and self._stop.wait(0.05):
+                return None
+            if self._stop is None:
+                time.sleep(0.05)
 
 
 class RobotView:
@@ -126,13 +143,14 @@ class RobotView:
 class PluginContext:
     def __init__(self, name: str, params: Dict[str, Any], permissions: FrozenSet[str],
                  frames: FrameSource, robot: RobotApi, log: Callable[[str, str], None],
-                 stop: Optional[StopToken] = None, panner: Optional[Panner] = None):
+                 stop: Optional[StopToken] = None, panner: Optional[Panner] = None,
+                 frame_wait_s: float = 0.0):
         self.name = name
         self.params = dict(params)
         self.permissions = permissions
         self.stop = stop or StopToken()
         self.camera = CameraView(frames, 'camera:read' in permissions, panner,
-                                 'camera:pan' in permissions)
+                                 'camera:pan' in permissions, frame_wait_s, self.stop)
         self.robot = RobotView(robot, 'robot:jobs' in permissions)
         self._log = log
 

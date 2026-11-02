@@ -54,18 +54,33 @@ class NpzFrameSource(FrameSource):
         return Frame(f.rgb, f.depth, f.intrinsics, f.world_from_optical, time.time())
 
 
+class DelayedFrames(FrameSource):
+    """Synthetic frames that only start ``delay_s`` seconds after creation: behaves like a live
+    camera whose first message is still in flight (tests of the first-frame wait)."""
+
+    def __init__(self, delay_s: float):
+        self._start = time.monotonic() + delay_s
+        self._inner = SyntheticFrameSource()
+
+    def latest(self) -> Optional[Frame]:
+        return self._inner.latest() if time.monotonic() >= self._start else None
+
+
 class NoFrames(FrameSource):
     def latest(self) -> Optional[Frame]:
         return None
 
 
 def make_frame_source(spec: str) -> FrameSource:
-    """``none`` | ``synthetic`` | ``npz:<path>`` | ``ros`` (live ``/camera/*``, needs ROS 2 and the
-    ``robot_vision_ros`` package; fixed workspace camera only)."""
+    """``none`` | ``synthetic`` | ``npz:<path>`` | ``delayed:<seconds>`` (synthetic after a delay,
+    a test aid) | ``ros`` (live ``/camera/*``, needs ROS 2 and the ``robot_vision_ros`` package;
+    fixed workspace camera only)."""
     if spec in ('', 'none'):
         return NoFrames()
     if spec == 'synthetic':
         return SyntheticFrameSource()
+    if spec.startswith('delayed:'):
+        return DelayedFrames(float(spec[8:]))
     if spec.startswith('npz:'):
         return NpzFrameSource(spec[4:])
     if spec == 'ros':

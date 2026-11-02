@@ -50,7 +50,8 @@ def test_unsupported_schema_keywords_are_rejected_not_ignored():
 
 # ---- manifest ----------------------------------------------------------------------------------
 GOOD = {'name': 'demo', 'version': '1.2.3', 'description': 'x', 'entry': 'main:Plugin',
-        'permissions': ['camera:read'], 'tools': [{'name': 'tool_a', 'description': 'd'}]}
+        'permissions': ['camera:read'],
+        'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'none'}]}
 
 
 def test_good_manifest_parses_and_always_grants_the_emergency_stop():
@@ -74,11 +75,17 @@ def test_listing_robot_stop_is_harmless_and_deduplicated():
     ({'entry': '../x:Plugin'}, 'entry'),
     ({'description': ''}, 'description'), ({'surprise': 1}, 'bilinmeyen anahtar'),
     ({'parameters': {'type': 'array'}}, 'object'),
-    ({'tools': [{'name': 'tool_a', 'description': 'd'},
-                {'name': 'tool_a', 'description': 'd'}]}, 'tekrar'),
-    ({'tools': [{'name': 'tool_a'}]}, 'description'),
-    ({'tools': [{'name': 'tool_a', 'description': 'd', 'input_schema': {'type': 'object',
-                                                                    'oneOf': []}}]}, 'unsupported'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'none'},
+                {'name': 'tool_a', 'description': 'd', 'motion': 'none'}]}, 'tekrar'),
+    ({'tools': [{'name': 'tool_a', 'motion': 'none'}]}, 'description'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd'}]}, 'motion'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'fly'}]}, 'motion'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'arm'}]}, 'robot:jobs'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'camera'}]}, 'camera:pan'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'none', 'timeout_s': 0}]},
+     'timeout_s'),
+    ({'tools': [{'name': 'tool_a', 'description': 'd', 'motion': 'none',
+                 'input_schema': {'type': 'object', 'oneOf': []}}]}, 'unsupported'),
 ])
 def test_bad_manifests_are_refused_with_a_reason(patch, text):
     with pytest.raises(ManifestError) as exc:

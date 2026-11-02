@@ -78,7 +78,7 @@ def make_plugin(root: Path, name: str, *, permissions=(), code: str = '', tools=
     """Create ``root/<name>/{package.yaml,main.py}`` and return the directory."""
     d = root / name
     d.mkdir(parents=True)
-    tools = tools or [{'name': 'echo', 'description': 'yankı',
+    tools = tools or [{'name': 'echo', 'description': 'yankı', 'motion': 'none',
                        'input_schema': {'type': 'object',
                                         'properties': {'text': {'type': 'string'}},
                                         'required': ['text'],

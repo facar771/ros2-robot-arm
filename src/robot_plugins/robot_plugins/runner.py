@@ -35,6 +35,8 @@ def main(argv=None) -> int:
     ap.add_argument('--frames', default='none')
     ap.add_argument('--robot', default='fake', help="'fake' ya da robot API adresi")
     ap.add_argument('--panner', default='none', help='none | synthetic')
+    ap.add_argument('--frame-wait', type=float, default=5.0,
+                    help='ilk kamera karesi için en çok bekleme (s)')
     args = ap.parse_args(argv)
 
     proto = sys.stdout
@@ -53,7 +55,7 @@ def main(argv=None) -> int:
     ctx = PluginContext(manifest.name, params, frozenset(manifest.granted),
                         make_frame_source(args.frames), api,
                         lambda level, msg: send({'type': 'log', 'level': level, 'msg': msg}), stop,
-                        make_panner(args.panner))
+                        make_panner(args.panner), frame_wait_s=args.frame_wait)
     plugin = load_plugin_class(manifest)(ctx)
     plugin.start()
     send({'type': 'ready', 'name': manifest.name, 'version': manifest.version})
