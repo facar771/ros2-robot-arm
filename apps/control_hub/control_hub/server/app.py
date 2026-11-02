@@ -28,10 +28,11 @@ from starlette.websockets import WebSocketDisconnect
 from control_hub import __version__
 from control_hub.hub_core import BusyError, EstopLatchedError, Hub, ResetRefusedError, UnknownScenarioError
 from control_hub.hub_core.access import Decision
+from control_hub.paths import web_dir
 
 log = logging.getLogger('control_hub.server')
 COOKIE = 'hub_session'
-WEB_DIR = Path(__file__).resolve().parent.parent / 'web'
+WEB_DIR = web_dir()
 WS_PERIOD_S = 0.2
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self' ws: wss:; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
