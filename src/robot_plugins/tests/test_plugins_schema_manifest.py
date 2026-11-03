@@ -118,3 +118,48 @@ def test_shipped_plugins_have_valid_manifests_with_llm_tools(name):
     assert m.tools and all(t.description for t in m.tools)
     assert 'robot:stop' in m.granted
     assert ('robot:jobs' in m.permissions) == (name == 'follow_color')   # only motion needs jobs
+
+
+# ---- NaN / Infinity ----------------------------------------------------------------------------
+NAN, INF = float('nan'), float('inf')
+
+
+@pytest.mark.parametrize('bad', [NAN, INF, -INF])
+@pytest.mark.parametrize('schema', [
+    {'type': 'number'}, {'type': 'number', 'minimum': 0, 'maximum': 1},
+    {'type': ['number', 'null']}, {}, {'type': 'object', 'properties': {'x': {'type': 'number'}}},
+])
+def test_non_finite_numbers_are_refused(bad, schema):
+    value = {'x': bad} if schema.get('type') == 'object' else bad
+    with pytest.raises(ValidationError) as exc:
+        validate(value, schema)
+    assert 'sonlu' in str(exc.value)
+
+
+def test_non_finite_numbers_are_refused_deep_inside_arrays_and_objects():
+    schema = {'type': 'object',
+              'properties': {'xs': {'type': 'array', 'items': {'type': 'number'}}}}
+    with pytest.raises(ValidationError):
+        validate({'xs': [1.0, NAN]}, schema)
+    validate({'xs': [1.0, 2]}, schema)
+
+
+def test_nan_cannot_slip_past_a_maximum():
+    """``nan > 1`` is False, so a pure comparison check would have accepted it."""
+    with pytest.raises(ValidationError):
+        validate(NAN, {'type': 'number', 'maximum': 1})
+
+
+def test_python_json_nan_literals_are_caught_by_validation():
+    import json
+    for text in ('NaN', 'Infinity', '-Infinity'):
+        with pytest.raises(ValidationError):
+            validate(json.loads(text), {'type': 'number'})
+
+
+@pytest.mark.parametrize('bad', [NAN, INF, True, '1'])
+def test_schema_bounds_must_be_finite_numbers(bad):
+    with pytest.raises(SchemaError):
+        check_schema({'type': 'number', 'minimum': bad})
+    with pytest.raises(SchemaError):
+        check_schema({'type': 'number', 'maximum': bad})

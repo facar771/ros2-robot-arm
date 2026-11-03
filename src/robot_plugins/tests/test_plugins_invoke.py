@@ -196,3 +196,15 @@ def test_a_crashing_plugin_gives_an_error_result(tmp_path):
     ''')
     r = run_plugin('boomer', 'echo', {'text': 'x'}, plugins_dir=tmp_path)
     assert r['ok'] is False and r['code'] and 'kaboom' in r['error']
+
+
+@pytest.mark.parametrize('bad', [float('nan'), float('inf')])
+def test_non_finite_tool_arguments_are_refused_before_the_robot_is_touched(bad):
+    srv = StubRobotServer()
+    try:
+        r = run_plugin('follow_color', 'follow_color', {'color': 'red', 'height_m': bad},
+                       robot_url=srv.url, frames='synthetic')
+        assert r['ok'] is False and r['code'] == 'bad_arguments', r
+        assert srv.fake.history == []
+    finally:
+        srv.close()
