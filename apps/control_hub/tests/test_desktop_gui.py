@@ -130,3 +130,42 @@ def test_copy_button_puts_the_powershell_command_on_the_clipboard(root):
     w.firewall_copy()
     assert root.clipboard_get().startswith('New-NetFirewallRule -DisplayName')
     assert spy.infos and 'PowerShell' in spy.infos[0][1]
+
+
+def test_bridge_section_feeds_settings_and_shows_status(root):
+    from robot_hw_bridge import Esp32Sim, SimServer
+    srv = SimServer(Esp32Sim()).start()
+    try:
+        spy = Spy()
+        bport = free_port()
+        w = make(root, spy, serial_port=f'socket://127.0.0.1:{srv.port}', bridge_port=bport)
+        s = w.read_settings()
+        assert s.serial_port.startswith('socket://') and s.bridge_port == bport and not s.bridge_open
+        w.v_baud.set('abc')
+        assert w.read_settings().serial_baud == -1 and w.read_settings().problems()
+        w.v_baud.set('921600')
+        w.start()
+        try:
+            import time
+            for _ in range(60):
+                root.update()
+                if 'seri BAĞLI' in w.l_bridge.cget('text'):
+                    break
+                time.sleep(0.05)
+            assert 'seri BAĞLI' in w.l_bridge.cget('text') and 'istemci yok' in w.l_bridge.cget('text')
+            assert 'disabled' in w.e_bport.state() and 'disabled' in w.cb_serial.state()
+        finally:
+            w.stop()
+        assert w.l_bridge.cget('text') == '' and 'disabled' not in w.cb_serial.state()
+    finally:
+        srv.stop()
+
+
+def test_open_bridge_shows_the_token_in_the_log(root):
+    spy = Spy()
+    w = make(root, spy, serial_port='socket://127.0.0.1:9', bridge_port=free_port(), bridge_open=True)
+    w.start()
+    try:
+        assert 'token' in w.t_log.get('1.0', 'end') and w.service.bridge_token in w.t_log.get('1.0', 'end')
+    finally:
+        w.stop()

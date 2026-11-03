@@ -11,6 +11,7 @@ from PyInstaller.utils.hooks import collect_submodules
 hidden = (
     collect_submodules('uvicorn')            # protokol/loop modülleri dinamik import edilir
     + collect_submodules('websockets')       # /ws için (yoksa arayüz yoklamaya düşer)
+    + collect_submodules('serial')           # ESP32 köprüsü: pyserial (Windows COM, socket:// vb. işleyiciler)
     + collect_submodules('control_hub')
     + ['yaml', 'segno', 'h11', 'anyio._backends._asyncio', 'tkinter', 'tkinter.ttk', 'tkinter.messagebox']
 )

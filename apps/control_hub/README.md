@@ -155,6 +155,33 @@ antivirüs yanlış alarmı riski (yukarıda). Konsol uygulaması olarak derleni
 çıktı görünsün; çift tıkta konsolu kendisi gizler (`desktop/winconsole.py`: yalnızca konsolu kendisi
 açtıysa; PowerShell'den açıldıysa terminale dokunmaz).
 
+## ESP32 donanım köprüsü (USB-seri ↔ TCP)
+
+Hub, ESP32'ye bağlı **COM portunu** açıp TCP üzerinden tek bir istemciye (B2'de Docker'daki ROS düğümü) sunabilir.
+Köprü baytları yorumlamadan taşır; CRC/seq/watchdog uçlar arasındadır. Mimari, mesaj şeması, durum makinesi, watchdog ve
+acil dur: **`docs/HARDWARE.md`**. Şimdilik donanım yok: `src/robot_hw_bridge` içindeki **simüle ESP32** ile denenir.
+
+```powershell
+# PowerShell'de (Hub .exe; gerçek ESP32 takılıyken)
+.\ControlHub.exe --list-serial-ports                                   # COM3, COM5 ...
+.\ControlHub.exe --fake --serial-bridge COM5 --bridge-listen 127.0.0.1:8770   # Hub + köprü
+.\ControlHub.exe --bridge-only --serial-bridge COM5                    # yalnızca köprü
+```
+Pencerede "ESP32 donanım köprüsü" bölümünden de açılır (Başlat'a basınca). `--bridge-listen 0.0.0.0:8770` için
+`--bridge-token` **zorunludur** (motor komutlarını ağa açar; token şifrelenmeden gider, yalnızca güvenilir ağda).
+Docker'dan bağlanma adresi: `host.docker.internal:8770`.
+
+Donanımsız deneme (hepsi WSL'de, 3 terminal; `robot_hw_bridge` paketi `src/robot_hw_bridge`'te):
+```bash
+# Terminal 1 — WSL'de: simüle ESP32 (TCP)
+cd ~/ros2-robot-arm/src/robot_hw_bridge && python3 -m robot_hw_bridge sim --listen 127.0.0.1:8771
+# Terminal 2 — WSL'de: Hub + köprü (seri port yerine simülatörün socket:// adresi)
+cd ~/ros2-robot-arm/apps/control_hub && python -m control_hub --fake --pin 123456 \
+    --serial-bridge socket://127.0.0.1:8771 --bridge-listen 127.0.0.1:8770
+# Terminal 3 — WSL'de: örnek istemci (home → enable → move → ACİL DUR)
+cd ~/ros2-robot-arm/src/robot_hw_bridge && python3 -m robot_hw_bridge demo --connect 127.0.0.1:8770
+```
+
 ## Yapı
 
 ```
@@ -172,6 +199,7 @@ control_hub/
   server/     FastAPI + WebSocket (çekirdeği HTTP'ye açar)
   web/        düz HTML/CSS/JS, derleme yok, mobil öncelikli, PWA manifest
   desktop/    Windows .exe'nin pencere + servis + güvenlik duvarı mantığı (Tk yalnızca gui.py'de)
+  hw/         ESP32 köprüsü: COM↔TCP (bayt şeffaf), yeniden bağlanma, token
   paths.py    gömülü/kullanıcı yolları (PyInstaller _MEIPASS dahil)
 config/       scenarios.yaml (butonlar), ui.config.json (yerleşim + tema)
 hub.spec, exe_entry.py, assets/   PyInstaller tek dosya derlemesi

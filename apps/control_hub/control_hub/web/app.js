@@ -238,6 +238,10 @@ function render() {
       ['Robot durumu', STATE[r.state] || '—'],
       ['Hareket', r.moving === true ? 'hareket ediyor' : r.moving === false ? 'duruyor' : 'bilinmiyor'],
       ['Uç konum (m)', r.tool ? r.tool.map(fmt).join('  ') : '—']];
+    if (s.bridge) {
+      const b = s.bridge;
+      rows.push(['ESP32 köprüsü', `${b.serial_connected ? 'seri bağlı' : 'seri YOK'}, ${b.client_connected ? 'istemci var' : 'istemci yok'} (${b.listen})`]);
+    }
     if (r.current_job) rows.push(['Çalışan iş', `${r.current_job.id}: ${r.current_job.command}`]);
     if (r.last_error) rows.push(['Son hata', r.last_error.message]);
     if (r.safety && r.safety.zone) {

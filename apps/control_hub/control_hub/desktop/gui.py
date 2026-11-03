@@ -19,6 +19,7 @@ from control_hub import __version__, paths
 from control_hub.desktop import firewall as fw_mod
 from control_hub.desktop import settings as settings_mod
 from control_hub.desktop.service import HubService, ServiceError
+from control_hub.hw import list_serial_ports
 
 PAD = 8
 
@@ -72,6 +73,10 @@ class HubWindow:
         self.v_pin = tk.StringVar(value=s.pin)
         self.v_remember = tk.BooleanVar(value=s.remember_pin)
         self.v_mode = tk.StringVar(value=s.access_mode)
+        self.v_serial = tk.StringVar(value=s.serial_port)
+        self.v_baud = tk.StringVar(value=str(s.serial_baud))
+        self.v_bport = tk.StringVar(value=str(s.bridge_port))
+        self.v_bopen = tk.BooleanVar(value=s.bridge_open)
         self._build()
         root.protocol('WM_DELETE_WINDOW', self.close)
 
@@ -106,6 +111,29 @@ class HubWindow:
                                     state='readonly', width=10)
         self.cb_mode.grid(row=5, column=1, sticky='w', pady=2)
 
+        hw = ttk.LabelFrame(f, text='ESP32 donanım köprüsü (USB-seri ↔ TCP) — isteğe bağlı', padding=PAD)
+        hw.pack(fill='x', pady=(PAD, 0))
+        hw.columnconfigure(1, weight=1)
+        ttk.Label(hw, text='Seri port').grid(row=0, column=0, sticky='w')
+        self.cb_serial = ttk.Combobox(hw, textvariable=self.v_serial, values=list_serial_ports())
+        self.cb_serial.grid(row=0, column=1, sticky='ew', pady=2)
+        self.b_ports = ttk.Button(hw, text='Yenile', width=8, command=self.refresh_ports)
+        self.b_ports.grid(row=0, column=2, padx=(PAD, 0))
+        ttk.Label(hw, text='Baud / Köprü portu').grid(row=1, column=0, sticky='w')
+        rowf = ttk.Frame(hw)
+        rowf.grid(row=1, column=1, columnspan=2, sticky='w')
+        self.e_baud = ttk.Entry(rowf, textvariable=self.v_baud, width=9)
+        self.e_baud.pack(side='left')
+        self.e_bport = ttk.Entry(rowf, textvariable=self.v_bport, width=7)
+        self.e_bport.pack(side='left', padx=PAD)
+        self.c_bopen = ttk.Checkbutton(
+            hw, text='Docker/başka makine erişsin (0.0.0.0 + token)', variable=self.v_bopen)
+        self.c_bopen.grid(row=2, column=1, columnspan=2, sticky='w')
+        ttk.Label(hw, foreground='gray', wraplength=430, justify='left', text=(
+            'Boş bırakırsan köprü açılmaz. Başlat\'a basınca port açılır; Docker\'daki ROS düğümü '
+            'host.docker.internal:<köprü portu> ile bağlanır.')).grid(row=3, column=0, columnspan=3,
+                                                                       sticky='w')
+
         bar = ttk.Frame(f)
         bar.pack(fill='x', pady=PAD)
         self.b_start = ttk.Button(bar, text='Başlat', command=self.start)
@@ -127,6 +155,8 @@ class HubWindow:
         self.l_pin.pack(anchor='w', pady=(4, 0))
         self.l_robot = ttk.Label(self.conn, text='')
         self.l_robot.pack(anchor='w')
+        self.l_bridge = ttk.Label(self.conn, text='')
+        self.l_bridge.pack(anchor='w')
         self.l_qr = ttk.Label(self.conn)
         self.l_qr.pack(anchor='w', pady=(4, 0))
 
@@ -163,12 +193,26 @@ class HubWindow:
         return settings_mod.Settings(
             robot_url=self.v_robot.get().strip() or settings_mod.DEFAULT_ROBOT_URL,
             fake=bool(self.v_fake.get()), port=port, access_mode=self.v_mode.get(),
-            pin=self.v_pin.get().strip(), remember_pin=bool(self.v_remember.get()))
+            pin=self.v_pin.get().strip(), remember_pin=bool(self.v_remember.get()),
+            serial_port=self.v_serial.get().strip(), serial_baud=self._int(self.v_baud, -1),
+            bridge_port=self._int(self.v_bport, -1), bridge_open=bool(self.v_bopen.get()))
+
+    @staticmethod
+    def _int(var: tk.StringVar, default: int) -> int:
+        try:
+            return int(var.get().strip())
+        except ValueError:
+            return default
+
+    def refresh_ports(self) -> None:
+        self.cb_serial.config(values=list_serial_ports())
 
     def _set_running(self, running: bool) -> None:
-        for w in (self.e_robot, self.c_fake, self.e_port, self.e_pin, self.c_remember, self.b_start):
+        for w in (self.e_robot, self.c_fake, self.e_port, self.e_pin, self.c_remember, self.b_start,
+                  self.e_baud, self.e_bport, self.c_bopen, self.b_ports):
             w.state(['disabled'] if running else ['!disabled'])
         self.cb_mode.state(['disabled'] if running else ['!disabled', 'readonly'])
+        self.cb_serial.state(['disabled'] if running else ['!disabled'])
         self.b_stop.state(['!disabled'] if running else ['disabled'])
 
     # --- başlat/durdur -------------------------------------------------------------------------
@@ -201,6 +245,8 @@ class HubWindow:
         b64 = qr_png_base64(urls['lan'])
         self._photo = tk.PhotoImage(data=b64) if b64 else None
         self.l_qr.config(image=self._photo or '', text='' if self._photo else '(QR üretilemedi)')
+        if svc.bridge_token:
+            self._log(f'Köprü belirteci (token): {svc.bridge_token}  (istemci: HUBBRIDGE-AUTH <token>)')
         self._log('Hub başlatıldı.')
         self._tick()
 
@@ -213,7 +259,7 @@ class HubWindow:
             self.service = None
         self._set_running(False)
         self.l_status.config(text='Hub kapalı.')
-        for lab in (self.l_local, self.l_lan, self.l_pin, self.l_robot):
+        for lab in (self.l_local, self.l_lan, self.l_pin, self.l_robot, self.l_bridge):
             lab.config(text='')
         self.l_qr.config(image='', text='')
         self._photo = None
@@ -235,10 +281,21 @@ class HubWindow:
             self.l_robot.config(text=f"Robot: bağlı (API v{snap.get('api_version')}, mod {snap.get('mode')})")
         else:
             self.l_robot.config(text=f"Robot: bağlı değil — {snap.get('problem') or 'yanıt yok'}")
+        self.l_bridge.config(text=self._bridge_text(svc))
         for ev in svc.hub.events.since(self._seq):
             self._seq = ev.seq
             self._log(f'[{ev.level}] {ev.message}')
         self._tick_job = self.root.after(1000, self._tick)
+
+    @staticmethod
+    def _bridge_text(svc: HubService) -> str:
+        br = svc.hub.bridge if svc.hub else None
+        if br is None:
+            return ''
+        st = br.status()
+        com = 'seri BAĞLI' if st['serial_connected'] else f"seri YOK ({st['last_error'] or '...'})"
+        cli = 'istemci var' if st['client_connected'] else 'istemci yok'
+        return f"ESP32 köprüsü: {com}, {cli} — tcp://{st['listen']}"
 
     def _log(self, line: str) -> None:
         self.t_log.config(state='normal')

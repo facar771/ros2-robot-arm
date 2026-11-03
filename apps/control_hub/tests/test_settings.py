@@ -39,3 +39,13 @@ def test_load_is_forgiving(tmp_path):
                  encoding='utf-8')
     got = st.load(p)
     assert got.port == 8765 and got.fake is False and got.robot_url == 'http://a:1'
+
+
+def test_bridge_settings_validation():
+    ok = st.Settings(serial_port='COM5')
+    assert ok.problems() == []
+    assert st.Settings().problems() == []                                   # köprü yoksa alanlar önemsiz
+    assert st.Settings(serial_port='COM5', serial_baud=5).problems()
+    assert st.Settings(serial_port='COM5', bridge_port=80).problems()
+    assert st.Settings(serial_port='COM5', bridge_port=8765, port=8765).problems()   # Hub portuyla çakışma
+    assert st.Settings(serial_port='', bridge_port=1).problems() == []

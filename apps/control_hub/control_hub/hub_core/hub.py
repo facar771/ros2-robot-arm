@@ -35,6 +35,7 @@ class Hub:
         self._estop_listeners: List[Callable[[], None]] = []
         self._stop_report: Optional[StopReport] = None
         self._stop_thread: Optional[threading.Thread] = None
+        self.bridge: Optional[Any] = None          # hw.SerialTcpBridge (isteğe bağlı, ESP32 köprüsü)
         self.runner = ScenarioRunner(backend, self.events, is_estopped=lambda: self.estopped,
                                      clock=clock)
 
@@ -150,10 +151,13 @@ class Hub:
                           'details': report.details}},
             'runner': self.runner.status(),
             'robot': robot,
+            'bridge': self.bridge.status() if self.bridge is not None else None,
             'last_event_seq': self.events.last_seq,
         }
 
     def close(self) -> None:
         self.runner.cancel('kapanıyor')
+        if self.bridge is not None:
+            self.bridge.stop()
         self.runner.wait_idle(3)
         self.backend.close()
