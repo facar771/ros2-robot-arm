@@ -1,0 +1,155 @@
+# Robot profile v1: the ONE place that describes the robot (design: docs/ROBOT_PROFILE.md).
+#
+# STATUS: this file is today's robot, written down. Nothing reads it at runtime yet and nothing is
+# generated from it yet (generator = next PR, after the design is approved). The test
+# robot_core/tests/test_robot_profile_today.py proves that it matches the hand-written URDF, SRDF,
+# joint_limits.yaml, safe_zone.yaml, initial_positions.yaml and ros2_control xacro value for value.
+#
+# Units: metres, radians, rad/s, rad/s^2, kg, kg*m^2. Frames: z up; every link frame sits at its
+# parent joint; `origin` and `axis` are expressed in the parent frame.
+profile_version: 1
+robot: six_axis_robot
+
+materials:                      # name: [r, g, b, a]
+  gray:   [0.5, 0.5, 0.5, 1.0]
+  orange: [1.0, 0.5, 0.0, 1.0]
+  blue:   [0.0, 0.5, 1.0, 1.0]
+
+mount:                          # fixed joint world -> base_link (also the SRDF virtual joint)
+  name: masa
+  parent: world
+  child: base_link
+
+# ---- kinematics -------------------------------------------------------------------------------
+# Chain order = order of the keys. Link `shape` is used for visual AND collision. `origin` is the
+# geometry centre in the link frame; the centre of mass is at the same point. `inertia` = [ixx, iyy,
+# izz] (products of inertia are zero). Masses/inertias are PLACEHOLDERS (solid primitives), as in
+# robot.urdf today.
+links:
+  base_link:
+    shape: {type: cylinder, radius: 0.12, length: 0.08}
+    origin: [0.0, 0.0, 0.0]
+    material: gray
+    mass: 5.0
+    inertia: [0.020667, 0.020667, 0.036]
+  link_1:
+    shape: {type: cylinder, radius: 0.08, length: 0.2}
+    origin: [0.0, 0.0, 0.1]
+    material: orange
+    mass: 2.0
+    inertia: [0.009867, 0.009867, 0.0064]
+  link_2:
+    shape: {type: box, size: [0.06, 0.06, 0.35]}
+    origin: [0.0, 0.0, 0.175]
+    material: gray
+    mass: 1.5
+    inertia: [0.015762, 0.015762, 0.0009]
+  link_3:
+    shape: {type: box, size: [0.05, 0.05, 0.3]}
+    origin: [0.0, 0.0, 0.15]
+    material: orange
+    mass: 1.0
+    inertia: [0.007708, 0.007708, 0.000417]
+  link_4:
+    shape: {type: cylinder, radius: 0.04, length: 0.2}
+    origin: [0.0, 0.0, 0.1]
+    material: blue
+    mass: 0.6
+    inertia: [0.00224, 0.00224, 0.00048]
+  link_5:
+    shape: {type: box, size: [0.04, 0.04, 0.15]}
+    origin: [0.0, 0.0, 0.075]
+    material: gray
+    mass: 0.4
+    inertia: [0.000803, 0.000803, 0.000107]
+  link_6:                       # tool link: the tip for Cartesian goals (RobotConfig.tip_link)
+    shape: {type: cylinder, radius: 0.03, length: 0.05}
+    origin: [0.0, 0.0, 0.025]
+    material: orange
+    mass: 0.2
+    inertia: [0.000087, 0.000087, 0.00009]
+
+# `origin` = offset of the joint frame from the parent link frame (this is the "link length"
+# between two joints). `limits.position` [lower, upper] is the PHYSICAL limit.
+joints:
+  joint_1:
+    type: revolute
+    parent: base_link
+    child: link_1
+    origin: [0.0, 0.0, 0.04]
+    axis: [0, 0, 1]
+    limits: {position: [-3.14, 3.14], velocity: 1.0, acceleration: 1.0, effort: 100}
+  joint_2:
+    type: revolute
+    parent: link_1
+    child: link_2
+    origin: [0.0, 0.0, 0.2]
+    axis: [0, 1, 0]
+    limits: {position: [-1.57, 1.57], velocity: 1.0, acceleration: 1.0, effort: 100}
+  joint_3:
+    type: revolute
+    parent: link_2
+    child: link_3
+    origin: [0.0, 0.0, 0.35]
+    axis: [0, 1, 0]
+    limits: {position: [-2.0, 2.0], velocity: 1.0, acceleration: 1.0, effort: 100}
+  joint_4:
+    type: revolute
+    parent: link_3
+    child: link_4
+    origin: [0.0, 0.0, 0.3]
+    axis: [0, 0, 1]
+    limits: {position: [-3.14, 3.14], velocity: 1.0, acceleration: 1.0, effort: 100}
+  joint_5:
+    type: revolute
+    parent: link_4
+    child: link_5
+    origin: [0.0, 0.0, 0.2]
+    axis: [0, 1, 0]
+    limits: {position: [-1.57, 1.57], velocity: 1.0, acceleration: 1.0, effort: 100}
+  joint_6:
+    type: revolute
+    parent: link_5
+    child: link_6
+    origin: [0.0, 0.0, 0.15]
+    axis: [0, 0, 1]
+    limits: {position: [-3.14, 3.14], velocity: 1.0, acceleration: 1.0, effort: 100}
+
+# ---- MoveIt -----------------------------------------------------------------------------------
+moveit:
+  planning_group: robot_arm
+  default_velocity_scaling: 0.5
+  default_acceleration_scaling: 0.5
+  initial_positions: {joint_1: 0, joint_2: 0, joint_3: 0, joint_4: 0, joint_5: 0, joint_6: 0}
+  named_poses:                  # joint values in chain order [joint_1 .. joint_6]
+    home: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    cnc:  [0.5, -0.4, 0.4, 0.0, 0.5, 0.0]
+    pc:   [-0.5, -0.3, 0.3, -0.2, 0.5, 0.0]
+    dik:  [0.0, -1.57, 1.57, 0.0, 0.0, 0.0]
+  collision:
+    # Parent-child pairs always overlap at the joint and are always disabled. Anything else is
+    # checked unless listed here with a reason: [link1, link2, reason]. Today: nothing extra.
+    allow_extra: []
+
+# ---- safety -----------------------------------------------------------------------------------
+safety:
+  frame: world
+  box:                          # metres, tool-tip goals (robot_core.safezone)
+    x: [0.05, 0.75]
+    y: [-0.5, 0.5]
+    z: [0.02, 0.7]
+  max_velocity_scale: 0.5       # upper bound for the velocity/acceleration scaling, 0 < s <= 1
+
+# ---- motors (SEPARATE: not used by URDF / SRDF / MoveIt; only by a hardware bridge, later) ------
+# motor_position = direction * gear_ratio * (joint_position - zero_offset)     [rad at the motor shaft]
+#   direction  : +1 / -1, sign of the motor relative to the joint axis
+#   zero_offset: joint position (rad) at which the motor reads 0
+#   gear_ratio : motor turns per joint turn (> 0; 1 = direct drive / no gearbox)
+# The simulated robot has no motors: identity mapping for every axis.
+motors:
+  joint_1: {direction: 1, zero_offset: 0.0, gear_ratio: 1.0}
+  joint_2: {direction: 1, zero_offset: 0.0, gear_ratio: 1.0}
+  joint_3: {direction: 1, zero_offset: 0.0, gear_ratio: 1.0}
+  joint_4: {direction: 1, zero_offset: 0.0, gear_ratio: 1.0}
+  joint_5: {direction: 1, zero_offset: 0.0, gear_ratio: 1.0}
+  joint_6: {direction: 1, zero_offset: 0.0, gear_ratio: 1.0}
