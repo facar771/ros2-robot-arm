@@ -23,7 +23,7 @@ def root():
     try:
         r = tk.Tk()
     except tk.TclError as exc:
-        pytest.skip(f'ekran yok: {exc}')
+        pytest.skip('ekran/Tk yok: ' + str(exc).splitlines()[0][:100])
     r.withdraw()
     yield r
     try:

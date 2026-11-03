@@ -51,3 +51,23 @@ def make_client(scenarios, ui):
 
 
 J = {'content-type': 'application/json'}
+
+
+# CI log'u okunamadığı için: başarısız testlerin özetini son satırlara (annotation'a sığacak şekilde) yaz.
+_FAILED = []
+
+
+def pytest_runtest_logreport(report):
+    if report.failed:
+        _FAILED.append((report.nodeid, report.when, (report.longreprtext or '')))
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_terminal_summary(terminalreporter):
+    if not _FAILED:
+        return
+    terminalreporter.write_sep('=', 'BAŞARISIZ TESTLER (özet)')
+    for nodeid, when, text in _FAILED[:8]:
+        lines = [ln for ln in text.splitlines() if ln.startswith('E ')]
+        reason = ' | '.join(ln[2:].strip() for ln in lines[:2])[:230] or text.strip().splitlines()[-1][:230]
+        terminalreporter.write_line(f'{nodeid} [{when}]: {reason}')
