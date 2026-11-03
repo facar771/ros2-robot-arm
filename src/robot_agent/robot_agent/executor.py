@@ -28,8 +28,10 @@ from typing import Any, Callable, Dict, FrozenSet, List, Optional
 
 from robot_core.ports import EventSink, NullEventSink
 from robot_core.safezone import SafeZone
+from robot_core.webcmd import COLORS
 
 from robot_agent.client import RobotPort, RobotUnreachable
+from robot_agent.plugins import PluginBridge, PluginTool
 from robot_agent.schema import validate
 from robot_agent.tools import ToolSpec, build_tools, command_for
 
@@ -69,6 +71,7 @@ class ToolResult:
     job_id: Optional[str] = None
     dry_run: bool = False
     ok: Optional[bool] = None      # default: status is ok / dry_run (a verified e-stop is also ok)
+    risk: Optional[str] = None     # set for run_plugin: the class of the plugin tool actually run
 
     def __post_init__(self) -> None:
         if self.ok is None:
@@ -93,7 +96,8 @@ class ToolExecutor:
     def __init__(self, robot: RobotPort, policy: Optional[Policy] = None,
                  events: Optional[EventSink] = None,
                  confirm: Optional[Callable[[ConfirmRequest], bool]] = None, *,
-                 dry_run: bool = False, clock: Callable[[], float] = time.monotonic,
+                 dry_run: bool = False, plugins: Optional[PluginBridge] = None,
+                 plugin_frames: str = 'ros', clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep):
         self._robot = robot
         self.policy = policy or Policy()
@@ -101,7 +105,9 @@ class ToolExecutor:
         self._confirm = confirm
         self.dry_run = dry_run
         self._clock, self._sleep = clock, sleep
-        self._tools = build_tools()
+        self._plugins = plugins if plugins is not None else PluginBridge()
+        self._plugin_frames = plugin_frames
+        self._tools = build_tools(self._plugins)
         self._motions = 0
         self._stop_event = threading.Event()
         self._stop_sent = False
@@ -146,6 +152,8 @@ class ToolExecutor:
             return self._safety_tool(spec, arguments, dry)
         if spec.name == 'get_robot_state':
             return self._state_tool(spec)
+        if spec.name == 'run_plugin':
+            return self._plugin_tool(spec, arguments, dry)
         return self._robot_tool(spec, arguments, dry)
 
     def _safety_tool(self, spec: ToolSpec, arguments: Dict[str, Any], dry: bool) -> ToolResult:
@@ -156,16 +164,18 @@ class ToolExecutor:
             reason = 'ajan: ' + str(arguments.get('reason') or 'LLM isteği')
             self._stop_event.set()
             return self._emergency_stop(reason[:64])
-        state = self._state()
-        job = (state.get('robot') or {}).get('current_job')
+        return self._cancel_job(spec.name)
+
+    def _cancel_job(self, tool: str) -> ToolResult:
+        job = (self._state().get('robot') or {}).get('current_job')
         if not job:
-            return _result(spec.name, 'ok', 'iptal edilecek çalışan iş yok')
+            return _result(tool, 'ok', 'iptal edilecek çalışan iş yok')
         status, body = self._robot.post(f"/api/jobs/{job['id']}/cancel", {})
         doc = (body or {}).get('job') or {}
         if status == 200:
-            return _result(spec.name, 'cancelled', 'çalışan iş iptal edildi',
+            return _result(tool, 'cancelled', 'çalışan iş iptal edildi',
                            data={'job_state': doc.get('state')}, job_id=job['id'])
-        return _result(spec.name, 'failed', (body or {}).get('error') or f'HTTP {status}',
+        return _result(tool, 'failed', (body or {}).get('error') or f'HTTP {status}',
                        job_id=job['id'])
 
     def _emergency_stop(self, reason: str) -> ToolResult:
@@ -201,20 +211,38 @@ class ToolExecutor:
         robot = self._state().get('robot') or {}
         return _result(spec.name, 'ok', f"robot durumu: {robot.get('state')}", data=robot)
 
-    def _robot_tool(self, spec: ToolSpec, arguments: Dict[str, Any], dry: bool) -> ToolResult:
-        state = self._state()
-        robot = state.get('robot') or {}
+    def _gate(self, tool: str, risk: str, robot: Dict[str, Any]) -> Optional[ToolResult]:
+        """The state / busy / quota checks every non-safety tool passes (None: go on)."""
         if robot.get('state') == 'estopped' or self._stop_event.is_set():
-            return _result(spec.name, 'estopped', 'acil dur etkin: hiçbir hareket verilmez; '
+            return _result(tool, 'estopped', 'acil dur etkin: hiçbir hareket verilmez; '
                            'kilidi yalnızca bir insan açabilir (POST /api/reset)')
-        if spec.risk != 'read' and robot.get('state') == 'busy':
+        if risk != 'read' and robot.get('state') == 'busy':
             job = robot.get('current_job') or {}
-            return _result(spec.name, 'refused',
+            return _result(tool, 'refused',
                            f"robot meşgul: {job.get('id')} ({job.get('command')}) çalışıyor")
-        moves = spec.risk in ('motion', 'long')
-        if moves and self._motions >= self.policy.max_motion_calls:
-            return _result(spec.name, 'refused', 'hareket çağrısı sınırı doldu '
+        if risk in ('motion', 'long') and self._motions >= self.policy.max_motion_calls:
+            return _result(tool, 'refused', 'hareket çağrısı sınırı doldu '
                            f'({self.policy.max_motion_calls}); insan onayıyla yeniden başlat')
+        return None
+
+    def _needs_ok(self, tool: str, risk: str, arguments: Dict[str, Any], command: str,
+                  target) -> Optional[ToolResult]:
+        """Confirmation (None: given or not needed)."""
+        if risk not in ('motion', 'long') or risk not in self.policy.confirm_risks:
+            return None
+        if self._confirm is None:
+            return _result(tool, 'refused', 'onay gerekli ve onaylayan yok '
+                           '(CLI: --yes ya da etkileşimli terminal)')
+        if not self._confirm(ConfirmRequest(tool, dict(arguments), command, target)):
+            return _result(tool, 'refused', 'kullanıcı onaylamadı; hareket verilmedi')
+        return None
+
+    def _robot_tool(self, spec: ToolSpec, arguments: Dict[str, Any], dry: bool) -> ToolResult:
+        robot = self._state().get('robot') or {}
+        refused = self._gate(spec.name, spec.risk, robot)
+        if refused:
+            return refused
+        moves = spec.risk in ('motion', 'long')
         command = command_for(spec.name, arguments)
         target = None
         extra: Dict[str, Any] = {}
@@ -227,27 +255,123 @@ class ToolExecutor:
             return _result(spec.name, 'dry_run', f"kuru çalıştırma: '{command}' çalıştırılırdı; "
                            'hareket GÖNDERİLMEDİ', data={'would_run': command, 'target': target,
                                                          **extra}, dry_run=True)
-        if moves and spec.risk in self.policy.confirm_risks:
-            if self._confirm is None:
-                return _result(spec.name, 'refused', 'onay gerekli ve onaylayan yok '
-                               '(CLI: --yes ya da etkileşimli terminal)')
-            if not self._confirm(ConfirmRequest(spec.name, dict(arguments), command, target)):
-                return _result(spec.name, 'refused', 'kullanıcı onaylamadı; hareket verilmedi')
+        refused = self._needs_ok(spec.name, spec.risk, arguments, command, target)
+        if refused:
+            return refused
         if moves:
             self._motions += 1
         return self._run(spec, command, target, extra)
 
-    def _preflight_above(self, arguments: Dict[str, Any], robot: Dict[str, Any]):
+    # ---- run_plugin -----------------------------------------------------------------------------
+    def _plugin_tool(self, spec: ToolSpec, arguments: Dict[str, Any], dry: bool) -> ToolResult:
+        plugin, tool = arguments['plugin'], arguments['tool']
+        label = f'{plugin}.{tool}'
+        entry = self._plugins.tools().get(label)
+        if entry is None:
+            known = ', '.join(sorted(self._plugins.tools())) or 'yok'
+            return _result(spec.name, 'rejected', f'{label!r} beyaz listede değil ya da eklenti '
+                           f'kurulu değil; kullanılabilir eklenti araçları: {known}')
+        raw = arguments.get('arguments')
+        raw = {} if raw is None else raw
+        problems = self._plugins.check_args(entry, raw)
+        if problems:
+            return _result(spec.name, 'rejected', f'geçersiz eklenti argümanı ({label}): '
+                           + '; '.join(problems), risk=entry.risk)
+        args = self._plugins.with_defaults(entry, raw)
+        robot = self._state().get('robot') or {}
+        refused = self._gate(label, entry.risk, robot)
+        if refused:
+            refused.risk = entry.risk
+            return refused
+        target = None
+        extra: Dict[str, Any] = {'plugin': plugin, 'tool': tool, 'motion': entry.motion}
+        if entry.motion == 'arm':
+            if args.get('color') in COLORS:     # follow_color-style tools: the first target
+                checked = self._preflight_above(
+                    {'color': args['color'], 'height_m': args.get('height_m', 0.35)}, robot,
+                    tool=label)
+                if isinstance(checked, ToolResult):
+                    checked.risk = entry.risk
+                    return checked
+                target, zone = checked
+                extra.update(zone)
+            else:
+                extra['zone'] = ('hedef eklentiye bağlı: istemci tarafı denetim yok, yalnızca '
+                                 'robotun kendi güvenli kutusu her işte geçerli')
+        command = f'eklenti {label}'
+        moves = entry.risk != 'read'
+        if dry and moves:
+            return _result(spec.name, 'dry_run', f'kuru çalıştırma: {command} {args} '
+                           'çalıştırılırdı; hareket GÖNDERİLMEDİ',
+                           data={'would_run': command, 'arguments': args, 'target': target,
+                                 **extra}, dry_run=True, risk=entry.risk)
+        refused = self._needs_ok(spec.name, entry.risk, {'plugin': plugin, 'tool': tool,
+                                                         'arguments': args}, command, target)
+        if refused:
+            refused.risk = entry.risk
+            return refused
+        robot_url = getattr(self._robot, 'base_url', None)
+        if robot_url is None and moves:
+            return _result(spec.name, 'refused', 'robot adresi bilinmiyor: hareket eden eklenti '
+                           'güvenli yoldan (Robot API) çalıştırılamaz', risk=entry.risk)
+        if moves:
+            self._motions += 1
+        result = self._plugins.run(plugin, tool, args, robot_url=robot_url or 'fake',
+                                   frames=self._plugin_frames, stop_event=self._stop_event)
+        return self._from_plugin(spec.name, entry, result, extra, target)
+
+    def _from_plugin(self, tool: str, entry: PluginTool, result: Dict[str, Any],
+                     extra: Dict[str, Any], target) -> ToolResult:
+        code = result.get('code')
+        data: Dict[str, Any] = dict(extra)
+        data.update(plugin_data=_shrink(result.get('data')), duration_s=result.get('duration_s'))
+        if target:
+            data['target'] = target
+        if result.get('warning'):
+            data['warning'] = result['warning']
+        error = str(result.get('error') or code or 'eklenti hatası')
+        out = ToolResult(tool, 'failed', error, data, risk=entry.risk)
+        if result.get('ok'):
+            out.status, out.ok, out.message = 'ok', True, f'{entry.key} tamam'
+        elif code == 'estop' or self._stop_event.is_set():
+            out.status = 'estopped'
+            out.message = 'acil dur: eklenti durduruldu; robot kilitli (kilidi yalnızca insan açar)'
+        elif code in ('unknown_plugin', 'unknown_tool', 'bad_parameters', 'bad_arguments',
+                      'bad_robot_url', 'permission_denied'):
+            out.status = 'rejected'
+        elif code in ('stopped', 'interrupted'):
+            out.status = 'cancelled'
+        if entry.motion == 'arm':
+            self._after_arm_plugin(out, code)
+        return out
+
+    def _after_arm_plugin(self, out: ToolResult, code: Optional[str]) -> None:
+        """An arm tool may leave a robot job running when it times out / is killed: cancel it, and
+        report an emergency stop that happened meanwhile."""
+        try:
+            if not out.ok and code in ('timeout', 'stopped', 'interrupted', 'exception',
+                                       'not_running'):
+                cancelled = self._cancel_job(out.tool)
+                out.data['job_cleanup'] = cancelled.message
+            if (self._state().get('robot') or {}).get('state') == 'estopped' \
+                    and out.status != 'estopped':
+                out.status, out.ok = 'estopped', False
+                out.message = 'acil dur etkin: robot kilitli (kilidi yalnızca insan açar)'
+        except RobotUnreachable as exc:
+            out.data['job_cleanup'] = f'robot durumu okunamadı: {exc}'
+
+    def _preflight_above(self, arguments: Dict[str, Any], robot: Dict[str, Any],
+                         tool: str = 'go_above_object'):
         """Real object position -> target -> safe-box check: (target, extra) or a refusal."""
         found = self._run_read('objects')
         if isinstance(found, ToolResult):
             return found
         wanted = [o for o in found if o.get('label') == arguments['color']]
         if not wanted:
-            return _result('go_above_object', 'refused', f"{arguments['color']} nesne şu an "
+            return _result(tool, 'refused', f"{arguments['color']} nesne şu an "
                            'görünmüyor (algı çalışıyor mu?); hareket verilmedi')
         if len(wanted) > 1:
-            return _result('go_above_object', 'refused', f"birden fazla {arguments['color']} "
+            return _result(tool, 'refused', f"birden fazla {arguments['color']} "
                            'nesne var; belirsiz hedef, hareket verilmedi')
         obj = wanted[0]
         height = float(arguments.get('height_m', 0.35))
@@ -259,7 +383,7 @@ class ToolExecutor:
         box = SafeZone(tuple(zone[a][0] for a in 'xyz'), tuple(zone[a][1] for a in 'xyz'))
         outside = box.check(tuple(target))
         if outside:
-            return _result('go_above_object', 'refused', outside, data={'target': target})
+            return _result(tool, 'refused', outside, data={'target': target})
         return target, {'zone': 'içeride'}
 
     def _run_read(self, command: str):
@@ -330,8 +454,19 @@ class ToolExecutor:
             spec = self._tools.get(name) if isinstance(name, str) else None
             self._events.emit('agent_tool_call', {
                 'tool': str(name)[:64], 'arguments': arguments if isinstance(arguments, dict)
-                else str(arguments)[:80], 'risk': spec.risk if spec else None,
+                else str(arguments)[:80], 'risk': result.risk or (spec.risk if spec else None),
                 'status': result.status, 'ok': result.ok, 'message': result.message[:300],
                 'dry_run': dry, 'job_id': result.job_id, 'duration_s': round(took, 2)})
         except Exception:    # noqa: BLE001 - the log must never break a call
             log.exception('olay yazılamadı')
+
+
+MAX_DATA_CHARS = 6000
+
+
+def _shrink(data: Any) -> Any:
+    """Plugin results can be large (scan_extent); keep what fits the model's context."""
+    text = json.dumps(data, ensure_ascii=False, default=str)
+    if len(text) <= MAX_DATA_CHARS:
+        return data
+    return {'truncated': True, 'chars': len(text), 'preview': text[:MAX_DATA_CHARS]}

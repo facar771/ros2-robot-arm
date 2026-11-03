@@ -20,6 +20,7 @@ from robot_agent.agent import AgentRunner
 from robot_agent.client import DEFAULT_URL, HttpRobot
 from robot_agent.executor import ConfirmRequest, Policy, ToolExecutor
 from robot_agent.llm import ENV_KEY, AnthropicLLM, LLMError, RuleLLM
+from robot_agent.plugins import DEFAULT_ALLOWED, PluginBridge
 
 
 def _events():
@@ -48,6 +49,14 @@ def main(argv: Optional[List[str]] = None, *, out=None) -> int:
     parser.add_argument('--max-motions', type=int, default=10, help='en çok hareket çağrısı')
     parser.add_argument('--max-steps', type=int, default=8, help='en çok LLM adımı')
     parser.add_argument('--model', help='LLM modeli (varsayılan: ROBOT_AGENT_MODEL ya da yerleşik)')
+    parser.add_argument('--allow-plugin', action='append', default=[], metavar='EKLENTİ.ARAÇ',
+                        help='ek eklenti aracına izin ver (ör. benim_eklentim.arac); '
+                             'varsayılan: find_object, scan_extent, follow_color')
+    parser.add_argument('--no-plugins', action='store_true',
+                        help='run_plugin aracını kapat (yalnızca yerleşik araçlar)')
+    parser.add_argument('--frames', default='ros',
+                        help="eklentilerin kare kaynağı: ros (canlı kamera, varsayılan) | none | "
+                             "synthetic")
     args = parser.parse_args(argv)
 
     def say(text: str) -> None:
@@ -69,8 +78,12 @@ def main(argv: Optional[List[str]] = None, *, out=None) -> int:
     confirm = (lambda req: (say(f'[onay otomatik] {req.describe()}'), True)[1]) if args.yes \
         else (_ask if sys.stdin.isatty() else None)
     events = _events()
+    bridge = PluginBridge(frozenset() if args.no_plugins
+                          else DEFAULT_ALLOWED | frozenset(args.allow_plugin))
     executor = ToolExecutor(robot, Policy(max_motion_calls=args.max_motions), events, confirm,
-                            dry_run=args.dry_run)
+                            dry_run=args.dry_run, plugins=bridge, plugin_frames=args.frames)
+    if not args.no_plugins and not bridge.tools():
+        say(f'[!] eklenti aracı yok ({bridge.problem}); run_plugin kapalı, diğer araçlar çalışır.')
     runner = AgentRunner(llm, executor, max_steps=args.max_steps)
 
     def on_interrupt(signum, frame):    # Ctrl-C = emergency stop, then leave

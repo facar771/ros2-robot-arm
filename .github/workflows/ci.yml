@@ -125,6 +125,13 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-jobs
       - name: "Selftest - LLM tool layer (scripted LLM - valid / invalid / unsafe / e-stop, real CLI)"
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-agent
+      - name: "Selftest - integration (Hub core -> Robot API -> perception -> motion; live-camera vision plugin; agent; e-stop chain)"
+        # apps/control_hub and plugins/ are not part of the image: mounted read-only
+        run: >-
+          docker run --rm
+          -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro"
+          -v "$PWD/plugins:/workspace/plugins:ro"
+          ros2-robot-arm:ci run_selftest gazebo-integration
       - name: Selftest - camera platform tracks a moving target (4 scenarios, lock criteria)
         # Not verified in Docker when it was written (the sandbox has no Docker Hub access); the
         # world needs the bullet-featherstone physics plugin. Does not block the other jobs.

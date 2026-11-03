@@ -9,6 +9,7 @@
 # docker compose run --rm selftest-db        -> selftest with its events written to PostgreSQL
 # docker compose run --rm selftest-viz       -> + read-only browser view: viz_check (page, PNGs, overlay, JSON)
 # docker compose run --rm selftest-cmd      -> browser commands: white list, refusals, demo scenario (cmd_check)
+# docker compose run --rm selftest-integration -> Hub -> Robot API -> perception -> motion + vision plugin + agent (integration_check)
 # docker compose run --rm selftest-tracking -> camera platform + moving target: lock behaviour (tracking_check, ~5 min)
 # docker compose up demo                     -> interactive demo, browser view + buttons at http://localhost:8080
 #                                               (second terminal: ./docker/cli.sh)
@@ -143,6 +144,19 @@ services:
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-agent"]
 
+  # Hub core -> Robot API -> perception -> motion, with the live-camera vision plugin and the agent layer on
+  # the same arm. apps/control_hub and plugins/ are not baked into the ci image: they are mounted (read-only).
+  selftest-integration:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    volumes:
+      - ./apps/control_hub:/workspace/apps/control_hub:ro
+      - ./plugins:/workspace/plugins:ro
+    command: ["run_selftest", "gazebo-integration"]
+
   selftest-tracking:
     build:
       context: .
@@ -163,6 +177,9 @@ services:
     stop_grace_period: 30s     # Gazebo needs a few seconds to shut down
     ports:
       - "127.0.0.1:${VIEW_PORT:-8080}:8080"
+    volumes:
+      # plugins/ is not baked into the image; the agent's run_plugin (./docker/agent.sh) reads them from here
+      - ./plugins:/workspace/plugins:ro
     command: ["run_demo"]
 
   # Control Hub with a fake robot (apps/control_hub). No ROS. Published on all host interfaces ON PURPOSE so a phone

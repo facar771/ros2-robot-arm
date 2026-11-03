@@ -12,7 +12,8 @@
 # Annotations (::error/::warning lines) that run_selftest.sh printed in a failed run are repeated
 # here, prefixed with the run number, because people who review CI often cannot open the raw log
 # but can read annotations. A summary table goes to $GITHUB_STEP_SUMMARY when it is set.
-# DOCKER=... overrides the docker command (tests use a stub).
+# DOCKER=... overrides the docker command (tests use a stub). DOCKER_RUN_ARGS='-v a:b ...' adds
+# arguments to `docker run` (word-split on purpose; the integration mode needs mounts).
 set -u
 IMAGE=${1:?usage: repeat_selftest.sh <image> <mode> [runs]}
 MODE=${2:?usage: repeat_selftest.sh <image> <mode> [runs]}
@@ -25,7 +26,8 @@ passed=0 failed=0 results=()
 for n in $(seq 1 "$RUNS"); do
     log="$LOG_DIR/$MODE-$n.log"
     start=$SECONDS
-    if $DOCKER run --rm "$IMAGE" run_selftest "$MODE" >"$log" 2>&1; then
+    # shellcheck disable=SC2086  (DOCKER_RUN_ARGS is meant to be word-split)
+    if $DOCKER run --rm ${DOCKER_RUN_ARGS:-} "$IMAGE" run_selftest "$MODE" >"$log" 2>&1; then
         verdict=GEÇTİ; passed=$((passed + 1))
     else
         verdict="BAŞARISIZ (çıkış $?)"; failed=$((failed + 1))

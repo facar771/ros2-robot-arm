@@ -7,21 +7,24 @@ docstrings (:class:`robot_core.skills.Skills`), plus the two safety tools. There
 or for code. Colours and the height range come from ``robot_core.webcmd`` so they cannot drift.
 
 Risk classes: ``read`` (changes nothing), ``motion`` (moves the arm), ``long`` (moves the arm for
-a minute), ``safety`` (stop / cancel; never needs confirmation, never refused for policy reasons).
+a minute), ``safety`` (stop / cancel; never needs confirmation, never refused for policy reasons),
+``plugin`` (``run_plugin``: the real class comes from the plugin's own ``motion`` per call, see
+:mod:`robot_agent.plugins`).
 """
 from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from robot_core.skills import Skills
 from robot_core.webcmd import COLORS, HEIGHT_MAX, HEIGHT_MIN
 
+from robot_agent.plugins import PluginBridge
 from robot_agent.schema import check_schema
 
 DEFAULT_HEIGHT = 0.35        # inside the reachable window of every object (docs/INTERFACES.md)
-RISKS = ('read', 'motion', 'long', 'safety')
+RISKS = ('read', 'motion', 'long', 'safety', 'plugin')
 
 
 @dataclass(frozen=True)
@@ -50,7 +53,9 @@ def _object(properties: Dict[str, Any], required: List[str] = ()) -> Dict[str, A
     return schema
 
 
-def build_tools() -> Dict[str, ToolSpec]:
+def build_tools(plugins: Optional[PluginBridge] = None) -> Dict[str, ToolSpec]:
+    """All tools. ``run_plugin`` is included only when ``plugins`` has at least one allowed,
+    installed plugin tool; its description lists exactly those."""
     colors = list(COLORS)
     tools = [
         ToolSpec('list_objects', skill_doc('list_objects') + ' (Read-only.)', _object({}), 'read'),
@@ -84,7 +89,36 @@ def build_tools() -> Dict[str, ToolSpec]:
                  _object({'reason': {'type': 'string', 'maxLength': 64,
                                      'description': 'short reason (optional)'}}), 'safety'),
     ]
+    plugin_tool = _run_plugin_spec(plugins)
+    if plugin_tool is not None:
+        tools.insert(-2, plugin_tool)
     return {t.name: t for t in tools}
+
+
+def _run_plugin_spec(plugins: Optional[PluginBridge]) -> Optional[ToolSpec]:
+    entries = list(plugins.tools().values()) if plugins is not None else []
+    if not entries:
+        return None
+    lines = []
+    for e in entries:
+        what = {'none': 'only looks, moves nothing', 'camera': 'turns the CAMERA',
+                'arm': 'MOVES THE ROBOT ARM'}[e.motion]
+        props = ', '.join(sorted((e.input_schema.get('properties') or {})))
+        text = ' '.join(e.description.split())
+        lines.append(f"- plugin='{e.plugin}' tool='{e.name}' ({what}; arguments: "
+                     f"{props or 'none'}): {text}")
+    plugins_enum = sorted({e.plugin for e in entries})
+    tools_enum = sorted({e.name for e in entries})
+    return ToolSpec(
+        'run_plugin',
+        'Run one tool of an installed plugin (vision / scanning / following). Only these exist:\n'
+        + '\n'.join(lines) + '\nTools that move the camera or the arm need the user\'s '
+        'confirmation and obey the robot\'s safe work box and emergency stop; looking tools '
+        'do not.',
+        _object({'plugin': {'type': 'string', 'enum': plugins_enum, 'description': 'plugin name'},
+                 'tool': {'type': 'string', 'enum': tools_enum, 'description': 'tool name'},
+                 'arguments': {'type': 'object', 'description': "the tool's own arguments"}},
+                ['plugin', 'tool']), 'plugin')
 
 
 def command_for(name: str, arguments: Dict[str, Any]) -> str:

@@ -77,3 +77,24 @@ def test_only_loopback_urls(rig):
 def test_max_motions_is_enforced(rig):
     code, out = run(rig, '--offline', '--yes', '--max-motions', '0', 'home')
     assert code == 1 and 'sınırı' in out and rig.skills.calls == []
+
+
+# ---- plugin flags ---------------------------------------------------------------------
+def test_offline_looking_request_runs_a_real_plugin_without_confirmation(rig):
+    code, out = run(rig, '--offline', '--frames', 'synthetic', 'kırmızı kutuyu bul')
+    assert code == 0 and '[+] run_plugin' in out and 'find_object' in out
+
+
+def test_an_arm_plugin_needs_the_yes_flag_like_any_motion(rig):
+    code, out = run(rig, '--offline', '--frames', 'synthetic', 'kırmızıyı 1 saniye takip et')
+    assert code == 1 and 'onay gerekli' in out
+    assert not [j for j in rig.jobs.recent() if j['command'].startswith('above')]
+    code, out = run(rig, '--offline', '--yes', '--frames', 'synthetic',
+                    'kırmızıyı 1 saniye takip et')
+    assert code == 0 and '[onay otomatik]' in out
+    assert [j for j in rig.jobs.recent() if j['command'].startswith('above red')]
+
+
+def test_no_plugins_flag_removes_the_tool(rig):
+    code, out = run(rig, '--offline', '--no-plugins', 'kırmızı kutuyu bul')
+    assert code == 1 and 'rejected' in out and rig.jobs.recent() == []

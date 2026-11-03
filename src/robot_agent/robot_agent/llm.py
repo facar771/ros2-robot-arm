@@ -88,6 +88,23 @@ class RuleLLM:
         if words & {'acil', 'dur', 'durdur', 'stop'}:
             return LLMResponse('Acil durdur.',
                                [call('emergency_stop', {'reason': 'kullanıcı isteği'})])
+        color_found = next((c for w, c in _COLORS.items()
+                            if w in words or any(x.startswith(w) for x in words)), None)
+        if color_found and any(x.startswith('takip') or x.startswith('takib') for x in words):
+            args = {'color': color_found}
+            seconds = re.search(r'(\d+(?:[.,]\d+)?)\s*(saniye|sn|s)\b', text)
+            if seconds:
+                args['duration_s'] = float(seconds.group(1).replace(',', '.'))
+            return LLMResponse(f'{color_found} nesneyi takip ediyorum.',
+                               [call('run_plugin', {'plugin': 'follow_color',
+                                                    'tool': 'follow_color', 'arguments': args})])
+        if color_found and words & {'bul', 'ara', 'bak', 'görüyor', 'görüyormusun'}:
+            return LLMResponse(f'{color_found} nesneyi arıyorum.',
+                               [call('run_plugin', {'plugin': 'find_object', 'tool': 'find_object',
+                                                    'arguments': {'color': color_found}})])
+        if 'tara' in words or 'tarama' in words:
+            return LLMResponse('Etrafı tarıyorum.', [call('run_plugin', {
+                'plugin': 'scan_extent', 'tool': 'scan_extent', 'arguments': {}})])
         for word, color in _COLORS.items():
             if word in words or any(w.startswith(word) for w in words):
                 args: Dict[str, Any] = {'color': color}

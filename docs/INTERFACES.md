@@ -166,6 +166,7 @@ bir LLM'in yapabildiği tek şey aşağıdaki beyaz listeli araçları çağırm
 | `go_home` | motion | `home` |
 | `go_above_object` `{color: red\|green\|blue, height_m: 0-0.5 (0.35)}` | motion | `above <renk> <h>` |
 | `run_demo_scenario` | long | `demo_scenario` |
+| `run_plugin` `{plugin, tool, arguments}` | plugin (çağrı başına eklentinin `motion` sınıfı) | beyaz listeli bir **eklenti aracı** (aşağıda) |
 | `cancel_current_job` | safety | çalışan işi iptal eder (kilitlemez) |
 | `emergency_stop` `{reason?}` | safety | `POST /api/stop` |
 
@@ -191,6 +192,30 @@ hemen biter**: modele ikinci tur verilmez, aynı yanıttaki kalan çağrılar y�
 yürütülmedi") ve kullanıcıya modelin önceden yazdığı metin değil "Acil dur etkin ..." döner. (d) Acil dur
 verdiren yürütücü, insan kilidi açsa bile bir daha hareket vermez; yeni koşu yeni yürütücüyle başlar.
 
+**`run_plugin` (eklentiler; giriş noktası `robot_plugins.invoke.run_plugin`, bkz. "Eklentiler: dışarıdan
+çağırma sözleşmesi").** Model yalnızca **izin listesindeki** `eklenti.araç` çiftlerini çağırabilir
+(`PluginBridge`; varsayılan `find_object.find_object`, `scan_extent.scan_extent`,
+`follow_color.follow_color`; ek izin yalnızca `--allow-plugin eklenti.araç` ya da kodla: **sonradan
+yüklenen bir eklenti listeye eklenmedikçe modelce çağrılamaz**). Araç yalnızca eklenti gerçekten kuruluysa ve
+manifesti sağlamsa (bilinen `motion`, desteklenen şema) görünür; açıklaması tam olarak bu araçları sayar.
+Gerçek sınıf eklentinin kendi `motion` alanından gelir:
+
+| eklenti `motion` | risk | kurallar |
+|---|---|---|
+| `none` (yalnızca bakar) | `read` | **doğrudan çalışır**: onay yok, kota harcamaz; yalnızca acil dur kilidinde reddedilir |
+| `camera` (kamerayı çevirir) | `motion` | onay, hareket kotası, robot durumu denetimi (`estopped`/`busy`), kuru çalıştırma |
+| `arm` (kolu oynatır) | `long` | yukarıdakilerin hepsi **+ ilk hedef için güvenli kutu ön denetimi** (`color` verilen araçlarda, ör. `follow_color`: gerçek nesne konumu + `height_m` → robotun bildirdiği kutu; dışındaysa `refused`, eklenti başlamaz). Hedefi önceden bilinemeyen `arm` araçlarında yalnızca robotun kendi kutusu (her iş için sunucuda) geçerlidir; bu `data.zone`'da yazılır |
+
+Argümanlar **eklentinin kendi şemasıyla** doğrulanır (`robot_plugins.schema`), ayrıca NaN/inf ve şemada olmayan
+alanlar reddedilir; hatalı çağrı `rejected` olur, süreç hiç başlamaz. Eklenti `robot_url` olarak **gerçek**
+Robot API adresini alır (`'fake'` hiç kullanılmaz; hareket ettirenler robot adresi bilinmiyorsa reddedilir) ve
+`frames` (varsayılan `ros`, canlı kamera; CLI `--frames`). Acil dur önceliği eklentilerde de geçerlidir:
+yürütücünün `stop_event`'i eklentiye verilir, `request_stop()` (Ctrl-C) hem robota acil dur gönderir hem
+eklentiyi durdurur; eklenti `code: estop` döner ya da çalışırken robot kilitlenirse sonuç `estopped` olur ve
+**koşu biter**. `timeout`/`stopped`/`interrupted` ile biten bir `arm` eklentisinin robotta bıraktığı iş
+iptal edilir (`data.job_cleanup`). Sonuç `data.plugin_data`'dadır (6000 karakteri aşarsa kırpılır,
+`truncated: true`). `reset` bilerek yine **yok** ve eklentilerin de yok.
+
 **Olay günlüğü:** her çağrı, reddedilenler dahil `agent_tool_call` olayıdır (`ROBOT_DB_URL` varsa
 `error_reports`'a da düşer: `status` ok/dry_run değilse).
 
@@ -203,7 +228,9 @@ ortam değişkeni varsa açılır, yoksa katman kapalıdır; model `ROBOT_AGENT_
 Çıkış: `0` tamam, `1` bir araç reddedildi/başarısız, `2` kurulum sorunu (anahtar yok, kötü URL),
 `3` koşu acil durla bitti, `130` Ctrl-C (acil dur gönderilir). Etkileşimli terminalde hareketten önce `[e/H]`
 sorar; terminal yoksa `--yes` verilmedikçe hareket **verilmez**.
-Doğrulama: `run_selftest gazebo-agent` (`ros2 run robot_viz agent_check`).
+Doğrulama: `run_selftest gazebo-agent` (`ros2 run robot_viz agent_check`); tüm zincir (Hub → Robot API →
+algı → hareket, canlı kamera eklentisi ve ajan aynı kolda): `run_selftest gazebo-integration`
+(`ros2 run robot_viz integration_check`; `apps/control_hub` ve `plugins/` imaja bağlanır).
 
 ## Tarayıcı görünümü (`robot_viz` `web_view`, mantık `robot_core.webview` / `robot_core.viz`)
 HTTP sunucusu (yalnızca `http.server`); varsayılan **salt okunur**, `commands:=true` ile beyaz listeli

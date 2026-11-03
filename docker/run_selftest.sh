@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-tracking]
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking]
 #   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
@@ -25,6 +25,10 @@
 #                 202 + progress, cancel/timeout/e-stop mid-motion with the arm measured to stop)
 # gazebo-agent  = same stack + the browser with commands enabled; runs only agent_check (robot_agent: valid /
 #                 invalid / unsafe / e-stop requests through a scripted LLM, the real CLI incl. Ctrl-C)
+# gazebo-integration = same stack + the browser with commands enabled; runs only integration_check: the Hub
+#                 core (apps/control_hub) -> Robot API -> perception -> motion, with the live-camera vision
+#                 plugin and the agent layer on the same arm. Needs the repo's apps/control_hub and plugins/
+#                 inside the image (they are not baked in): mount them, see compose.yaml / ci.yml.
 # gazebo-tracking = NO robot arm: robot_sim/worlds/tracking.sdf (3-DoF camera platform + scripted red target)
 #                 and robot_vision_ros' tracking node; runs only tracking_check (lock behaviour on four
 #                 scenarios, thresholds shared with the unit simulation). Slow: ~5 min (sim runs at 0.4x).
@@ -52,8 +56,10 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
     gazebo-agent) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
+    gazebo-integration) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
     gazebo-tracking) LAUNCH=(ros2 launch robot_vision_ros tracking.launch.py); CTRL_TIMEOUT=240 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-tracking]"; exit 64 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -154,6 +160,8 @@ elif [ "$MODE" = "gazebo-jobs" ]; then
     timeout 900 ros2 run robot_viz jobs_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-agent" ]; then
     timeout 900 ros2 run robot_viz agent_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+elif [ "$MODE" = "gazebo-integration" ]; then
+    timeout 1500 ros2 run robot_viz integration_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-tracking" ]; then
     timeout 1500 ros2 run robot_vision_ros tracking_check --out /tmp/tracking 2>&1 | tee /tmp/tracking_check.log
     STATUS=${PIPESTATUS[0]}

@@ -20,6 +20,8 @@ SYSTEM_PROMPT = (
     '  değiştirmeden tekrarlama, güvenlik sınırlarını aşmaya çalışma.\n'
     '- Tehlikeli göründüğünde ya da kullanıcı durdurmak istediğinde HEMEN emergency_stop çağır;\n'
     '  acil dur sonrası başka hareket aracı çağırma, kilidi yalnızca bir insan açabilir.\n'
+    '- run_plugin ile yalnızca listelenen eklenti araçları çalışır; kamerayı ya da kolu oynatan\n'
+    '  araçlar onay ister ve robotun güvenli kutusuna/acil durdurmasına tabidir.\n'
     '- Bir işin başardığını yalnızca araç sonucu ok=true ise söyle.\n'
     '- Kullanıcının dilinde (Türkçe) kısa cevap ver.')
 
