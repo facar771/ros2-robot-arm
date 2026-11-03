@@ -41,6 +41,8 @@ def generate_launch_description():
                               description='true: no GUI, software rendering friendly'),
         DeclareLaunchArgument('tracker', default_value='true',
                               description='start tracking_node (mode idle until told otherwise)'),
+        DeclareLaunchArgument('manual', default_value='false',
+                              description='start camera_manual (pan/tilt/slide by JSON command)'),
         SetParameter(name='use_sim_time', value=True),
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -50,4 +52,6 @@ def generate_launch_description():
              arguments=bridge_args),
         Node(package='robot_vision_ros', executable='tracking_node', output='screen',
              condition=IfCondition(LaunchConfiguration('tracker'))),
+        Node(package='robot_vision_ros', executable='camera_manual', output='screen',
+             condition=IfCondition(LaunchConfiguration('manual'))),
     ])

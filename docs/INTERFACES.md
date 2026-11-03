@@ -610,3 +610,28 @@ manifestte zorunlu değildir (varsayılan 60 s) ama hareket eden araçlarda aç�
 * `follow_color(color, height_m, duration_s, min_move_m)` → `data.reason`: `duration` (başarılı), `stopped`,
   `not_found`, `refused`, `estop`; `data.jobs` kaç `above <renk> <yükseklik>` işi gönderildiği. Hareket
   yalnızca Robot API işlerinden geçer (güvenli kutu, hız tavanı, acil dur geçerli).
+
+## Kamera platformu: elle kontrol (`robot_vision_ros` `camera_manual`, mantık `robot_vision.manual`)
+Mevcut kamera platformunu (`tracking.sdf`: yaw / slide / pitch) pan-tilt-konum olarak elle komutlar. Takip düğümünün
+kullandığı aynı `/platform/*_joint/cmd_vel` hız komutlarına yazar; yeni eklem ya da düğüm eklemez.
+Başlat: `ros2 run robot_vision_ros camera_manual` ya da `ros2 launch robot_vision_ros tracking.launch.py manual:=true`
+(varsayılan `false`: mevcut selftest'ler değişmez). **Robot koluna dokunmaz**; HTTP/Hub arayüzü sonraki iştir.
+
+| Konu | Arayüz |
+|---|---|
+| Komut | `/camera/manual/command` (`std_msgs/String`, JSON). `{"op":"goto","pan":rad,"tilt":rad,"slide":m,"speed":0-1}` (eksenlerin herhangi bir alt kümesi; `speed` elle hız tavanının oranı) · `{"op":"jog","pan_rate":..,"tilt_rate":..,"slide_rate":..,"ttl_s":0.5}` · `{"op":"stop"}` |
+| Eksenler | `pan` = yaw (rad), `tilt` = pitch (rad; **artı = kamera AŞAĞI**), `slide` = platformun ileri konumu (m). Sınırlar tracking ile aynı: pan ±1.2, tilt -0.6..1.2, slide 0-2.5 |
+| Yanıt | `/camera/manual/reply`: komut başına bir JSON `{accepted, op, code, message}` |
+| Durum | `/camera/manual/status` (5 Hz): `state` (`idle`/`goto`/`jog`), `q` {pan, slide, tilt} (taze eklem durumu yoksa `null`), `last` (son yanıt; hareket bitince `done`: `reached`/`jog_expired`/`timeout`/`stopped`/`no_state`), `tracking_busy` |
+
+Güvenlik kuralları (hepsi testli; ihlalde komut **bütünüyle reddedilir**, hareket başlamaz, çalışan hareket olduğu gibi kalır):
+* NaN/Infinity (JSON `NaN`/`Infinity` literalleri dahil), sayı olmayan değer (bool, metin, null), bilinmeyen anahtar/op,
+  geçersiz JSON → `non_finite` / `bad_command` / `bad_json`.
+* `goto` hedefi eklem sınırı dışında → `out_of_limits` (kırpılmaz). `jog` hızı elle tavanın üstünde → `rate_too_high`.
+* Elle hız tavanı = platform hız sınırının **%50'si** (pan 0.75 rad/s, tilt 0.5 rad/s, slide 0.4 m/s); hız saniyede en
+  çok tavanın 4 katı kadar değişir (basamak yok). `stop` ise anında sıfırdır.
+* Sınıra yaklaşırken (pan/tilt 0.15 rad, slide 0.20 m) dışa doğru hız kısılır, sınırda sıfırdır.
+* `jog` dead-man: `ttl_s` (varsayılan 0.5 s, en çok 2 s) dolunca durur; sürmesi için komutu tekrar gönder. `goto` 30 s'de
+  zaman aşımına uğrar. Taze `/platform/joint_states` (0.5 s) yoksa komut reddedilir (`no_state`), çalışan hareket durur.
+* Sahiplik: `/tracking/mode` `idle` değilse ya da `/tracking/status` akıyorsa komut `busy` ile reddedilir; takip devralırsa
+  elle hareket **sıfır yayımlanmadan** bırakılır (sıfır takibe karşı savaşırdı). Düğüm boştayken hiçbir şey yayımlamaz.
