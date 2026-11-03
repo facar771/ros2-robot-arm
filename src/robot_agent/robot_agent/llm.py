@@ -1,5 +1,7 @@
 """LLM back-ends: ``ScriptedLLM`` (tests/CI, no key), ``RuleLLM`` (offline Turkish phrase parser,
-not an LLM) and ``AnthropicLLM`` (optional; needs ``ANTHROPIC_API_KEY``, stdlib HTTP only)."""
+not an LLM), ``AnthropicLLM`` (optional; ``ANTHROPIC_API_KEY``) and ``OpenAILLM`` (optional;
+``OPENAI_API_KEY`` + model + endpoint from configuration). Stdlib HTTP only; keys are registered
+with ``robot_agent.redact`` so they never appear in an error text, log line or event."""
 from __future__ import annotations
 
 import json
@@ -9,12 +11,19 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Protocol, Union
+from urllib.parse import urlsplit
+
+from robot_agent.redact import install_log_scrubbing, register_secret, scrub
 
 API_URL = 'https://api.anthropic.com/v1/messages'
 API_VERSION = '2023-06-01'
 DEFAULT_MODEL = 'claude-sonnet-5-5'
 ENV_KEY = 'ANTHROPIC_API_KEY'
 ENV_MODEL = 'ROBOT_AGENT_MODEL'
+# OpenAI: there is deliberately NO built-in model name or endpoint - both are configuration.
+OPENAI_ENV_KEY = 'OPENAI_API_KEY'
+OPENAI_ENV_MODEL = 'ROBOT_AGENT_OPENAI_MODEL'
+OPENAI_ENV_URL = 'ROBOT_AGENT_OPENAI_BASE_URL'      # e.g. the provider's .../v1 base address
 
 
 class LLMError(RuntimeError):
@@ -134,9 +143,14 @@ class AnthropicLLM:
         if not api_key:
             raise ValueError('API anahtarı boş')
         self._key = api_key
+        register_secret(api_key)
+        install_log_scrubbing()
         self.model = model or os.environ.get(ENV_MODEL) or DEFAULT_MODEL
         self._max_tokens, self._timeout = max_tokens, timeout
         self._post = post or self._http_post
+
+    def __repr__(self) -> str:
+        return f'AnthropicLLM(model={self.model!r})'
 
     @classmethod
     def from_env(cls, environ=os.environ, **kwargs) -> Optional['AnthropicLLM']:
@@ -152,7 +166,7 @@ class AnthropicLLM:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as exc:
-            detail = exc.read()[:300].decode('utf-8', 'replace')
+            detail = scrub(exc.read()[:300].decode('utf-8', 'replace'))
             raise LLMError(f'Anthropic API HTTP {exc.code}: {detail}') from None
         except (urllib.error.URLError, OSError, ValueError) as exc:
             raise LLMError(f'Anthropic API yanıt vermedi: {type(exc).__name__}') from None
@@ -168,3 +182,145 @@ class AnthropicLLM:
         calls = [ToolCall(str(b.get('id')), str(b.get('name')), b.get('input'))
                  for b in blocks if b.get('type') == 'tool_use']
         return LLMResponse(text, calls)
+
+
+# ---- OpenAI Chat Completions ---------------------------------------------------------------
+def _strict_json(text: str) -> Any:
+    """json.loads that refuses NaN / Infinity / 1e999 (model-written arguments become motion)."""
+    def bad(token):
+        raise ValueError(f'sonlu olmayan sayı: {token}')
+
+    def real(token):
+        value = float(token)
+        if value in (float('inf'), float('-inf')):
+            raise ValueError(f'sonlu olmayan sayı: {token}')
+        return value
+    return json.loads(text, parse_constant=bad, parse_float=real)
+
+
+def _to_openai_messages(system: str, messages: List[Dict[str, Any]],
+                        system_role: str) -> List[Dict[str, Any]]:
+    """Our conversation (text / tool_use / tool_result blocks) -> Chat Completions messages."""
+    out: List[Dict[str, Any]] = [{'role': system_role, 'content': system}]
+    for message in messages:
+        content = message.get('content')
+        if message['role'] == 'user':
+            if isinstance(content, str):
+                out.append({'role': 'user', 'content': content})
+                continue
+            for block in content or []:
+                if block.get('type') == 'tool_result':
+                    out.append({'role': 'tool', 'tool_call_id': str(block.get('tool_use_id')),
+                                'content': str(block.get('content', ''))})
+                elif block.get('type') == 'text':
+                    out.append({'role': 'user', 'content': block.get('text', '')})
+            continue
+        if isinstance(content, str):
+            out.append({'role': 'assistant', 'content': content})
+            continue
+        text = ''.join(b.get('text', '') for b in content or [] if b.get('type') == 'text')
+        calls = [{'id': str(b.get('id')), 'type': 'function',
+                  'function': {'name': str(b.get('name')),
+                               'arguments': json.dumps(b.get('input') or {}, ensure_ascii=False)}}
+                 for b in content or [] if b.get('type') == 'tool_use']
+        entry: Dict[str, Any] = {'role': 'assistant', 'content': text or None}
+        if calls:
+            entry['tool_calls'] = calls
+        out.append(entry)
+    return out
+
+
+def _to_openai_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [{'type': 'function', 'function': {
+        'name': t['name'], 'description': t.get('description', ''),
+        'parameters': t.get('input_schema') or {'type': 'object', 'properties': {}}}}
+        for t in tools]
+
+
+class OpenAILLM:
+    """Optional provider adapter for the Chat Completions API (``POST {base_url}/chat/completions``,
+    ``Authorization: Bearer``). The model name and the base address are *configuration* - there is
+    no default for either. A non-HTTPS address is accepted only on loopback (a key must not cross
+    a network in clear text). ``post`` is injectable for tests."""
+
+    def __init__(self, api_key: str, model: str, base_url: str, *, max_tokens: int = 1024,
+                 timeout: float = 60.0, system_role: str = 'system',
+                 token_field: str = 'max_completion_tokens',
+                 post: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None):
+        if not api_key:
+            raise ValueError('API anahtarı boş')
+        if not model:
+            raise ValueError(f'model adı yapılandırılmamış ({OPENAI_ENV_MODEL} ya da --model)')
+        parts = urlsplit(base_url or '')
+        loopback = parts.hostname in ('127.0.0.1', 'localhost', '::1')
+        if not base_url or not parts.hostname or parts.scheme not in ('https', 'http'):
+            raise ValueError(f'uç adresi yapılandırılmamış ({OPENAI_ENV_URL} ya da --base-url)')
+        if parts.scheme != 'https' and not loopback:
+            raise ValueError('uç adresi https olmalı (http yalnızca yerel makinede)')
+        if parts.username or parts.password:
+            raise ValueError('uç adresinde kullanıcı/parola olmamalı')
+        self._key = api_key
+        register_secret(api_key)
+        install_log_scrubbing()
+        self.model, self.base_url = model, base_url.rstrip('/')
+        self._max_tokens, self._timeout = max_tokens, timeout
+        self._system_role, self._token_field = system_role, token_field
+        self._post = post or self._http_post
+
+    def __repr__(self) -> str:
+        return f'OpenAILLM(model={self.model!r}, base_url={self.base_url!r})'
+
+    @classmethod
+    def from_env(cls, environ=os.environ, *, model: Optional[str] = None,
+                 base_url: Optional[str] = None, **kwargs) -> Optional['OpenAILLM']:
+        """None when ``OPENAI_API_KEY`` is unset (layer off); ValueError when it is set but the
+        model or the address is missing - a half-configured provider must not guess."""
+        key = environ.get(OPENAI_ENV_KEY, '').strip()
+        if not key:
+            return None
+        return cls(key, model or environ.get(OPENAI_ENV_MODEL, '').strip(),
+                   base_url or environ.get(OPENAI_ENV_URL, '').strip(), **kwargs)
+
+    def _http_post(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        request = urllib.request.Request(
+            f'{self.base_url}/chat/completions', data=json.dumps(body).encode(), method='POST',
+            headers={'content-type': 'application/json',
+                     'authorization': f'Bearer {self._key}'})
+        try:
+            with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                return _strict_json(response.read())
+        except urllib.error.HTTPError as exc:
+            raw = exc.read()[:600].decode('utf-8', 'replace')
+            try:
+                detail = _strict_json(raw)['error']['message']
+            except (ValueError, KeyError, TypeError):
+                detail = raw
+            raise LLMError(f'OpenAI API HTTP {exc.code}: {scrub(str(detail))[:300]}') from None
+        except (urllib.error.URLError, OSError, ValueError) as exc:
+            raise LLMError(f'OpenAI API yanıt vermedi: {type(exc).__name__}') from None
+
+    def complete(self, system, messages, tools) -> LLMResponse:
+        body: Dict[str, Any] = {
+            'model': self.model, self._token_field: self._max_tokens,
+            'messages': _to_openai_messages(system, messages, self._system_role)}
+        if tools:
+            body['tools'] = _to_openai_tools(tools)
+            body['tool_choice'] = 'auto'
+        data = self._post(body)
+        try:
+            message = data['choices'][0]['message']
+        except (KeyError, IndexError, TypeError):
+            raise LLMError('OpenAI yanıtında choices[0].message yok') from None
+        text = message.get('content') or message.get('refusal') or ''
+        calls: List[ToolCall] = []
+        for index, item in enumerate(message.get('tool_calls') or []):
+            if not isinstance(item, dict) or item.get('type', 'function') != 'function':
+                continue
+            function = item.get('function') or {}
+            try:
+                arguments = _strict_json(function.get('arguments') or '{}')
+            except ValueError:
+                arguments = None            # the executor rejects a non-object argument
+            calls.append(ToolCall(str(item.get('id') or f'call_{index}'),
+                                  str(function.get('name')), arguments))
+        return LLMResponse(text if isinstance(text, str) else '', calls)

@@ -222,7 +222,20 @@ iptal edilir (`data.job_cleanup`). Sonuç `data.plugin_data`'dadır (6000 karakt
 **LLM'ler** (`robot_agent.llm`): `ScriptedLLM` (testler/CI, anahtarsız), `RuleLLM` (yerleşik Türkçe
 ifade çözücü, `--offline`; *LLM değildir*), `AnthropicLLM` (isteğe bağlı; yalnızca `ANTHROPIC_API_KEY`
 ortam değişkeni varsa açılır, yoksa katman kapalıdır; model `ROBOT_AGENT_MODEL`, varsayılan
-`claude-sonnet-5-5`; stdlib HTTP, anahtar yalnızca başlıkta, hata mesajlarında/günlükte geçmez).
+`claude-sonnet-5-5`; stdlib HTTP, anahtar yalnızca başlıkta, hata mesajlarında/günlükte geçmez), `OpenAILLM`
+(isteğe bağlı, Chat Completions: `POST {taban}/chat/completions`, `Authorization: Bearer`; `--provider openai`).
+**Model adı ve uç adresi koda gömülü değildir:** `ROBOT_AGENT_OPENAI_MODEL` / `--model` ve
+`ROBOT_AGENT_OPENAI_BASE_URL` / `--base-url` zorunlu (biri eksikse çıkış `2`); adres `https` olmalı, `http`
+yalnızca yerel makinede (anahtar ağda düz metin gitmesin). Araç şeması aynıdır, yalnızca çevrilir.
+
+**Anahtar hijyeni** (`robot_agent.redact`): kaydedilen anahtarlar ve genel anahtar kalıpları (`sk-…`,
+`Bearer …`, `x-api-key: …`; sağlayıcılar kötü anahtarı 401 gövdesinde yankılar) hata metinlerinden, CLI
+çıktısından, `logging` kayıtlarından, olay günlüğünden, modele giden araç sonuçlarından ve robota giden
+araç argümanlarından `[GİZLİ]` ile silinir. İstek başlıkları hiçbir yerde loglanmaz.
+**İstem enjeksiyonu:** araç çıktısındaki metin komut değildir; hareketin tek yolu `ToolExecutor` → Robot API,
+serbest kod çalıştırma yoktur (kaynak taraması + davranış testi). `emergency_stop` argümanı bozuk/uzun olsa
+bile **reddedilmez**, robot durur.
+**Robot API girdisi:** JSON gövdelerindeki `NaN`/`Infinity`/`1e999` reddedilir (`400`).
 
 **CLI:** `robot_agent [--offline] [--yes] [--dry-run] [--max-motions N] [--url http://127.0.0.1:8080] "yeşil nesnenin üstüne git"`.
 Çıkış: `0` tamam, `1` bir araç reddedildi/başarısız, `2` kurulum sorunu (anahtar yok, kötü URL),
