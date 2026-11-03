@@ -8,6 +8,7 @@
   <license>Apache-2.0</license>
 
   <depend>robot_core</depend>
+  <exec_depend>robot_plugins</exec_depend>   <!-- run_plugin tool (white-listed plugin tools) -->
   <exec_depend>robot_data</exec_depend>
 
   <export>

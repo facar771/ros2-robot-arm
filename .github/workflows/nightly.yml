@@ -37,6 +37,7 @@ jobs:
           - gazebo-stop
           - gazebo-jobs
           - gazebo-agent
+          - gazebo-integration
           - gazebo-tracking
     steps:
       - uses: actions/checkout@v4
@@ -51,4 +52,9 @@ jobs:
           tags: ros2-robot-arm:ci
           cache-from: type=gha
       - name: ${{ matrix.mode }}, repeated
+        env:
+          # apps/control_hub and plugins/ are not baked into the image (only gazebo-integration reads them)
+          DOCKER_RUN_ARGS: >-
+            -v ${{ github.workspace }}/apps/control_hub:/workspace/apps/control_hub:ro
+            -v ${{ github.workspace }}/plugins:/workspace/plugins:ro
         run: docker/repeat_selftest.sh ros2-robot-arm:ci ${{ matrix.mode }} ${{ inputs.runs || 3 }}

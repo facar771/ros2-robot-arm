@@ -30,6 +30,11 @@ class HttpRobot:
                              ' robot API yalnızca 127.0.0.1 üzerindedir')
         self.host, self.port, self.timeout = parts.hostname, parts.port, timeout
 
+    @property
+    def base_url(self) -> str:
+        host = f'[{self.host}]' if ':' in self.host else self.host
+        return f'http://{host}:{self.port}'
+
     def _request(self, method: str, path: str, body: Optional[bytes] = None):
         headers = {'Content-Type': 'application/json'} if body is not None else {}
         conn = http.client.HTTPConnection(self.host, self.port, timeout=self.timeout)

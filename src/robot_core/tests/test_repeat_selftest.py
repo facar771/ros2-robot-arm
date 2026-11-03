@@ -154,3 +154,40 @@ def test_run_selftest_writes_annotations_on_failure():
     for line in text.splitlines():
         if line.strip().endswith('exit 2') and 'annotate_failure' not in line:
             pytest.fail(f'exit 2 without annotation: {line}')
+
+
+# ---- the integration mode needs mounts (apps/control_hub and plugins/ are not in the image) ------
+def test_docker_run_args_are_passed_before_the_image(stub, tmp_path):
+    script = tmp_path / 'docker2'
+    script.write_text('#!/usr/bin/env bash\necho "$@" >>"$STUB_ARGS"\nexit 0\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    env = dict(os.environ, DOCKER=str(script), STUB_ARGS=str(tmp_path / 'args'),
+               LOG_DIR=str(tmp_path / 'logs'), DOCKER_RUN_ARGS='-v /a:/b:ro -v /c:/d:ro')
+    out = subprocess.run(['bash', str(REPEAT), 'img:ci', 'gazebo-integration', '1'],
+                         capture_output=True, text=True, env=env, timeout=60)
+    assert out.returncode == 0
+    line = (tmp_path / 'args').read_text(encoding='utf-8').strip()
+    assert line == 'run --rm -v /a:/b:ro -v /c:/d:ro img:ci run_selftest gazebo-integration'
+
+
+def test_the_integration_mode_is_mounted_in_ci_compose_and_nightly():
+    ci = (ROOT / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
+    step = ci[ci.index('Selftest - integration'):]
+    step = step[:step.index('run_selftest gazebo-integration') + 40]
+    assert 'apps/control_hub:/workspace/apps/control_hub:ro' in step
+    assert 'plugins:/workspace/plugins:ro' in step
+    compose = yaml.safe_load((ROOT / 'compose.yaml').read_text(encoding='utf-8'))
+    volumes = compose['services']['selftest-integration']['volumes']
+    assert './apps/control_hub:/workspace/apps/control_hub:ro' in volumes
+    assert './plugins:/workspace/plugins:ro' in volumes
+    nightly = yaml.safe_load((ROOT / '.github' / 'workflows' / 'nightly.yml').read_text(
+        encoding='utf-8'))
+    run = next(s for s in nightly['jobs']['selftests']['steps'] if 'repeat_selftest' in
+               s.get('run', ''))
+    assert 'apps/control_hub' in run['env']['DOCKER_RUN_ARGS']
+    assert '/workspace/plugins:ro' in run['env']['DOCKER_RUN_ARGS']
+
+
+def test_the_demo_container_can_see_the_plugins_for_run_plugin():
+    compose = yaml.safe_load((ROOT / 'compose.yaml').read_text(encoding='utf-8'))
+    assert './plugins:/workspace/plugins:ro' in compose['services']['demo']['volumes']

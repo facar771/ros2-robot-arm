@@ -77,6 +77,19 @@ olduğu durumlar ayrıca işaretli.
 | `robot adresi http://127.0.0.1:<port> olmalı` | Başka bir makineyi hedefledin | Robot API yalnızca `127.0.0.1`'dedir; bu bilerek |
 | Ctrl-C sonrası çıkış 130, robot kilitli | Ctrl-C acil dur gönderir | Beklenen; insan `reset` ile kilidi açar |
 
+## 5c. Eklentiler (`run_plugin`) ve entegrasyon
+
+| Belirti | Neden | Çözüm |
+|---|---|---|
+| `rejected: 'x.y' beyaz listede değil ya da eklenti kurulu değil` | Eklenti izin listesinde değil (sonradan yüklenen eklentiler otomatik açılmaz) ya da kurulu/sağlam değil | `--allow-plugin eklenti.araç` ile bilerek aç; `python -m robot_plugins catalog` ile kurulu mu bak |
+| `run_plugin` aracı hiç görünmüyor, CLI `[!] eklenti aracı yok (...)` | `robot_plugins` içe aktarılamadı ya da katalog boş | Mesajdaki neden; `source install/setup.bash` |
+| `rejected: geçersiz eklenti argümanı` | Argüman eklentinin şemasına uymuyor (renk, aralık, NaN, bilinmeyen alan) | `catalog` çıktısındaki `input_schema`'ya uy |
+| `refused: onay gerekli ...` (kamera/kol eklentisi) | Hareket eden eklenti onay ister; yalnızca bakanlar (`find_object`) onaysız çalışır | Etkileşimli terminalde `e`, ya da `--yes` |
+| `refused: ... güvenli çalışma kutusunun dışında` (`follow_color`) | İlk hedef kutu dışında | Daha uygun `height_m`; kutuyu bilerek ayarla |
+| `failed: kamera karesi yok` | `--frames ros` ama kamera akmıyor ya da ROS ortamı yok | Simülasyonun açık olduğunu kontrol et; ROS dışında `--frames synthetic` (yalnızca deneme) |
+| `data.job_cleanup: ... iptal edildi` | Eklenti zaman aşımı/kesme ile bitti, robotta işi kalmıştı; ajan iptal etti | Beklenen; `GET /api/state` ile `idle` olduğunu doğrula |
+| `selftest gazebo-integration: Hub bulunamadı: .../control_hub/hub_core yok` | `apps/control_hub` imaja bağlanmadı (imajda yok) | `docker run -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro" -v "$PWD/plugins:/workspace/plugins:ro" ...` ya da `docker compose run --rm selftest-integration` |
+
 ## 6. Veritabanı
 
 | Belirti | Neden | Çözüm |

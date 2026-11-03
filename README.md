@@ -184,7 +184,17 @@ docker compose up demo
 ./docker/agent.sh --offline --yes "yeşil nesnenin üstüne git"       # gider (onay otomatik)
 ANTHROPIC_API_KEY=... ./docker/agent.sh "kırmızı kutunun üstüne git"   # gerçek LLM (isteğe bağlı)
 ```
+Eklentiler de aynı kurallarla çağrılır (`run_plugin`): yalnızca bakanlar (`find_object`) doğrudan, kamerayı/kolu
+oynatanlar (`scan_extent`, `follow_color`) onayla, güvenli kutu ve acil dur altında:
+
+```bash
+# Terminal 2 — WSL'de (demo çalışırken)
+./docker/agent.sh --offline "yeşil nesneyi bul"                  # canlı kamerayla bakar, onay istemez
+./docker/agent.sh --offline --dry-run "kırmızıyı 10 saniye takip et"   # ne olacağını söyler, hareket etmez
+./docker/agent.sh --offline --yes "kırmızıyı 10 saniye takip et"       # kolu takip ettirir
+```
 Otomatik doğrulama (anahtarsız, betikli sahte LLM): `docker compose run --rm selftest-agent`.
+Tüm zincir (Hub → Robot API → algı → hareket, kamera eklentisi ve ajan, acil dur): `docker compose run --rm selftest-integration`.
 Docker'sız: `ros2 launch robot_viz web_view.launch.py commands:=true`. Otomatik test (WSL'de):
 `docker compose run --rm selftest-cmd` (reddedilmesi gerekenler, TF ile ölçülen hareketler, canlı
 anlatım, meşgulken `409`).

@@ -2,15 +2,16 @@
 
 Supported: ``type: object`` with ``properties`` / ``required`` / ``additionalProperties: false``;
 property types ``string`` (``enum``, ``maxLength``), ``number`` and ``integer`` (``minimum``,
-``maximum``; NaN/inf and booleans are refused), ``boolean``. Anything else in a schema is a
-programming error and raises ``ValueError`` when the schema is checked.
+``maximum``; NaN/inf and booleans are refused), ``boolean`` and a free-form ``object`` (only
+its type is checked here; the caller validates the inside against another schema). Anything else in
+a schema is a programming error and raises ``ValueError`` when the schema is checked.
 """
 from __future__ import annotations
 
 import math
 from typing import Any, Dict, List
 
-TYPES = ('string', 'number', 'integer', 'boolean')
+TYPES = ('string', 'number', 'integer', 'boolean', 'object')
 KNOWN = {'type', 'enum', 'maxLength', 'minimum', 'maximum', 'description', 'default'}
 
 
@@ -57,6 +58,8 @@ def _check(name: str, prop: Dict[str, Any], value: Any) -> List[str]:
         return []
     if kind == 'boolean':
         return [] if isinstance(value, bool) else [f"'{name}' doğru/yanlış olmalı"]
+    if kind == 'object':
+        return [] if isinstance(value, dict) else [f"'{name}' bir nesne (sözlük) olmalı"]
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return [f"'{name}' sayı olmalı"]
     if kind == 'integer' and not float(value).is_integer():
