@@ -1,4 +1,5 @@
 <?xml version="1.0"?>
+<!-- ÜRETİLDİ: src/robot_description/profile/six_axis_robot.yaml dosyasından `python3 -m robot_core.profile_gen` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler). -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
     <xacro:macro name="six_axis_robot_ros2_control" params="name initial_positions_file use_gazebo:=false">
         <xacro:property name="initial_positions" value="${xacro.load_yaml(initial_positions_file)['initial_positions']}"/>
