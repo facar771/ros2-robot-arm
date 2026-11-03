@@ -8,6 +8,7 @@ the *schema* is checked, so a manifest cannot silently promise validation it doe
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, List
 
@@ -47,6 +48,11 @@ def check_schema(schema: Any, path: str = '$') -> None:
         check_schema(schema['items'], f'{path}.items')
     if 'required' in schema and not all(isinstance(r, str) for r in schema['required']):
         raise SchemaError(f'{path}: required must be a list of names')
+    for key in ('minimum', 'maximum'):
+        if key in schema and (isinstance(schema[key], bool)
+                              or not isinstance(schema[key], (int, float))
+                              or not math.isfinite(schema[key])):
+            raise SchemaError(f'{path}: {key} must be a finite number')
     if 'pattern' in schema:
         try:
             re.compile(schema['pattern'])
@@ -74,6 +80,10 @@ def _is(value: Any, name: str) -> bool:
 
 def validate(value: Any, schema: Dict[str, Any], path: str = '') -> None:
     """Raise :class:`ValidationError` if ``value`` violates ``schema`` (first problem only)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        # JSON from Python's parser may carry NaN / Infinity; no schema ever means to accept them
+        # (a comparison like ``nan > maximum`` is False and would let them through).
+        raise ValidationError(path, f'sonlu bir sayı olmalı, {value!r} geldi')
     t = schema.get('type')
     if t is not None:
         names: List[str] = [t] if isinstance(t, str) else list(t)

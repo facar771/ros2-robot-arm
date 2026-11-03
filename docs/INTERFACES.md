@@ -502,8 +502,11 @@ Araçların **tek kaynağı** paket manifestleridir: `PluginManager.manifest(ad)
 `list()` ile `running` paketlerin araçlarını toplar (`<paket>.<araç>` adlandırması), kullanıcı bir paketi Hub
 panelinden (yönetim API) açıp kapattıkça katalog değişir; acil dur (`/api/plugins/estop` ya da `emergency_stop()`)
 her zaman tüm paketleri durdurur ve `robot_423` alan araç çağrısı **yeniden denenmemelidir**. Hareket yapan araçlar
-(`follow_color`) Robot API v1 iş kuyruğundan geçtiği için LLM katmanı ayrıca bir güvenlik denetimi eklemek zorunda
-değildir; ama araç açıklamaları "HAREKET ETTİRİR / ETTİRMEZ" ifadesini taşır ki LLM ona göre seçsin.
+(`follow_color`, `motion == 'arm'`) Robot API v1 iş kuyruğundan geçer; bu, sunucu tarafında güvenli kutuyu, hız tavanını ve
+acil durumu uygular, ama **ajanın kendi kuralları da aynen geçerlidir**: onay (hareket eden araç kullanıcı onayı olmadan
+çalışmaz), güvenli kutu denetimi ve acil dur davranışı, eklenti araçları için de atlanamaz. Eklenti tarafı bunların
+YERİNE geçmez, yalnızca ikinci katmandır. Araç açıklamaları "HAREKET ETTİRİR / ETTİRMEZ" ifadesini taşır ki LLM ona
+göre seçsin; asıl sınıf `catalog()`'daki `motion` alanıdır.
 
 ## Beceriler (`robot_core.skills.Skills`) — sonradan LLM'in araç arayüzü
 Tek sınıf, tip belirtilmiş ve belgeli; docstring'ler araç açıklamasıdır (`Skills.catalog()` ad,
