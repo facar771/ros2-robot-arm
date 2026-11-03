@@ -19,8 +19,8 @@ from control_hub.hub_core import (
     load_scenarios,
     load_ui_config,
 )
+from control_hub.paths import resolve_config_dir
 
-DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent.parent / 'config'
 DEFAULT_PORT = 8765
 DEFAULT_ROBOT_URL = 'http://127.0.0.1:8080'
 
@@ -50,20 +50,33 @@ def build_parser() -> argparse.ArgumentParser:
                    default=os.environ.get('HUB_ACCESS_MODE', 'pin'))
     p.add_argument('--pin', default=os.environ.get('HUB_PIN'),
                    help='4-12 haneli PIN (yoksa her açılışta rastgele 6 hane üretilir)')
-    p.add_argument('--config-dir', type=Path, default=Path(os.environ.get('HUB_CONFIG_DIR',
-                                                                          DEFAULT_CONFIG_DIR)))
+    p.add_argument('--config-dir', type=Path, default=os.environ.get('HUB_CONFIG_DIR'),
+                   help='scenarios.yaml + ui.config.json klasörü (varsayılan: kullanıcı klasörü varsa '
+                        'o, yoksa gömülü varsayılan)')
     p.add_argument('--fake-speed', type=float, default=1.0,
                    help='sahte robot zaman ölçeği (0.1 = 10 kat hızlı; varsayılan 1)')
     p.add_argument('--allow-host', action='append', default=[],
                    help="Host başlığı olarak kabul edilecek ek ad (örn. robot.evim). Tekrarlanabilir.")
     p.add_argument('--no-qr', action='store_true', help='terminalde QR kodu gösterme')
     p.add_argument('--check-config', action='store_true', help='yapılandırmayı doğrula ve çık')
+    p.add_argument('--firewall-help', action='store_true',
+                   help='telefon erişimi için güvenlik duvarı komutlarını YAZDIR (hiçbir şey eklemez)')
     return p
 
 
+def print_firewall_help(port: int) -> None:
+    from control_hub.desktop import firewall as fw
+    print(f'Telefondan bağlanmak için Windows güvenlik duvarında TCP {port} gelen bağlantısına izin ver.')
+    print('Bu komut HİÇBİR ŞEY EKLEMEZ; aşağıdakileri kendin, YÖNETİCİ PowerShell\'de çalıştır:\n')
+    print('  Ekle (yalnızca Özel ağ profili):\n    ' + fw.powershell_add(port))
+    print('  Kontrol:\n    ' + fw.powershell_show())
+    print('  Kaldır:\n    ' + fw.powershell_remove())
+
+
 def build_hub(args: argparse.Namespace) -> Hub:
-    scenarios = load_scenarios(args.config_dir / 'scenarios.yaml')
-    ui = load_ui_config(args.config_dir / 'ui.config.json', scenarios)
+    config_dir = resolve_config_dir(args.config_dir)
+    scenarios = load_scenarios(config_dir / 'scenarios.yaml')
+    ui = load_ui_config(config_dir / 'ui.config.json', scenarios)
     access = AccessControl(args.access_mode, args.pin or None)   # boş string = rastgele PIN
     if args.fake:
         backend = FakeBackend(time_scale=args.fake_speed)
@@ -112,7 +125,12 @@ def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    from control_hub.desktop.winconsole import ensure_utf8_output
+    ensure_utf8_output()
     args = build_parser().parse_args(argv)
+    if args.firewall_help:
+        print_firewall_help(args.port)
+        return 0
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     try:
         hub = build_hub(args)

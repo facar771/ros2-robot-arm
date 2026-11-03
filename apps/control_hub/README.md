@@ -3,8 +3,8 @@
 Robot **senaryolarını** bilgisayardan ve telefondan (aynı Wi-Fi) çalıştıran web arayüzü. Robot
 yığınından (ROS) ayrı çalışır, mevcut paketlere dokunmaz.
 
-> Durum: **PR-H1** çekirdek + web arayüzü (birleşti) · **PR-H2** gerçek robota bağlantı (Robot API v1) ·
-> sırada: Windows `.exe` (H3), ESP32 cihazları + kural motoru (H4).
+> Durum: **H1** çekirdek + web arayüzü · **H2** gerçek robota bağlantı (Robot API v1) (ikisi de birleşti) ·
+> **H3** Windows `.exe` (bu PR) · sırada: ESP32 cihazları + kural motoru (H4).
 
 ## Hızlı başlangıç
 
@@ -59,6 +59,102 @@ Windows'ta (`.exe` gelene dek) aynısı PowerShell'de: `python -m control_hub --
 Seçenekler: `--robot-url`, `--port`, `--host`, `--access-mode open|pin|locked`, `--pin`, `--config-dir`,
 `--fake-speed 0.2` (sahte robotu 5 kat hızlandırır), `--allow-host`, `--check-config`.
 
+## Windows'ta kurulum (ControlHub.exe)
+
+Tek dosya, kurulum yok, Python gerekmez, ROS yok; web arayüzü ve varsayılan senaryolar içine gömülü.
+`.exe`'yi GitHub Actions üretir (workflow: **Hub .exe**).
+
+### 1. İndir
+GitHub → repo → **Actions** → **Hub .exe** → son başarılı çalıştırma → sayfanın altındaki **Artifacts** →
+`ControlHub-windows` (zip) → indir, zip'ten çıkar. Bütünlük için (isteğe bağlı), `PowerShell'de`:
+```powershell
+Get-FileHash .\ControlHub.exe -Algorithm SHA256     # ControlHub.exe.sha256 dosyasındakiyle aynı olmalı
+```
+
+### 2. İlk açılış: SmartScreen / Defender
+`.exe` **imzasız** (kod imzalama sertifikası yok). İlk çift tıklamada "Windows kişisel bilgisayarınızı korudu"
+çıkabilir: **Daha fazla bilgi → Yine de çalıştır**. PyInstaller ile üretilen imzasız programları bazı
+antivirüsler yanlışlıkla işaretleyebilir (yanlış alarm); işaretlenirse dosyayı SHA256 ile karşılaştır, bu
+repodaki workflow'un ürettiği olduğundan emin ol, sonra izin ver.
+
+### 3. Çalıştır
+**Çift tıkla:** bir pencere açılır (siyah konsol penceresi kendiliğinden gizlenir).
+* **Robot adresi:** varsayılan `http://127.0.0.1:8080` (Docker'daki robotun yayımlanan portu). Robot yokken
+  arayüzü denemek için "Sahte robot"u işaretle.
+* **PIN:** boş bırakırsan her açılışta rastgele üretilir ve pencerede büyük yazar. Kendi PIN'ini yazabilirsin
+  (4-12 rakam); "PIN'i hatırla" işaretliyse ayar dosyasına **düz metin** yazılır.
+* **Başlat** → pencerede *Bilgisayar* ve *Telefon* adresi, PIN, QR kod ve robot durumu görünür.
+* **Senaryo/arayüz dosyalarını aç…**: varsayılan `scenarios.yaml` / `ui.config.json` dosyalarını
+  `%APPDATA%\ControlHub\config\` altına kopyalar (varolanı ezmez) ve klasörü açar. Bu klasördeki dosyalar,
+  `.exe`'nin içindekilerin yerine geçer; düzenleyip Hub'ı yeniden başlat.
+* Ayarlar `%APPDATA%\ControlHub\settings.json`, günlük `%APPDATA%\ControlHub\hub.log`.
+
+**PowerShell'den** (aynı program; bayrak verince konsolda çalışır):
+```powershell
+.\ControlHub.exe --robot-url http://127.0.0.1:8080 --pin 123456   # gerçek robot
+.\ControlHub.exe --fake --pin 123456                               # sahte robot (robot yokken dene)
+.\ControlHub.exe --fake --check-config                             # yapılandırmayı doğrula ve çık
+.\ControlHub.exe --help
+```
+
+### 4. Gerçek robotla birlikte
+```bash
+# Terminal 1 — WSL'de (robot yığını; "Hazır." yazısını bekle)
+cd ~/ros2-robot-arm && docker compose up --build demo
+```
+```powershell
+# Terminal 2 — PowerShell'de (Hub .exe; Docker Desktop 8080'i Windows'un 127.0.0.1'ine yayımlar)
+.\ControlHub.exe --robot-url http://127.0.0.1:8080 --pin 123456
+```
+(Pencereyi tercih ediyorsan `.exe`'yi çift tıkla, "Robot adresi" zaten `http://127.0.0.1:8080`.)
+
+### 5. Telefondan bağlanma ve Windows güvenlik duvarı
+Telefon ve bilgisayar **aynı Wi-Fi**'da olmalı. Telefon tarayıcısında pencerede yazan *Telefon* adresini aç
+(ya da QR'ı okut), PIN'i gir. Bağlanmazsa büyük olasılıkla Windows güvenlik duvarı gelen bağlantıyı engelliyordur;
+izin vermenin iki yolu var. **Hiçbiri kendiliğinden yapılmaz, onayını ister.**
+
+**a) Pencereden (tek tık):** *Telefon erişimine izin ver…* → ne ekleneceğini (ad, TCP, port, yalnızca Özel ağ,
+tam komut) gösteren onay kutusu → *Evet* → Windows yönetici izni (UAC) → kural eklenir; pencere "Kural: VAR"
+gösterir. Kaldırmak için *Kuralı kaldır…* (o da onay + UAC ister).
+
+**b) PowerShell ile:** *Yönetici olarak* açılmış PowerShell'de (Başlat → "PowerShell" → sağ tık → Yönetici olarak çalıştır):
+```powershell
+# PowerShell'de (YÖNETİCİ): izin ver — yalnızca TCP 8765, yalnızca "Özel" ağ profili
+New-NetFirewallRule -DisplayName "Robot Kontrol Merkezi (Hub)" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8765 -Profile Private
+# kontrol et
+Get-NetFirewallRule -DisplayName "Robot Kontrol Merkezi (Hub)" | Format-List DisplayName,Enabled,Profile,Action
+# kaldır
+Remove-NetFirewallRule -DisplayName "Robot Kontrol Merkezi (Hub)"
+```
+Farklı port kullanıyorsan `.\ControlHub.exe --firewall-help --port <port>` komutları o port için **yazdırır**
+(hiçbir şey eklemez).
+
+Notlar: kural yalnızca **Özel** ağda geçerlidir; Wi-Fi'ın Windows'ta "Genel" görünüyorsa Ayarlar → Ağ ve
+İnternet → Wi-Fi → ağın özellikleri → "Özel ağ"ı seç (genel/halka açık ağlarda Hub'ı açık bırakma). Hub'ı
+internete açma, router'da port yönlendirme yapma. `ipconfig` (PowerShell'de) ile Wi-Fi IPv4 adresini
+görebilirsin; pencere aynı adresi zaten gösterir.
+
+### Sorun giderme
+| Belirti | Neden / çözüm |
+|---|---|
+| "port dolu" hatası | Hub zaten açık (başka pencere) ya da başka program: başka port seç |
+| Pencerede "Robot: bağlı değil" | Robot yığını ("docker compose up --build demo") açık değil ya da adres yanlış; Hub açık kalır ve yeniden dener |
+| Telefon bağlanmıyor, bilgisayar bağlanıyor | Güvenlik duvarı (yukarıdaki 5) ya da farklı Wi-Fi/misafir ağı (cihazlar birbirini görmeyebilir) |
+| Pencere hiç açılmıyor | `%APPDATA%\ControlHub\hub.log`'a bak; PowerShell'den `.\ControlHub.exe --fake` ile dene |
+
+### Kendin derlemek
+```powershell
+# PowerShell'de (apps\control_hub içinde)
+pip install -r requirements.txt pyinstaller
+pyinstaller hub.spec --noconfirm        # çıktı: dist\ControlHub.exe
+```
+**Neden PyInstaller `--onefile`?** Windows'ta en yaygın ve Actions'ta sorunsuz çalışan seçenek (Python +
+bağımlılıklar tek dosyada); Nuitka C derleyicisi ister, derleme çok daha uzun ve kırılgan; `--onedir` birden
+çok dosya demek (istenen tek dosya değil). Bedeli: ilk açılış birkaç saniye (içeriği geçici klasöre açar) ve
+antivirüs yanlış alarmı riski (yukarıda). Konsol uygulaması olarak derlenir (`console=True`) ki PowerShell'de
+çıktı görünsün; çift tıkta konsolu kendisi gizler (`desktop/winconsole.py`: yalnızca konsolu kendisi
+açtıysa; PowerShell'den açıldıysa terminale dokunmaz).
+
 ## Yapı
 
 ```
@@ -75,8 +171,11 @@ control_hub/
     events.py         olay günlüğü
   server/     FastAPI + WebSocket (çekirdeği HTTP'ye açar)
   web/        düz HTML/CSS/JS, derleme yok, mobil öncelikli, PWA manifest
+  desktop/    Windows .exe'nin pencere + servis + güvenlik duvarı mantığı (Tk yalnızca gui.py'de)
+  paths.py    gömülü/kullanıcı yolları (PyInstaller _MEIPASS dahil)
 config/       scenarios.yaml (butonlar), ui.config.json (yerleşim + tema)
-tools/        geliştirme araçları (üretimde kullanılmaz): robot_stub.py, e2e_check.py
+hub.spec, exe_entry.py, assets/   PyInstaller tek dosya derlemesi
+tools/        geliştirme araçları (üretimde kullanılmaz): robot_stub.py, e2e_check.py, smoke_check.py
 tests/
 ```
 

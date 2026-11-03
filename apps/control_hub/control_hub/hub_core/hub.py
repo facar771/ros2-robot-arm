@@ -67,8 +67,10 @@ class Hub:
             self._stop_thread = t
         self.events.emit('estop', f'ACİL DUR ({source})', level='critical', source=source,
                          repeated=not first)
-        t.start()                                    # robota durdurma, her şeyden önce
+        # Önce koşucunun iptal bayrağı (bellekte, anında): robot durmadan önce "iptal" işaretlenmiş olsun,
+        # yoksa senaryo sonucu "başarısız" görünebilir. Hemen ardından robota durdurma gider.
         self.runner.cancel('ACİL DUR')
+        t.start()
         for fn in self._estop_listeners:
             try:
                 fn()

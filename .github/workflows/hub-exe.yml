@@ -1,0 +1,154 @@
+name: Hub .exe
+
+# Control Hub'ı tek dosya Windows .exe olarak derler, açılışını dener, artifact olarak yükler.
+# Ayrı bir workflow: mevcut ci.yml / nightly.yml'e dokunmaz. Yalnızca Hub dosyaları değişince koşar.
+on:
+  pull_request:
+    paths:
+      - 'apps/control_hub/**'
+      - '.github/workflows/hub-exe.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/control_hub/**'
+      - '.github/workflows/hub-exe.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: hub-exe-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-exe:
+    name: ControlHub.exe (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: apps/control_hub
+    env:
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Bağımlılıklar (Hub + PyInstaller)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt pyinstaller
+
+      # Tk bu runner'da açılıyor mu? (pencere testleri ve --gui-selftest buna bağlı). Bilgi amaçlı; tam hata
+      # metnini annotation'a yazar, çünkü CI log'u okunamıyor.
+      - name: Tk tanılama (bilgi amaçlı)
+        continue-on-error: true
+        run: |
+          $py = (Get-Command python).Source
+          $tclDir = Join-Path (Split-Path $py) 'tcl'
+          $icons = Get-ChildItem $tclDir -Recurse -Filter 'icons.tcl' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+          $out = python -c "import os,sys,tkinter; print(sys.version); print('TCL_LIBRARY=', os.environ.get('TCL_LIBRARY')); print('TK_LIBRARY=', os.environ.get('TK_LIBRARY')); r=tkinter.Tk(); print('Tk OK', r.tk.call('info','patchlevel')); r.destroy()" 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          $t = ("rc=$rc`nicons.tcl: $icons`n$out").Trim()
+          if ($t.Length -gt 2500) { $t = $t.Substring(0, 2500) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0) { 'notice' } else { 'warning' }
+          Write-Host "::$level title=Tk tanılama rc=$rc::$t"
+
+      # Bilgi amaçlı: Windows'ta yollar, güvenlik duvarı mantığı, Tk penceresi. Başarısızlık .exe'yi engellemez
+      # (Linux'taki `hub` işi zorunlu kapıdır) ama annotation'da görünür.
+      - name: Testler (Windows'ta, bilgi amaçlı)
+        id: tests
+        continue-on-error: true
+        run: |
+          $out = python -m pytest -o addopts="" -q -rfs 2>&1 | Out-String
+          $rc = $LASTEXITCODE
+          $tail = ($out -split "`n" | Select-Object -Last 25) -join "`n"
+          $tail = $tail -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0) { 'notice' } else { 'warning' }
+          Write-Host "::$level title=Windows pytest (rc=$rc)::$tail"
+          exit $rc
+
+      - name: .exe'yi derle (PyInstaller --onefile)
+        run: |
+          pyinstaller hub.spec --noconfirm --log-level WARN
+          if (-not (Test-Path dist/ControlHub.exe)) { Write-Host "::error title=Derleme::dist/ControlHub.exe yok"; exit 1 }
+          $size = [math]::Round((Get-Item dist/ControlHub.exe).Length / 1MB, 1)
+          (Get-FileHash dist/ControlHub.exe -Algorithm SHA256).Hash.ToLower() + '  ControlHub.exe' | Out-File -Encoding ascii dist/ControlHub.exe.sha256
+          Write-Host "::notice title=ControlHub.exe::$size MB, sha256 $((Get-Content dist/ControlHub.exe.sha256))"
+
+      - name: Açılış testi 1 - --check-config ve --firewall-help
+        run: |
+          $exe = (Resolve-Path dist/ControlHub.exe).Path
+          function Note($title, $text, $level = 'notice') {
+            $t = ($text | Out-String).Trim()
+            if ($t.Length -gt 1500) { $t = $t.Substring(0, 1500) }
+            $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+            Write-Host "::$level title=$title::$t"
+          }
+          $out = & $exe --fake --check-config 2>&1
+          $rc = $LASTEXITCODE
+          Note "check-config rc=$rc" $out ($(if ($rc -eq 0) { 'notice' } else { 'error' }))
+          if ($rc -ne 0) { exit 1 }
+          $out = & $exe --firewall-help --port 8765 2>&1
+          $rc = $LASTEXITCODE
+          Note "firewall-help rc=$rc" $out ($(if ($rc -eq 0) { 'notice' } else { 'error' }))
+          if ($rc -ne 0 -or "$out" -notmatch 'New-NetFirewallRule') { exit 1 }
+
+      - name: Açılış testi 2 - sunucuyu başlat, /health ve uçtan uca duman testi
+        run: |
+          $exe = (Resolve-Path dist/ControlHub.exe).Path
+          $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden `
+                 -ArgumentList '--fake','--pin','123456','--port','18765','--no-qr' `
+                 -RedirectStandardOutput smoke_out.txt -RedirectStandardError smoke_err.txt
+          try {
+            $out = python -m tools.smoke_check --url http://127.0.0.1:18765 --pin 123456 --wait 60 2>&1 | Out-String
+            $rc = $LASTEXITCODE
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+          $srv = (Get-Content smoke_out.txt, smoke_err.txt -ErrorAction SilentlyContinue | Out-String)
+          $t = ("rc=$rc`n$out`n--- sunucu çıktısı ---`n$srv").Trim()
+          if ($t.Length -gt 2800) { $t = $t.Substring(0, 2800) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0) { 'notice' } else { 'error' }
+          Write-Host "::$level title=smoke_check (.exe)::$t"
+          exit $rc
+
+      - name: Açılış testi 3 - pencere (Tk gömülü mü, GUI kuruluyor mu, servis başlıyor mu)
+        run: |
+          $exe = (Resolve-Path dist/ControlHub.exe).Path
+          $job = Start-Process -FilePath $exe -ArgumentList '--gui-selftest' -PassThru -Wait:$false `
+                   -RedirectStandardOutput gui_out.txt -RedirectStandardError gui_err.txt -WindowStyle Hidden
+          if (-not $job.WaitForExit(90000)) { Stop-Process -Id $job.Id -Force; $rc = 124 } else { $rc = $job.ExitCode }
+          $t = ("rc=$rc`n" + (Get-Content gui_out.txt, gui_err.txt -ErrorAction SilentlyContinue | Out-String)).Trim()
+          if ($t.Length -gt 2800) { $t = $t.Substring(0, 2800) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0) { 'notice' } else { 'error' }
+          Write-Host "::$level title=gui-selftest (.exe)::$t"
+          exit $rc
+
+      - name: ControlHub.exe'yi artifact olarak yükle
+        if: always() && hashFiles('apps/control_hub/dist/ControlHub.exe') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ControlHub-windows
+          path: |
+            apps/control_hub/dist/ControlHub.exe
+            apps/control_hub/dist/ControlHub.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: PyInstaller uyarıları (sorun giderme)
+        if: always() && hashFiles('apps/control_hub/build/hub/warn-hub.txt') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyinstaller-warnings
+          path: apps/control_hub/build/hub/warn-hub.txt
+          retention-days: 7
