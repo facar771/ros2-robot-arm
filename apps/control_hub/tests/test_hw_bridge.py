@@ -171,7 +171,8 @@ def test_missing_com_port_is_reported_and_retried_then_stops_cleanly():
     b = SerialTcpBridge('socket://127.0.0.1:9', listen=('127.0.0.1', 0), reopen_s=0.05,
                         on_event=lambda k, m, lvl: events.append((k, lvl))).start()
     try:
-        assert wait(lambda: b.status()['last_error'] is not None, 2)
+        # Windows'ta reddedilen TCP bağlantısı ~2 sn sürer (CI'da görüldü): payı geniş tut
+        assert wait(lambda: b.status()['last_error'] is not None, 10)
         assert not b.status()['serial_connected'] and 'açılamadı' in b.status()['last_error']
         assert events.count(('serial_open_failed', 'warning')) == 1      # günlük taşmaz: bir kez
     finally:
