@@ -97,6 +97,21 @@ class ViewSource(Protocol):
     def snapshot(self) -> Snapshot: ...
 
 
+def _strict_loads(text: str):
+    """``json.loads`` that refuses NaN / Infinity / -Infinity and out-of-range numbers (1e999):
+    Python accepts them, JSON does not, and a non-finite number must never become a motion target.
+    Raises ValueError, which every caller already treats as "not valid JSON"."""
+    def bad(token):
+        raise ValueError(f'sonlu olmayan sayı: {token}')
+
+    def real(token):
+        value = float(token)
+        if not math.isfinite(value):
+            raise ValueError(f'sonlu olmayan sayı: {token}')
+        return value
+    return json.loads(text, parse_constant=bad, parse_float=real)
+
+
 def host_name(header: Optional[str]) -> str:
     """Host name from a ``Host`` header value, lower case, without the port ('[::1]:80' -> '[::1]');
     '' if absent."""
@@ -415,7 +430,7 @@ class _Handler(BaseHTTPRequestHandler):
             return _RESPONDED
         raw = self.rfile.read(int(length))
         try:
-            body = json.loads(raw.decode('utf-8'))
+            body = _strict_loads(raw.decode('utf-8'))
         except (UnicodeDecodeError, ValueError):
             runner.reject('', 'JSON okunamadı')
             self._json(400, {'error': 'gövde geçerli JSON değil', 'allowed': runner.allowed})
@@ -457,7 +472,7 @@ class _Handler(BaseHTTPRequestHandler):
             unread = True
         if raw:
             try:
-                body = json.loads(raw.decode('utf-8'))
+                body = _strict_loads(raw.decode('utf-8'))
                 if isinstance(body, dict) and isinstance(body.get('reason'), str):
                     reason = ''.join(c for c in body['reason'][:MAX_REASON] if c.isprintable())
             except (UnicodeDecodeError, ValueError):

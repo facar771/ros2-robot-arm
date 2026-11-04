@@ -183,6 +183,9 @@ docker compose up demo
 ./docker/agent.sh --offline --dry-run "yeşil nesnenin üstüne git"   # hareket etmez, ne olacağını söyler
 ./docker/agent.sh --offline --yes "yeşil nesnenin üstüne git"       # gider (onay otomatik)
 ANTHROPIC_API_KEY=... ./docker/agent.sh "kırmızı kutunun üstüne git"   # gerçek LLM (isteğe bağlı)
+# OpenAI uyumlu sağlayıcı: model adı ve uç adresi koda gömülü DEĞİL, sen verirsin
+OPENAI_API_KEY=... ROBOT_AGENT_OPENAI_MODEL=<model> ROBOT_AGENT_OPENAI_BASE_URL=<https://.../v1> \
+  ./docker/agent.sh --provider openai "kırmızı kutunun üstüne git"
 ```
 Eklentiler de aynı kurallarla çağrılır (`run_plugin`): yalnızca bakanlar (`find_object`) doğrudan, kamerayı/kolu
 oynatanlar (`scan_extent`, `follow_color`) onayla, güvenli kutu ve acil dur altında:

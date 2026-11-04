@@ -32,6 +32,7 @@ from robot_core.webcmd import COLORS
 
 from robot_agent.client import RobotPort, RobotUnreachable
 from robot_agent.plugins import PluginBridge, PluginTool
+from robot_agent.redact import ScrubbingSink, install_log_scrubbing, scrub
 from robot_agent.schema import validate
 from robot_agent.tools import ToolSpec, build_tools, command_for
 
@@ -83,9 +84,9 @@ class ToolResult:
         return self.status == 'estopped'
 
     def to_llm(self) -> str:
-        return json.dumps({'ok': self.ok, 'status': self.status, 'message': self.message,
-                           'data': self.data, 'job_id': self.job_id, 'dry_run': self.dry_run},
-                          ensure_ascii=False)
+        return scrub(json.dumps({'ok': self.ok, 'status': self.status, 'message': self.message,
+                                 'data': self.data, 'job_id': self.job_id,
+                                 'dry_run': self.dry_run}, ensure_ascii=False))
 
 
 def _result(tool, status, message, data=None, job_id=None, **kw) -> ToolResult:
@@ -101,7 +102,8 @@ class ToolExecutor:
                  sleep: Callable[[float], None] = time.sleep):
         self._robot = robot
         self.policy = policy or Policy()
-        self._events = events or NullEventSink()
+        self._events = ScrubbingSink(events or NullEventSink())
+        install_log_scrubbing()
         self._confirm = confirm
         self.dry_run = dry_run
         self._clock, self._sleep = clock, sleep
@@ -121,6 +123,7 @@ class ToolExecutor:
     def execute(self, name: Any, arguments: Any, *, dry_run: Optional[bool] = None) -> ToolResult:
         dry = self.dry_run if dry_run is None else dry_run
         started = self._clock()
+        arguments = scrub(arguments)        # a key echoed into a tool argument goes no further
         try:
             result = self._execute(name, arguments, dry)
         except RobotUnreachable as exc:
@@ -144,12 +147,15 @@ class ToolExecutor:
             known = ', '.join(sorted(t for t in self._tools if allowed is None or t in allowed))
             return _result(str(name)[:40], 'rejected',
                            f'bilinmeyen araç {str(name)[:40]!r}; kullanılabilir araçlar: {known}')
+        if spec.risk == 'safety':
+            # a stop is never refused over its arguments (a verbose model writes a long reason)
+            clean = arguments if isinstance(arguments, dict) else {}
+            return self._safety_tool(spec, {k: v for k, v in clean.items() if k == 'reason'
+                                            and isinstance(v, str)}, dry)
         problems = validate(spec.schema, {} if arguments is None else arguments)
         if problems:
             return _result(spec.name, 'rejected', 'geçersiz argüman: ' + '; '.join(problems))
         arguments = {} if arguments is None else arguments
-        if spec.risk == 'safety':
-            return self._safety_tool(spec, arguments, dry)
         if spec.name == 'get_robot_state':
             return self._state_tool(spec)
         if spec.name == 'run_plugin':

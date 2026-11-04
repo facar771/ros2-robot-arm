@@ -19,8 +19,18 @@ from robot_core.ports import NullEventSink
 from robot_agent.agent import AgentRunner
 from robot_agent.client import DEFAULT_URL, HttpRobot
 from robot_agent.executor import ConfirmRequest, Policy, ToolExecutor
-from robot_agent.llm import ENV_KEY, AnthropicLLM, LLMError, RuleLLM
+from robot_agent.llm import (
+    ENV_KEY,
+    OPENAI_ENV_KEY,
+    OPENAI_ENV_MODEL,
+    OPENAI_ENV_URL,
+    AnthropicLLM,
+    LLMError,
+    OpenAILLM,
+    RuleLLM,
+)
 from robot_agent.plugins import DEFAULT_ALLOWED, PluginBridge
+from robot_agent.redact import install_log_scrubbing, scrub
 
 
 def _events():
@@ -48,7 +58,12 @@ def main(argv: Optional[List[str]] = None, *, out=None) -> int:
                         help='hareket göndermeden ne olacağını göster')
     parser.add_argument('--max-motions', type=int, default=10, help='en çok hareket çağrısı')
     parser.add_argument('--max-steps', type=int, default=8, help='en çok LLM adımı')
-    parser.add_argument('--model', help='LLM modeli (varsayılan: ROBOT_AGENT_MODEL ya da yerleşik)')
+    parser.add_argument('--provider', choices=('anthropic', 'openai'), default='anthropic',
+                        help='LLM sağlayıcısı (varsayılan: anthropic)')
+    parser.add_argument('--model', help='LLM modeli (anthropic: ROBOT_AGENT_MODEL ya da yerleşik; '
+                                        f'openai: zorunlu, {OPENAI_ENV_MODEL})')
+    parser.add_argument('--base-url', help=f'openai uç adresi (zorunlu, {OPENAI_ENV_URL}); '
+                                           'https olmalı, http yalnızca yerel makinede')
     parser.add_argument('--allow-plugin', action='append', default=[], metavar='EKLENTİ.ARAÇ',
                         help='ek eklenti aracına izin ver (ör. benim_eklentim.arac); '
                              'varsayılan: find_object, scan_extent, follow_color')
@@ -59,8 +74,10 @@ def main(argv: Optional[List[str]] = None, *, out=None) -> int:
                              "synthetic")
     args = parser.parse_args(argv)
 
+    install_log_scrubbing()
+
     def say(text: str) -> None:
-        print(text, file=out, flush=True)
+        print(scrub(text), file=out, flush=True)
 
     try:
         robot = HttpRobot(args.url)
@@ -69,6 +86,16 @@ def main(argv: Optional[List[str]] = None, *, out=None) -> int:
         return 2
     if args.offline:
         llm = RuleLLM()
+    elif args.provider == 'openai':
+        try:
+            llm = OpenAILLM.from_env(model=args.model, base_url=args.base_url)
+        except ValueError as exc:
+            say(f'[!] OpenAI yapılandırması eksik/geçersiz: {exc}')
+            return 2
+        if llm is None:
+            say(f'[!] {OPENAI_ENV_KEY} ayarlı değil: LLM katmanı kapalı. Anahtarsız denemek için '
+                '--offline kullan.')
+            return 2
     else:
         llm = AnthropicLLM.from_env(model=args.model)
         if llm is None:

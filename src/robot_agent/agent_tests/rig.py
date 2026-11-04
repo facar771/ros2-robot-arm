@@ -44,6 +44,17 @@ class Rig:
         """The robot commands that actually reached the skills layer."""
         return [c for c in self.skills.calls]
 
+    def request_text(self, method, path):
+        """Raw status + body + headers of one Robot API response (for leak searches)."""
+        import http.client
+        conn = http.client.HTTPConnection('127.0.0.1', self.view.port, timeout=10)
+        try:
+            conn.request(method, path)
+            resp = conn.getresponse()
+            return f'{resp.status} {resp.read().decode()} {dict(resp.getheaders())}'
+        finally:
+            conn.close()
+
     def close(self):
         self.skills.release.set()
         self.view.shutdown()
