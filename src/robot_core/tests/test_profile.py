@@ -72,26 +72,13 @@ def test_derived_inertia_equals_the_original_urdf_values(profile):
     assert profile.link('base_link').inertia == (0.020667, 0.020667, 0.036)
 
 
-def test_motor_conversions(profile, raw):
-    m = profile.motors['joint_2']
-    assert (m.type, m.encoder, m.steps_per_motor_rev) == ('step', 'none', 3200)
-    assert m.to_motor(0.7) == 0.7 and m.to_joint(m.to_motor(0.7)) == pytest.approx(0.7)
-    p = good(raw, lambda d: d['motors']['joint_2'].update(
-        direction=-1, gear_ratio=10.0, zero_offset=0.1))
-    m = p.motors['joint_2']
-    assert m.to_motor(0.6) == pytest.approx(-10.0 * 0.5)
-    assert m.to_joint(m.to_motor(-1.0)) == pytest.approx(-1.0)
-    expected = -10 * (math.pi / 5 - 0.1) / (2 * math.pi) * 3200
-    assert m.to_steps(math.pi / 5) == pytest.approx(expected)
-
-
 # ---- structure and scope ----------------------------------------------------------------------
 def test_unknown_and_missing_keys(raw):
     bad(raw, lambda d: d.update(bogus=1), 'bilinmeyen anahtar')
-    bad(raw, lambda d: d.pop('motors'), 'eksik anahtar')
+    bad(raw, lambda d: d.update(motors={}), 'bilinmeyen anahtar')   # motors: hardware.profile
     bad(raw, lambda d: d['joints']['joint_1'].update(origin=[0, 0, 1]),
         'joints.joint_1.*bilinmeyen')
-    bad(raw, lambda d: d.update(profile_version=1), 'profile_version')
+    bad(raw, lambda d: d.update(profile_version=2), 'profile_version')
 
 
 def test_only_revolute_joints_in_a_serial_chain(raw):
@@ -194,81 +181,9 @@ def test_derive_box_rejects_a_degenerate_arm():
         derive_box((0.0, 0.0, 0.0), 0.05)
 
 
-# ---- motors -----------------------------------------------------------------------------------
-@pytest.mark.parametrize('mutate, match', [
-    (lambda m: m.update(direction=2), r'\+1 ya da -1'),
-    (lambda m: m.update(direction=0), r'\+1 ya da -1'),
-    (lambda m: m.update(direction='cw'), r'\+1 ya da -1'),
-    (lambda m: m.update(direction=True), r'\+1 ya da -1'),
-    (lambda m: m.update(gear_ratio=0), 'pozitif'),
-    (lambda m: m.update(gear_ratio=-2.0), 'pozitif'),
-    (lambda m: m.update(microstep=0), 'aralık'),
-    (lambda m: m.update(microstep=512), 'aralık'),
-    (lambda m: m.update(microstep=1.5), 'tam sayı'),
-    (lambda m: m.update(steps_per_rev=0), 'aralık'),
-    (lambda m: m.update(type='dc'), "yalnızca 'step'"),
-    (lambda m: m.update(encoder='optical'), 'none | incremental | absolute'),
-    (lambda m: m.update(zero_offset=90), 'üst sınır'),
-    (lambda m: m.pop('limits'), 'eksik anahtar'),
-    (lambda m: m.update(unknown=1), 'bilinmeyen anahtar'),
-])
-def test_motor_validation(raw, mutate, match):
-    bad(raw, lambda d: mutate(d['motors']['joint_3']), match)
-
-
-def test_encoder_is_optional_and_defaults_to_none(raw):
-    def drop(d):
-        d['motors']['joint_1'].pop('encoder')
-    assert good(raw, drop).motors['joint_1'].encoder == 'none'
-    for kind in ('none', 'incremental', 'absolute'):
-        p = good(raw, lambda d, k=kind: d['motors']['joint_1'].update(encoder=k))
-        assert p.motors['joint_1'].encoder == kind
-
-
-def test_joint_limits_must_lie_inside_motor_limits_minus_margin(raw):
-    # equal limits and margin 0 (today): passes; any shortfall or margin: fails
-    bad(raw, lambda d: d['motors']['joint_2']['limits'].update(position=[-1.5, 1.57]),
-        r'motor limiti .* içinde değil')
-    bad(raw, lambda d: d['motors']['joint_2']['limits'].update(position=[-1.57, 1.5]),
-        r'motor limiti .* içinde değil')
-    bad(raw, lambda d: d['motors']['joint_2']['margin'].update(position=0.01),
-        r'marj 0\.01')
-    good(raw, lambda d: (d['motors']['joint_2']['limits'].update(position=[-1.7, 1.7]),
-                         d['motors']['joint_2']['margin'].update(position=0.1)))
-    bad(raw, lambda d: (d['motors']['joint_2']['limits'].update(position=[-1.7, 1.7]),
-                        d['motors']['joint_2']['margin'].update(position=0.2)),
-        r'motor limiti .* içinde değil')
-
-
-def test_omitted_margin_is_the_narrow_default(raw):
-    def widen(d):
-        d['motors']['joint_2'].pop('margin')
-        d['motors']['joint_2']['limits']['position'] = [-1.62, 1.62]      # exactly 0.05 slack
-        d['motors']['joint_2']['limits']['velocity'] = 1.05              # likewise for speed
-    p = good(raw, widen)
-    margins = (p.motors['joint_2'].margin_position, p.motors['joint_2'].margin_velocity)
-    assert margins == (0.05, 0.05)
-
-    def too_tight(d):
-        d['motors']['joint_2'].pop('margin')
-        d['motors']['joint_2']['limits']['position'] = [-1.6, 1.6]
-    bad(raw, too_tight, 'marj 0.05')
-
-
-def test_joint_speed_must_lie_inside_motor_speed_minus_margin(raw):
-    bad(raw, lambda d: d['motors']['joint_1']['limits'].update(velocity=0.9), 'hız limiti')
-    bad(raw, lambda d: d['motors']['joint_1']['margin'].update(velocity=0.1), 'hız limiti')
-    good(raw, lambda d: d['motors']['joint_1']['limits'].update(velocity=1.2))
-
-
-def test_motors_must_match_the_joints(raw):
-    bad(raw, lambda d: d['motors'].pop('joint_6'), 'motors: eklemlerle aynı')
-    bad(raw, lambda d: d.update(motors=dict(reversed(list(d['motors'].items())))), 'aynı adlar')
-
-
 def test_load_profile_names_the_file_and_the_problem(tmp_path):
     path = tmp_path / 'p.yaml'
-    path.write_text('profile_version: 2\n', encoding='utf-8')
+    path.write_text('profile_version: 3\n', encoding='utf-8')
     with pytest.raises(ProfileError, match=r'p\.yaml.*eksik anahtar'):
         load_profile(path)
     with pytest.raises(ProfileError, match='okunamadı'):
