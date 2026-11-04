@@ -1,60 +1,73 @@
-# Robot profili — tasarım notu (TASLAK: onay bekliyor, üretici kod yok)
+# Robot profili
 
-**Amaç.** Robotun tüm fiziksel tanımı tek bir YAML'da olsun
-(`src/robot_description/profile/six_axis_robot.yaml`); URDF/xacro, `joint_limits.yaml`, SRDF çarpışma
-çiftleri ve güvenli kutu bundan **türetilsin**. Bugünkü robot profilin ilk örneğidir: üretilen
-dosyalar bugünküyle aynı davranır, `selftest*` modları değişmeden geçer. UI'dan eksen yönü/limit/link
-uzunluğu düzenleme ve ESP32 köprüsü sonraki adımlardır; bu not yalnızca şemayı ve kuralları sabitler.
+Robotun tüm fiziksel tanımı **tek bir YAML**'dadır:
+`src/robot_description/profile/six_axis_robot.yaml` (şema v2, yorumlu). Planlayıcının okuduğu dosyalar
+ondan **üretilir**; bugünkü robot profilin ilk örneğidir ve üretilen dosyalar el yazması
+dosyalarla birebir aynı robotu verir.
 
-## Bölümler (şemanın tamamı YAML'ın içinde, yorumlu)
-| Bölüm | İçerik | Kim okuyacak |
-|---|---|---|
-| `links` | şekil (cylinder/box), geometri merkezi, kütle, atalet, renk | URDF |
-| `joints` | tip, parent/child, `origin` (= linkler arası uzunluk/ofset), eksen vektörü, `limits`: konum [alt, üst], hız, ivme, efor | URDF, joint_limits.yaml, ros2_control |
-| `moveit` | planlama grubu, adlandırılmış pozlar, başlangıç pozu, varsayılan hız/ivme ölçeği, `collision.allow_extra` | SRDF, joint_limits.yaml |
-| `safety` | güvenli kutu, `max_velocity_scale` | `safe_zone.yaml` (`robot_core.safezone`) |
-| `motors` (**ayrı**) | eksen başına `direction` (±1), `zero_offset`, `gear_ratio` | URDF/MoveIt'e **girmez**; yalnız donanım köprüsü (sonra) |
+## Günlük kullanım
+Profili düzenle → yeniden üret → test et. **WSL'de** (ya da `dev` kabuğunda, `/workspace` içinde):
 
-Motor formülü: `motor_pozisyonu = direction · gear_ratio · (eklem_pozisyonu − zero_offset)` (rad, motor
-mili). Simüle robotun motoru yok: her eksen (1, 0, 1) birim eşleme.
+```bash
+cd ~/ros2-robot-arm/src/robot_core
+python3 -m robot_core.profile_gen            # üretilen dosyaları yaz
+python3 -m robot_core.profile_gen --check    # hepsi güncel mi? (değilse çıkış kodu 1)
+```
 
-## Üretici ne üretecek (onaydan sonra, 2. PR)
-`robot.urdf`, `six_axis_robot.ros2_control.xacro`, `joint_limits.yaml`, `six_axis_robot.srdf` (grup,
-pozlar, sanal eklem, çarpışma çiftleri), `safe_zone.yaml`, `initial_positions.yaml`. **Elle kalır:**
-`six_axis_robot.urdf.xacro` (sarmalayıcı: `world`, `masa`), `ros2_controllers.yaml`,
-`moveit_controllers.yaml` (mevcut test eklem listelerini korur), `kinematics.yaml`,
-`pilz_cartesian_limits.yaml` (planlayıcı ayarı, robot tanımı değil). Üretilen dosyalar repoda
-**commit'li** ve başlıklarında "ÜRETİLDİ" yazar; pytest "üretilen == commit'li" ve (geçiş için)
-"üretilen == bugünkü dosya" kontrolünü yapar. ROS gerekmez, CI `core` işinde koşar, Docker'da üretim
-adımı yoktur.
+Üretilen dosyalar commit'lidir ve başlıklarında "ÜRETİLDİ ... ELLE DÜZENLEME" yazar.
+`pytest` (`test_profile_gen.py::test_generated_files_are_up_to_date`) profil ile dosyalar ayrışırsa
+kırılır; CI `core` işi bunu zaten koşar.
 
-## "Daha dar" kuralları (türetmede varsayılan her zaman güvenli yönde)
-- **Çarpışma:** yalnız parent–child çiftleri kapatılır (bugün de böyle); başka çift ancak
-  `allow_extra`'da gerekçesiyle kapanır. Varsayılan: her çift kontrol edilir.
-- **Eksik değer:** hız 0.5 rad/s, ivme 0.5 rad/s², `max_velocity_scale` 0.5. Bugünkü profil hepsini
-  açıkça yazar (1.0, 1.0, 0.5), bu yüzden davranış değişmez.
-- **`safety.box` yoksa:** omuz merkezli, yarıçapı 0.5·R (R = omuzdan uca düz kol uzunluğu) olan kürenin
-  içine sığan eksen-hizalı kutu, x ≥ 0.05, z ≥ 0.02. Varsa ve bir köşesi R'den uzaksa üretici **hata** verir.
-- **Çelişki:** iki kaynak çelişirse (ileride motor hız sınırı < eklem sınırı) etkin değer ikisinin
-  küçüğüdür ve üretici uyarı basar.
+| Profil bölümü | Üretilen dosya |
+|---|---|
+| `links`, `joints`, `materials` | `robot_description/urdf/robot.urdf` |
+| `joints` | `robot_moveit_config/config/six_axis_robot.ros2_control.xacro`, `joint_limits.yaml`, `ros2_controllers.yaml`, `moveit_controllers.yaml` |
+| `moveit` (+ `joints`, `mount`) | `six_axis_robot.srdf` (grup, pozlar, sanal eklem, çarpışma çiftleri), `initial_positions.yaml` |
+| `safety` | `safe_zone.yaml` |
+| `motors` (**ayrı**) | hiçbir şey: URDF/MoveIt'e girmez; yalnız doğrulanır (donanım köprüsü sonra) |
 
-## Doğrulama planı
-Bu PR: `test_robot_profile_today.py`, profilin URDF/SRDF/joint_limits/safe_zone/initial_positions/
-ros2_control/xacro ile **değer değer** (tam float eşitliği) aynı olduğunu kanıtlar. 2. PR: üretilen
-dosyalar bugünküyle aynı; mevcut model-bütünlük, kendine çarpışma ve erişim testleri değişmeden
-geçer; Docker `selftest*` modları bir kez koşulur.
+**Elle kalanlar:** xacro sarmalayıcı (`six_axis_robot.urdf.xacro`: `world`, `masa`, Gazebo eklentisi),
+`kinematics.yaml`, `pilz_cartesian_limits.yaml`, launch ve RViz dosyaları, hardware.profile ve firmware.
 
-## Onayını istediğim kararlar (önerim ilk seçenek)
-1. **Yer/okuyucu:** profil `robot_description/profile/`, ROS'suz okuyucu+üretici `robot_core/profile*.py`
-   (yeni bağımlılık yok, PyYAML zaten var).
-2. **Üretilen dosyalar commit'li** + "güncel mi" testi (alternatif: derleme sırasında üretim; ROS'a
-   bağlar, test edilmesi zor).
-3. **Adlandırılmış pozlar** SRDF'ten profile taşınır, SRDF tamamen üretilir (yarım üretim kırılgan).
-4. **Link uzunluğu:** v1'de açık geometri (şu hâli). UI için tek sayı (`length`, geometriyi ve sonraki
-   eklem ofsetini birlikte sürer) sonra eklenebilir; ister misin şimdi şemaya girsin?
-5. **Motor formülü ve birimi** yukarıdaki gibi mi (rad, motor mili tarafı)?
+## Şema özeti
+- **`links.<ad>.length`** (m): hem geometriyi (silindir boyu / kutu z, `length/2`'de ortalı) hem sonraki
+  eklemin ofsetini sürer. Bir sayıyı değiştir, link, çarpışma şekli ve sonrası birlikte kayar; atalet,
+  `inertia` yazılmadıysa kütle + şekilden türetilir (bugünkü URDF'in kullandığı katı-cisim formülü).
+  Taban gibi ortalı geometri için `shape.length` / 3'lü `size` / `origin` açıkça yazılır.
+- **`joints.<ad>`**: `type: revolute`, `parent`/`child`, birim `axis`, `limits.position` (fiziksel limit),
+  isteğe bağlı `velocity`/`acceleration`/`effort`, isteğe bağlı `offset: [dx, dy, dz]`. Eklem
+  `(0, 0, üst linkin length'i) + offset` konumundadır.
+- **`moveit`**: grup, adlandırılmış pozlar, başlangıç pozu, hız/ivme ölçeği, `collision.allow_extra`.
+- **`safety`**: `box` (omuz merkezli erişim küresinin içinde olmalı), `max_velocity_scale`.
+- **`motors`** (eklem başına, ayrı bölüm): `type: step`, `steps_per_rev`, `microstep`, `direction` (±1),
+  `zero_offset`, `gear_ratio`, isteğe bağlı `encoder: none|incremental|absolute` (varsayılan `none`),
+  `limits` (motorun ulaşabildiği konum/hız, **eklem birimlerinde**), isteğe bağlı `margin`.
+  `motor_pozisyonu = direction · gear_ratio · (eklem − zero_offset)` (rad, motor mili);
+  mikroadım = `motor_rad / 2π · steps_per_rev · microstep`.
 
-## Bu PR'da / bu PR'da değil
-**Var:** bu not, bugünkü robotun profili, eşitlik testi. **Yok:** profil okuyucu, üretici, CMake kurulumu
-(`profile/` henüz kurulmuyor, çalışma zamanında kimse okumuyor), UI, ESP32 köprüsü. Hiçbir çalışan dosya
-değişmedi, bu yüzden selftest davranışı da değişmez.
+## Doğrulayıcının denetledikleri (`robot_core/profile.py`; hata mesajı YAML'daki yeri söyler)
+- **Motor ⊇ eklem:** eklem konum limiti, motor limiti − marj içinde olmalı; eklem hızı, motor hızı − marj
+  altında olmalı. **Yön** yalnız tam sayı +1/−1; `gear_ratio > 0`; mikroadım 1–256; `type` yalnız `step`.
+- **Birim sağduyusu:** konum ±4π rad üstü (derece yazılmış?), uzunluk > 5 m (mm yazılmış?) ya da < 1 mm,
+  hız > 50 rad/s, kütle ≤ 0 → hata. Sonlu olmayan sayı → hata.
+- **Kapsam:** yalnız seri zincir + döner eklem; prizmatik, mimic ve dallanma net bir mesajla reddedilir.
+- Zincir sırası, birim eksen, poz/başlangıç değerleri limit içinde, `allow_extra` gerekçeli ve komşu olmayan
+  çift, güvenli kutu zemin üstünde ve erişim içinde.
+
+## "Daha dar" kuralları (varsayılan her zaman güvenli yön)
+Güvenli varsayılanı olmayan değerler **zorunludur** (konum limiti, eksen, uzunluk, kütle, motor limitleri).
+Yazılmazsa: hız/ivme 0.5, efor 10, `max_velocity_scale` 0.5, motor marjı 0.05 rad ve 0.05 rad/s;
+`safety.box` yoksa omuz merkezli, yarıçapı erişimin yarısı olan kürenin içindeki kutu (z ≥ 0.02,
+x ≥ 0.05). Çarpışma: yalnız parent–child çiftleri kapalı; başkası ancak gerekçeyle `allow_extra`'da.
+
+## Kanıt: üretilen = el yazması robot
+`tests/golden/today_robot.json`, el yazması dosyalardan (üretici gelmeden önce) alınmış anlık görüntüdür;
+`test_generated_robot_equals_the_original_hand_written_robot` üretilen dosyalardan aynısını çıkarıp
+karşılaştırır: eklemler/limitler/ofsetler/eksenler, link geometrisi + atalet, **11 konfigürasyonda ileri
+kinematik** (URDF'ten bağımsız hesaplanır), **çarpışma matrisi**, pozlar, güvenli kutu, hız/ivme,
+başlangıç pozu, kontrolcü eklem listeleri. Bu golden dosyayı yalnızca robotu bilerek değiştirirken güncelle.
+
+## Bu aşamada olmayanlar
+Paralel/kapalı çevrim, mimic, prizmatik eklem; IK çözücü seçimi; launch/RViz üretimi; `hardware.profile` ve
+firmware; profilin çalışma zamanında okunması (`profile/` CMake ile kurulmuyor, ilk tüketici gelince);
+UI'dan düzenleme.

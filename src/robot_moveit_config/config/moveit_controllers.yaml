@@ -1,3 +1,4 @@
+# ÜRETİLDİ: src/robot_description/profile/six_axis_robot.yaml dosyasından `python3 -m robot_core.profile_gen` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).
 # MoveIt uses this configuration for controller management
 
 moveit_controller_manager: moveit_simple_controller_manager/MoveItSimpleControllerManager

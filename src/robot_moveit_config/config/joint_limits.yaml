@@ -1,9 +1,7 @@
-# joint_limits.yaml allows the dynamics properties specified in the URDF to be overwritten or augmented as needed
-# NOTE: previously this file contained the top-level key `joint_limits:` twice (duplicate YAML key, first block was
-# silently discarded). Merged into one block: velocity limits + acceleration limits enabled.
-
-# Fraction of max velocity/acceleration used when a request does not set its own scaling.
-# (0.1 made every motion very slow; clients such as cli_moveit now also set scaling explicitly.)
+# ÜRETİLDİ: src/robot_description/profile/six_axis_robot.yaml dosyasından `python3 -m robot_core.profile_gen` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).
+# Position limits live in the URDF (same profile values); this file adds velocity and
+# acceleration limits. default_*_scaling = fraction of the maximum used when a request
+# does not set its own scaling.
 default_velocity_scaling_factor: 0.5
 default_acceleration_scaling_factor: 0.5
 
