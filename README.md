@@ -30,6 +30,7 @@ hazır pozlar URDF/SRDF'ten okunur, kodda sabit yazılmaz.
 
 ## Çalıştırma (Docker, önerilen)
 ```bash
+docker compose run --rm selftest-hw       # köprü düğümü + ESP32 simülatörü (hw_check)
 docker compose run --rm selftest          # başsız uçtan uca test, sahte donanım (CI ile aynı)
 docker compose run --rm selftest-gazebo   # aynı test Gazebo fiziğinde (CI ile aynı)
 docker compose run --rm selftest-camera   # Gazebo + derinlik kamerası: hareket testi + sensor_check

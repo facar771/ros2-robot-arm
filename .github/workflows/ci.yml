@@ -132,6 +132,8 @@ jobs:
           -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro"
           -v "$PWD/plugins:/workspace/plugins:ro"
           ros2-robot-arm:ci run_selftest gazebo-integration
+      - name: "Selftest - hardware bridge node against the ESP32 simulator (unhomed boot, homing, measured motion, e-stops, lost link, watchdog)"
+        run: docker run --rm ros2-robot-arm:ci run_selftest hw
       - name: Selftest - camera platform tracks a moving target (4 scenarios, lock criteria)
         # Not verified in Docker when it was written (the sandbox has no Docker Hub access); the
         # world needs the bullet-featherstone physics plugin. Does not block the other jobs.

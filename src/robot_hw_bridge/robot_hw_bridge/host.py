@@ -76,7 +76,7 @@ class HwLink:
                  on_status: Optional[Callable[[Status], None]] = None,
                  on_fault: Optional[Callable[[Fault], None]] = None,
                  on_link_lost: Optional[Callable[[], None]] = None,
-                 on_link_up: Optional[Callable[[], None]] = None):
+                 on_link_up: Optional[Callable[[], None]] = None, initial_seq: int = 0):
         self.transport, self.key = transport, key
         self.heartbeat_s, self.ack_timeout, self.retries = heartbeat_s, ack_timeout_s, retries
         self.monitor = LinkMonitor(link_timeout_s, clock)
@@ -89,7 +89,8 @@ class HwLink:
         self.status: Optional[Status] = None
         self.faults: List[Fault] = []
         self.peer_ack: int = 0
-        self._tx_seq = 0
+        self._tx_seq = initial_seq & 0xFFFF
+        # yeniden bağlanan istemci kaldığı yerden sürer (MCU eski seq'i atar)
         self._cmd_id = 0
         self._tx_lock = threading.Lock()
         self._cv = threading.Condition()
@@ -127,6 +128,10 @@ class HwLink:
         return self.status.state if self.status else None
 
     # ------------------------------------------------------------------ gönderim
+    @property
+    def next_seq(self) -> int:
+        return self._tx_seq
+
     def _send(self, mtype: MsgType, payload: bytes = b'', flags: int = 0) -> None:
         with self._tx_lock:
             ack = self.rx_seq.last if self.rx_seq.last is not None else 0
