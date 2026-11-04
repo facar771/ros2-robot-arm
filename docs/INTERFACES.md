@@ -648,3 +648,31 @@ Güvenlik kuralları (hepsi testli; ihlalde komut **bütünüyle reddedilir**, h
   zaman aşımına uğrar. Taze `/platform/joint_states` (0.5 s) yoksa komut reddedilir (`no_state`), çalışan hareket durur.
 * Sahiplik: `/tracking/mode` `idle` değilse ya da `/tracking/status` akıyorsa komut `busy` ile reddedilir; takip devralırsa
   elle hareket **sıfır yayımlanmadan** bırakılır (sıfır takibe karşı savaşırdı). Düğüm boştayken hiçbir şey yayımlamaz.
+
+## Jog (J2): `POST /api/jog`, `GET/PUT /api/frames` — Robot API v1'e EKLEMELİ
+
+Hesap J1'in (`docs/JOG.md`); burası API, kiralama ve dead-man. Uygulama: `robot_core.jogapi` (ROS'suz),
+ROS tarafı `robot_viz.jog_ros` (kontrolcü konusuna kısa setpoint). Yalnızca `web_view commands:=true` ile.
+**Yazılım dead-man/acil dur donanım acil durdurmanın yerine geçmez.**
+
+| Uç | Anlam |
+|---|---|
+| `POST /api/jog` | `{"lease": "<8-64 karakter [A-Za-z0-9_-]>", "frame": "World"\|"Tool"\|<ad>, "twist": [vx vy vz wx wy wz] \| "increment": {"axis": 0-5, "amount": ±0.1\|1\|10}, "ttl_ms": 50-500}`. `twist` SI (m/s, rad/s), sunucu kırpar; `increment` mm (eksen 0-2) ya da ° (3-5, W P R **etrafında**). `ttl_ms: 0` = kiralamayı bırak. Komutun kendisi heartbeat'tir |
+| `GET /api/jog` | durum (`active`, `mode`, `frame`, `status`, `messages`, `moving`, `hold_enabled`, hız tavanı) + `tcp` |
+| `GET /api/frames` | `{"builtin": ["World","Tool"], "max_frames": 10, "frames": [{name, points, pose, wpr_deg, warnings}]}` |
+| `PUT /api/frames` | `{"frames": [{"name", "points": {"origin","x","xy"}}]}` **tüm listeyi** değiştirir; önce doğrulanır, atomik yazılır (`400` + neden, dosya bozulmaz); jog etkinken `409` |
+| `/api/state` | eklemeli: `tcp` (`position` m, `wpr_deg`, `warning`) ve `robot.jog` (jog durumu ya da `null`); `robot.state` yeni değer `jogging` |
+| `POST /api/jobs` | yeni beyaz liste komutu `ready` (güvenli kutunun içinde, bilek tekilliğinden uzak başlangıç pozu) |
+
+**Dead-man SUNUCUDA:** TTL varsayılan 250 ms, en çok 500 ms (istemci daha fazlasını isteyebilir, yanıtta `ttl_clamped`);
+TTL dolunca komut hızı en çok 100 ms'de (`stop_ramp_ms`) sıfırlanır ve setpoint akışı durur. Zincir: istemci
+anında < sunucu TTL 250 ms < ESP32 watchdog 300 ms (profil 200-500).
+**Tek kiralama:** ikinci `lease` `409`; kiralama son komuttan 2 s sonra serbest kalır ya da `ttl_ms: 0` ile bırakılır.
+**Kodlar:** `400` biçim, `403` basılı-tut kapalı, `409` başka kiralama / iş çalışıyor / artım sürüyor, `423` kilitli acil dur,
+`503` eklem durumu yok. `423` yalnızca `POST /api/jog` için; `/api/stop` jog trafiğinden bağımsızdır ve her zaman önceliklidir.
+**Karşılıklı dışlama:** jog (topic) ve işler (action) aynı trajectory controller'a yazar: jog sürerken `POST /api/jobs` `409`,
+iş sürerken jog `409`; araya iş girerse jog bir sonraki tickte kapanır.
+**Varsayılanlar dar:** hız tavanın %20'si (`jog_speed_scale`), `mode: real` için ayrıca ≤ %10 (`jog_speed_scale_real`);
+artımlı mod varsayılan; basılı-tut (`twist`) `mode: real`'de ve loopback dışı istemcilerde (telefon) KAPALI
+(`jog_hold: auto|on|off`, `jog_hold_remote`). Her yeni setpoint ≤ 100 ms ufukludur: düğüm ölürse kol kendiliğinden durur.
+`frames.yaml` Robot API'nin veri dizinindedir (`data_dir` / `ROBOT_DATA_DIR`, Docker'da volume); Hub dosyaya yazmaz.

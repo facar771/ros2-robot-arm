@@ -26,6 +26,7 @@ setup(
             'jobs_check = robot_viz.jobs_check:main',
             'agent_check = robot_viz.agent_check:main',
             'integration_check = robot_viz.integration_check:main',
+            'jog_check = robot_viz.jog_check:main',
             'hw_check = robot_viz.hw_check:main',
         ],
     },

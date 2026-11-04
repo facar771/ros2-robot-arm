@@ -11,9 +11,12 @@ tool position). Read-only by default: nothing is published and nothing can be co
 With ``commands:=true`` the white-listed commands of :mod:`robot_core.webcmd` run on the Skills
 layer (MoveIt) exactly as in ``cli_moveit``.
 """
+import dataclasses
+import os
 import signal
 import threading
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 
 import numpy as np
@@ -30,8 +33,14 @@ from robot_controller.adapters import (
     TfToolPosition,
 )
 from robot_controller.config_loader import load_robot_config, load_safety_config
+from robot_core.frames import FrameStore
 from robot_core.jobs import JobManager
+from robot_core.jog import DlsJogEngine, JogConfig
+from robot_core.jogapi import READY_NAME, READY_POSE, JogApiConfig, JogController
+from robot_core.kinematics import Chain
 from robot_core.perception import Intrinsics, Transform
+from robot_core.profile import load_profile
+from robot_core.profile_gen import PROFILE_PATH
 from robot_core.skills import Skills
 from robot_core.supervisor import CancelFlag, EStop, GuardedMotion, Supervisor
 from robot_core.webcmd import CommandRunner
@@ -42,6 +51,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from robot_data import close_sink, event_sink_from_env
+from robot_viz.jog_ros import RosSetpointSink
 
 TOPIC_OBJECTS = '/perception/objects'
 
@@ -65,6 +75,13 @@ class WebViewNode(Node):
         self.declare_parameter('objects_stale_s', 2.0)   # detections older than this are dropped
         self.declare_parameter('commands', False)        # True: POST /api/command is enabled
         self.declare_parameter('mode', 'gazebo')         # mock | gazebo | real
+        # ---- jog (J2). Defaults lean narrow; every number is a suggestion to tune in simulation.
+        self.declare_parameter('jog', True)              # POST /api/jog (needs commands:=true)
+        self.declare_parameter('jog_speed_scale', 0.2)       # fraction of the jog speed cap
+        self.declare_parameter('jog_speed_scale_real', 0.1)  # mode: real: min(this, scale)
+        self.declare_parameter('jog_hold', 'auto')       # auto (off in real) | on | off
+        self.declare_parameter('jog_hold_remote', False) # hold-to-run for non-loopback clients
+        self.declare_parameter('data_dir', '')           # frames.yaml dir ('' = ROBOT_DATA_DIR)
         self._world = self.get_parameter('world_frame').value
         self._optical = self.get_parameter('optical_frame').value
         self._stale_s = float(self.get_parameter('objects_stale_s').value)
@@ -92,9 +109,14 @@ class WebViewNode(Node):
         self.runner = None
         self.supervisor = None
         self.jobs = None
+        self.jog = None
+        self.frames = None
         if bool(self.get_parameter('commands').value):
             self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
             safety = load_safety_config()                    # missing/bad file: refuse to start
+            # named pose for jogging (inside the safe box, away from the wrist singularity); the
+            # profile/SRDF does not know it yet (request to Robot_2), so it is added here
+            config = dataclasses.replace(config, poses={**config.poses, READY_NAME: READY_POSE})
             estop, cancel = EStop(), CancelFlag()
             motion = MoveItMotion(self, config, estop=estop, cancel=cancel,
                                   max_velocity_scale=safety.max_velocity_scale)
@@ -104,9 +126,40 @@ class WebViewNode(Node):
             self.runner = CommandRunner(
                 skills, TfToolPosition(self._tf, self._tip, self._world), self.events, estop=estop)
             self.jobs = JobManager(self.runner, cancel, estop)
+            if bool(self.get_parameter('jog').value):
+                self._setup_jog(estop)
             self.supervisor = Supervisor(estop, self._joints, self._joint_names, stop_port=motion,
                                          runner=self.runner, mode=self.mode, events=self.events,
-                                         safety=safety.as_dict(motion.velocity_scale))
+                                         safety=safety.as_dict(motion.velocity_scale),
+                                         jog=self.jog)
+
+    def _setup_jog(self, estop: EStop) -> None:
+        try:
+            profile = load_profile(os.environ.get('ROBOT_PROFILE') or PROFILE_PATH)
+            data = Path(self.get_parameter('data_dir').value or os.environ.get('ROBOT_DATA_DIR')
+                        or Path.home() / '.ros2-robot-arm')
+            self.frames = FrameStore(data / 'frames.yaml')
+        except Exception as exc:    # noqa: BLE001 - jog stays off; the rest of the API works
+            self.get_logger().error(f'jog kapalı: {type(exc).__name__}: {exc}')
+            return
+        real = self.mode == 'real'
+        scale = float(self.get_parameter('jog_speed_scale').value)
+        if real:
+            scale = min(scale, float(self.get_parameter('jog_speed_scale_real').value))
+        hold = str(self.get_parameter('jog_hold').value)
+        hold_on = (not real) if hold == 'auto' else hold == 'on'
+        jog_config = JogConfig(speed_scale=scale)
+        engine = DlsJogEngine(Chain(profile), profile.safety, jog_config)
+        self.jog = JogController(
+            engine, Chain(profile), self._joints, RosSetpointSink(self), estop, self.frames,
+            config=JogApiConfig(hold_enabled=hold_on,
+                                hold_remote_enabled=bool(self.get_parameter('jog_hold_remote').value)),
+            jog_config=jog_config, busy=lambda: bool(self.jobs and self.jobs.is_running),
+            clock=lambda: self.get_clock().now().nanoseconds * 1e-9)    # sim time under Gazebo
+        self.jobs.jog_gate = lambda: self.jog.active
+        self.jog.start()
+        self.get_logger().info(f'jog hazır: hız ölçeği {scale:g}, basılı-tut '
+                               f'{"açık" if hold_on else "KAPALI"}, çerçeveler: {self.frames.path}')
 
     @property
     def depth_range(self) -> Tuple[float, float]:
@@ -189,7 +242,7 @@ def main(args=None):
     try:
         view = WebView(node, host=host, port=port, depth_range=node.depth_range,
                        commands=node.runner, supervisor=node.supervisor, mode=node.mode,
-                       jobs=node.jobs)
+                       jobs=node.jobs, jog=node.jog, frames=node.frames)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()
@@ -212,6 +265,8 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        if node.jog is not None:
+            node.jog.close()
         view.shutdown()
         spinner.stop()
         if node.events is not None:

@@ -8,7 +8,8 @@ latch, asks the adapter to cancel the running MoveIt goal and stop trajectory ex
 clears the latch while the arm stands still (and refuses when it cannot tell).
 
 State shown to clients (``robot.state``), highest priority first: ``estopped`` (latched),
-``busy`` (a command runs), ``error`` (the last command ended in an internal error), ``idle``.
+``jogging`` (a jog lease is moving/active; jog and jobs exclude each other), ``busy`` (a
+command runs), ``error`` (the last command ended in an internal error), ``idle``.
 """
 from __future__ import annotations
 
@@ -167,6 +168,7 @@ class Supervisor:
                  events: Optional[EventSink] = None, safety: Optional[Dict[str, Any]] = None, *,
                  clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, moving_speed: float = MOVING_SPEED,
+                 jog: Any = None,
                  quiet_s: float = QUIET_S, stop_timeout_s: float = STOP_TIMEOUT_S):
         if mode not in MODES:
             raise ValueError(f'mode {mode!r} geçersiz; geçerli: {", ".join(MODES)}')
@@ -179,6 +181,7 @@ class Supervisor:
         self._clock, self._sleep = clock, sleep
         self._moving_speed, self._quiet_s = moving_speed, quiet_s
         self._stop_timeout_s = stop_timeout_s
+        self.jog = jog                      # optional robot_core.jogapi.JogController
 
     # ---- state ------------------------------------------------------------------------------
     def _speed(self) -> Optional[float]:
@@ -192,6 +195,8 @@ class Supervisor:
         status = self._runner.status() if self._runner is not None else {}
         if self.estop.is_set:
             return 'estopped'
+        if self.jog is not None and self.jog.active:
+            return 'jogging'
         if status.get('running'):
             return 'busy'
         if self._runner is not None and self._runner.error_latched:
@@ -203,7 +208,8 @@ class Supervisor:
         status = self._runner.status() if self._runner is not None else {}
         return {'api_version': API_VERSION, 'mode': self.mode, 'state': self.state(),
                 'current_job': status.get('job'), 'last_error': status.get('last_error'),
-                'moving': self.moving(), 'estop': self.estop.info(), 'safety': self._safety}
+                'moving': self.moving(), 'estop': self.estop.info(), 'safety': self._safety,
+                'jog': self.jog.status() if self.jog is not None else None}
 
     # ---- stop / reset -----------------------------------------------------------------------
     def _emit(self, kind: str, payload: Dict[str, Any]) -> None:

@@ -49,7 +49,9 @@ from urllib.parse import urlsplit
 
 import numpy as np
 
+from robot_core.frames import FrameError, FrameStore
 from robot_core.jobs import BadTimeout, JobBusy, JobManager, JobNotFound, check_timeout
+from robot_core.jogapi import JogController, JogDenied, frames_document, replace_frames
 from robot_core.perception import Intrinsics, Transform
 from robot_core.supervisor import API_VERSION, MOVING_SPEED, EStopped, Supervisor, max_speed
 from robot_core.viz import OverlayItem, box_to_pixels, depth_to_rgb, draw_overlay, encode_png
@@ -137,7 +139,8 @@ def robot_document(snap: Snapshot, supervisor: Optional[Supervisor], mode: str,
             'state': 'busy' if status.get('running') else 'idle',
             'current_job': status.get('job'), 'last_error': status.get('last_error'),
             'moving': None if speed is None else speed > MOVING_SPEED,
-            'estop': {'tripped': False, 'reason': None, 'since': None}, 'safety': None}
+            'estop': {'tripped': False, 'reason': None, 'since': None}, 'safety': None,
+            'jog': None}
 
 
 def build_state(snap: Snapshot, runner: Optional[CommandRunner] = None,
@@ -179,6 +182,7 @@ def build_state(snap: Snapshot, runner: Optional[CommandRunner] = None,
         'objects_age_s': None if snap.objects_age_s is None else round(snap.objects_age_s, 3),
         'joints': joints,
         'tool': tool,
+        'tcp': None,          # J2: filled from the jog kinematics (position + W-P-R) when jog is on
         'commands': {'enabled': runner is not None,
                      'allowed': runner.allowed if runner is not None else []},
         'command': runner.status() if runner is not None else {
@@ -222,7 +226,10 @@ COMMAND_PATH = '/api/command'
 STOP_PATH = '/api/stop'
 RESET_PATH = '/api/reset'
 JOBS_PATH = '/api/jobs'
-POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH)
+JOG_PATH = '/api/jog'
+FRAMES_PATH = '/api/frames'
+POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH)
+MAX_FRAMES_BODY = 8192
 _JOB_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})$')
 _CANCEL_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})/cancel$')
 MAX_BODY = 512
@@ -239,8 +246,11 @@ class WebView:
                  extra_allowed_hosts: Sequence[str] = (),
                  commands: Optional[CommandRunner] = None,
                  supervisor: Optional[Supervisor] = None, mode: str = 'gazebo',
-                 jobs: Optional[JobManager] = None):
+                 jobs: Optional[JobManager] = None, jog: Optional[JogController] = None,
+                 frames: Optional[FrameStore] = None):
         self.source = source
+        self.jog = jog if jog is not None else (supervisor.jog if supervisor is not None else None)
+        self.frames = frames
         self.commands = commands
         self.supervisor = supervisor
         self.jobs = jobs or (JobManager(commands, estop=supervisor.estop if supervisor else None)
@@ -279,8 +289,9 @@ class WebView:
             ctype, body = self._assets[path]
             return 200, ctype, body
         if path == '/api/state':
-            body = json.dumps(build_state(self.source.snapshot(), self.commands, self.supervisor,
-                                          self.mode)).encode()
+            doc = build_state(self.source.snapshot(), self.commands, self.supervisor, self.mode)
+            doc['tcp'] = self.jog.tcp_document() if self.jog is not None else None
+            body = json.dumps(doc).encode()
             return 200, 'application/json', body
         if path in ('/frame/rgb.png', '/frame/depth.png'):
             snap = self.source.snapshot()
@@ -332,6 +343,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == JOBS_PATH or _JOB_PATH.match(path):
             self._get_jobs(path, head_only)
             return
+        if path in (JOG_PATH, FRAMES_PATH):
+            self._get_jog_or_frames(path, head_only)
+            return
         if _CANCEL_PATH.match(path):
             self._not_allowed()
             return
@@ -341,6 +355,20 @@ class _Handler(BaseHTTPRequestHandler):
             log.exception('istek islenemedi: %s', self.path)
             status, ctype, body = 500, 'application/json', b'{"error": "sunucu hatasi"}'
         self._send(status, ctype, body, head_only)
+
+    def _get_jog_or_frames(self, path: str, head_only: bool) -> None:
+        view = self.server.view
+        if path == JOG_PATH:
+            if view.jog is None:
+                self._send(403, 'application/json', b'{"error": "jog kapali"}', head_only)
+                return
+            payload = {**view.jog.status(), 'tcp': view.jog.tcp_document()}
+        else:
+            if view.frames is None:
+                self._send(403, 'application/json', b'{"error": "cerceve ucu kapali"}', head_only)
+                return
+            payload = frames_document(view.frames)
+        self._send(200, 'application/json', json.dumps(payload).encode(), head_only)
 
     def _get_jobs(self, path: str, head_only: bool) -> None:
         jobs = self.server.view.jobs
@@ -375,11 +403,15 @@ class _Handler(BaseHTTPRequestHandler):
             allow, why = 'POST', 'bu uç noktaya yalnızca POST yapılır'
         elif path == JOBS_PATH:
             allow, why = 'GET, HEAD, POST', 'GET (liste) ya da POST (iş başlat)'
+        elif path == JOG_PATH:
+            allow, why = 'GET, HEAD, POST', 'GET (durum) ya da POST (jog komutu)'
+        elif path == FRAMES_PATH:
+            allow, why = 'GET, HEAD, PUT', 'GET (liste) ya da PUT (tüm listeyi değiştir)'
         else:
             allow, why = 'GET, HEAD', 'salt okunur: yalnızca GET/HEAD'
         self._json(405, {'error': why}, close=True, extra={'Allow': allow})
 
-    do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _not_allowed    # noqa: N815
+    do_DELETE = do_PATCH = do_OPTIONS = _not_allowed    # noqa: N815
 
     def _cross_site_reason(self) -> Optional[str]:
         """Why this POST looks like it comes from another web page (None: it does not)."""
@@ -415,7 +447,7 @@ class _Handler(BaseHTTPRequestHandler):
             return None
         return runner
 
-    def _read_json_body(self, runner: CommandRunner):
+    def _read_json_body(self, runner: CommandRunner, max_body: int = MAX_BODY):
         """The parsed JSON of a strict POST, or ``_RESPONDED`` after answering with an error."""
         if (self.headers.get('Content-Type') or '').split(';')[0].strip().lower() != \
                 'application/json':
@@ -425,8 +457,8 @@ class _Handler(BaseHTTPRequestHandler):
         if length is None:
             self._json(411, {'error': 'Content-Length gerekli'}, close=True)
             return _RESPONDED
-        if not length.isdigit() or int(length) > MAX_BODY:
-            self._json(413, {'error': f'gövde en fazla {MAX_BODY} bayt olabilir'}, close=True)
+        if not length.isdigit() or int(length) > max_body:
+            self._json(413, {'error': f'gövde en fazla {max_body} bayt olabilir'}, close=True)
             return _RESPONDED
         raw = self.rfile.read(int(length))
         try:
@@ -452,6 +484,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_reset(runner)
         elif path == JOBS_PATH:
             self._post_job(runner)
+        elif path == JOG_PATH:
+            self._post_jog(runner)
         elif cancel:
             self._post_cancel(runner, cancel.group(1))
         else:
@@ -561,8 +595,50 @@ class _Handler(BaseHTTPRequestHandler):
         except JobBusy as exc:
             self._json(409, {'error': str(exc), 'job_id': exc.job_id})
             return
+        except Busy as exc:                      # jog lease active
+            self._json(409, {'error': str(exc), 'state': 'jogging'})
+            return
         doc = self.server.view.jobs.get(job.id)
         self._json(202, doc, extra={'Location': f'{JOBS_PATH}/{job.id}'})
+
+    def _post_jog(self, runner: CommandRunner) -> None:
+        view = self.server.view
+        if view.jog is None:
+            self._json(403, {'error': 'jog bu sunucuda kapalı'})
+            return
+        body = self._read_json_body(runner)
+        if body is _RESPONDED:
+            return
+        remote = self.client_address[0] not in ('127.0.0.1', '::1')
+        try:
+            self._json(200, view.jog.command(body, remote=remote))
+        except JogDenied as exc:
+            self._json(exc.status, {'ok': False, 'error': exc.message, **exc.extra})
+
+    def do_PUT(self) -> None:    # noqa: N802
+        if urlsplit(self.path).path != FRAMES_PATH:
+            self._not_allowed()
+            return
+        runner = self._guard_post()
+        if runner is None:
+            return
+        view = self.server.view
+        if view.frames is None:
+            self._json(403, {'error': 'çerçeve ucu kapalı'})
+            return
+        body = self._read_json_body(runner, MAX_FRAMES_BODY)
+        if body is _RESPONDED:
+            return
+        if view.jog is not None and view.jog.active:
+            self._json(409, {'error': 'jog etkinken çerçeve listesi değiştirilemez'})
+            return
+        try:
+            self._json(200, replace_frames(view.frames, body))
+        except FrameError as exc:
+            self._json(400, {'error': str(exc)})
+        except OSError as exc:
+            log.exception('çerçeveler yazılamadı')
+            self._json(500, {'error': f'çerçeve dosyası yazılamadı ({type(exc).__name__})'})
 
     def _post_cancel(self, runner: CommandRunner, job_id: str) -> None:
         body = self._read_json_body(runner)

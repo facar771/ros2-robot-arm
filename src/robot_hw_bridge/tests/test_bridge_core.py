@@ -375,3 +375,59 @@ def test_reconnecting_host_must_continue_the_tx_seq_or_the_mcu_ignores_it():
 
     assert not answers_hello(0), 'seq 0 (yeniden başlayan istemci) eskidir: atılmalı'
     assert answers_hello(45), 'kaldığı yerden süren istemci duyulur'
+
+
+# ---- jog setpoints (J2) ------------------------------------------------------------------------
+def test_jog_setpoint_moves_the_axes_and_goes_quiet_when_the_stream_stops():
+    rig = Rig().homed()
+    try:
+        q = rig.bridge.positions()
+        for i in range(1, 8):                        # ~20 Hz stream of 3-point, <=100 ms setpoints
+            tgt = [v + 0.004 * i for v in q]
+            out = rig.bridge.setpoint(NAMES, [Point(0.02, tgt), Point(0.04, tgt), Point(0.06, tgt)])
+            assert out.ok, out.message
+            time.sleep(0.05)
+        assert rig.wait(lambda: abs(rig.sim.true_position(0) - rig.hw.axes[0].to_steps(q[0] + 0.028))
+                        < 8, 3.0)
+        time.sleep(0.4)                               # stream stopped: MCU finishes its last target
+        end = [rig.sim.true_position(i) for i in range(6)]
+        time.sleep(0.4)                               # ... and then nothing moves on
+        assert [rig.sim.true_position(i) for i in range(6)] == end
+    finally:
+        rig.close()
+
+
+def test_jog_setpoint_is_refused_unhomed_far_away_or_during_a_trajectory():
+    rig = Rig().configured()
+    try:
+        q = rig.bridge.positions()
+        pts = [Point(0.02, q), Point(0.06, q)]
+        assert 'homing' in rig.bridge.setpoint(NAMES, pts).message          # unhomed
+    finally:
+        rig.close()
+    rig = Rig().homed()
+    try:
+        q = rig.bridge.positions()
+        far = [v + 0.2 for v in q]
+        assert not rig.bridge.setpoint(NAMES, [Point(0.02, far), Point(0.06, far)]).ok
+        assert not rig.bridge.setpoint(NAMES, [Point(0.5, q)]).ok           # horizon too long
+        assert not rig.bridge.setpoint(['joint_1'], [Point(0.02, [0.0])]).ok
+        rig.bridge._exec_lock.acquire()                                     # an action trajectory runs
+        try:
+            assert 'yörünge' in rig.bridge.setpoint(NAMES, [Point(0.02, q), Point(0.06, q)]).message
+        finally:
+            rig.bridge._exec_lock.release()
+    finally:
+        rig.close()
+
+
+def test_heartbeat_keeps_going_at_20_hz_or_faster_without_any_setpoint():
+    from robot_hw_bridge.protocol import HEARTBEAT_PERIOD_MS
+    assert HEARTBEAT_PERIOD_MS <= 50
+    rig = Rig().homed()
+    try:
+        before = rig.link.stats.tx_frames
+        time.sleep(1.0)
+        assert rig.link.stats.tx_frames - before >= 15       # idle: heartbeats only (test link: 20 ms)
+    finally:
+        rig.close()

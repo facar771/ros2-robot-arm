@@ -22,14 +22,15 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from robot_core.supervisor import ESTOP_MESSAGE, CancelFlag, EStop, EStopped
 from robot_core.webcmd import Busy, Command, CommandOutcome, CommandRunner
 
 log = logging.getLogger('robot_core.jobs')
 
-DEFAULT_TIMEOUTS = {'home': 90.0, 'objects': 30.0, 'above': 120.0, 'demo_scenario': 300.0}
+DEFAULT_TIMEOUTS = {'home': 90.0, 'ready': 90.0, 'objects': 30.0, 'above': 120.0,
+                    'demo_scenario': 300.0}
 TIMEOUT_MIN, TIMEOUT_MAX = 1.0, 600.0
 CANCEL_WAIT_S = 3.0
 HISTORY = 50
@@ -105,6 +106,12 @@ class JobManager:
         self._lock = threading.Lock()
         self._jobs: 'OrderedDict[str, Job]' = OrderedDict()
         self._active: Optional[Job] = None
+        self.jog_gate: Optional[Callable[[], bool]] = None    # True while a jog lease is active
+
+    @property
+    def is_running(self) -> bool:
+        with self._lock:
+            return self._active is not None
 
     # ---- submit / cancel ----------------------------------------------------------------------
     def submit(self, command: Command, timeout_s: Optional[float] = None) -> Job:
@@ -112,6 +119,8 @@ class JobManager:
         with self._lock:
             if self._estop is not None and self._estop.is_set:
                 raise EStopped(ESTOP_MESSAGE)
+            if self.jog_gate is not None and self.jog_gate():
+                raise Busy('jog etkin: jog ve işler birbirini dışlar (önce jog kiralamasını bırak)')
             if self._active is not None:
                 raise JobBusy(f'başka bir iş çalışıyor: {self._active.id} '
                               f'({self._active.command.line})', self._active.id)
