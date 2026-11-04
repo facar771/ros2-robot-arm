@@ -51,13 +51,14 @@ def port_free(port: int, host: str = '0.0.0.0') -> bool:
 
 
 class HubService:
-    def __init__(self, settings: Settings, host: str = '0.0.0.0', config_dir=None):
+    def __init__(self, settings: Settings, host: str = '0.0.0.0', config_dir=None, keystore=None):
         self.settings, self.host, self._config_dir = settings, host, config_dir
         self.hub: Optional[Hub] = None
         self._server: Optional[uvicorn.Server] = None
         self._thread: Optional[threading.Thread] = None
         self._error: Optional[BaseException] = None
         self.port = settings.port
+        self.keystore = keystore             # None: AgentService kendi KeyStore'unu açar
 
     @property
     def running(self) -> bool:
@@ -92,6 +93,8 @@ class HubService:
         except ValueError as exc:
             raise ServiceError(str(exc)) from exc
         self.hub = Hub(backend, scenarios, ui, access)
+        from control_hub.agent import AgentService
+        self.hub.agent = AgentService(self.hub, self.settings.agent_config(), self.keystore)
         if self.settings.serial_port:
             try:
                 self._start_bridge()

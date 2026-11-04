@@ -4,3 +4,4 @@ websockets>=12
 pyserial>=3.5
 pyyaml>=6
 segno>=1.6
+keyring>=24

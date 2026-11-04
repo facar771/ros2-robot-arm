@@ -49,3 +49,17 @@ def test_bridge_settings_validation():
     assert st.Settings(serial_port='COM5', bridge_port=80).problems()
     assert st.Settings(serial_port='COM5', bridge_port=8765, port=8765).problems()   # Hub portuyla çakışma
     assert st.Settings(serial_port='', bridge_port=1).problems() == []
+
+
+def test_agent_settings_roundtrip_have_no_secret_field_and_are_validated(tmp_path):
+    from control_hub.desktop import settings as st
+    s = st.Settings(agent_provider='openai', agent_model='m1', agent_base_url='https://api.example.com/v1',
+                    agent_daily_limit=50, agent_max_motions=2, agent_dry_run=True)
+    assert s.problems() == []
+    path = st.save(s, tmp_path / 'settings.json')
+    assert st.load(path) == s
+    names = {f for f in json.loads(path.read_text())}
+    assert not [n for n in names if 'key' in n or 'token' in n or 'secret' in n]
+    for bad in (dict(agent_provider='gemini'), dict(agent_daily_limit=0), dict(agent_max_motions=99),
+                dict(agent_base_url='http://evil.example/v1')):
+        assert st.Settings(**bad).problems(), bad

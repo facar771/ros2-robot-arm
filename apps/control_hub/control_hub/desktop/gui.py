@@ -77,6 +77,15 @@ class HubWindow:
         self.v_baud = tk.StringVar(value=str(s.serial_baud))
         self.v_bport = tk.StringVar(value=str(s.bridge_port))
         self.v_bopen = tk.BooleanVar(value=s.bridge_open)
+        self.v_aprov = tk.StringVar(value=s.agent_provider)
+        self.v_amodel = tk.StringVar(value=s.agent_model)
+        self.v_aurl = tk.StringVar(value=s.agent_base_url)
+        self.v_alimit = tk.StringVar(value=str(s.agent_daily_limit))
+        self.v_amot = tk.StringVar(value=str(s.agent_max_motions))
+        self.v_adry = tk.BooleanVar(value=s.agent_dry_run)
+        self.v_akey = tk.StringVar(value='')              # ASLA settings.json'a okunmaz
+        self.v_aremember = tk.BooleanVar(value=False)
+        self.keystore: Any = None                         # ilk kullanımda açılır (KeyStore)
         self._build()
         root.protocol('WM_DELETE_WINDOW', self.close)
 
@@ -133,6 +142,43 @@ class HubWindow:
             'Boş bırakırsan köprü açılmaz. Başlat\'a basınca port açılır; Docker\'daki ROS düğümü '
             'host.docker.internal:<köprü portu> ile bağlanır.')).grid(row=3, column=0, columnspan=3,
                                                                        sticky='w')
+
+        ag = ttk.LabelFrame(f, text='Yapay zekâ ajanı (sohbet paneli) — isteğe bağlı', padding=PAD)
+        ag.pack(fill='x', pady=(PAD, 0))
+        ag.columnconfigure(1, weight=1)
+        ttk.Label(ag, text='Sağlayıcı / model').grid(row=0, column=0, sticky='w')
+        rowa = ttk.Frame(ag)
+        rowa.grid(row=0, column=1, columnspan=2, sticky='ew', pady=2)
+        self.cb_aprov = ttk.Combobox(rowa, textvariable=self.v_aprov, state='readonly', width=10,
+                                     values=('anthropic', 'openai', 'offline'))
+        self.cb_aprov.pack(side='left')
+        self.e_amodel = ttk.Entry(rowa, textvariable=self.v_amodel)
+        self.e_amodel.pack(side='left', fill='x', expand=True, padx=(PAD, 0))
+        ttk.Label(ag, text='OpenAI uç adresi').grid(row=1, column=0, sticky='w')
+        self.e_aurl = ttk.Entry(ag, textvariable=self.v_aurl)
+        self.e_aurl.grid(row=1, column=1, columnspan=2, sticky='ew', pady=2)
+        ttk.Label(ag, text='Günlük sınır / tur başına hareket').grid(row=2, column=0, sticky='w')
+        rowl = ttk.Frame(ag)
+        rowl.grid(row=2, column=1, columnspan=2, sticky='w')
+        self.e_alimit = ttk.Entry(rowl, textvariable=self.v_alimit, width=7)
+        self.e_alimit.pack(side='left')
+        self.e_amot = ttk.Entry(rowl, textvariable=self.v_amot, width=5)
+        self.e_amot.pack(side='left', padx=PAD)
+        self.c_adry = ttk.Checkbutton(rowl, text='Kuru çalıştırma (robota gitmez)', variable=self.v_adry)
+        self.c_adry.pack(side='left', padx=PAD)
+        ttk.Label(ag, text='API anahtarı').grid(row=3, column=0, sticky='w')
+        self.e_akey = ttk.Entry(ag, textvariable=self.v_akey, show='•')
+        self.e_akey.grid(row=3, column=1, sticky='ew', pady=2)
+        self.b_akey = ttk.Button(ag, text='Ayarla', width=8, command=self.agent_set_key)
+        self.b_akey.grid(row=3, column=2, padx=(PAD, 0))
+        self.c_aremember = ttk.Checkbutton(
+            ag, text='Beni hatırla (Windows Credential Manager; ayar dosyasına YAZILMAZ)',
+            variable=self.v_aremember)
+        self.c_aremember.grid(row=4, column=1, sticky='w')
+        self.b_aclear = ttk.Button(ag, text='Sil', width=8, command=self.agent_clear_key)
+        self.b_aclear.grid(row=4, column=2, padx=(PAD, 0))
+        self.l_akey = ttk.Label(ag, text='Anahtar: girilmedi', foreground='gray')
+        self.l_akey.grid(row=5, column=0, columnspan=3, sticky='w')
 
         bar = ttk.Frame(f)
         bar.pack(fill='x', pady=PAD)
@@ -195,7 +241,10 @@ class HubWindow:
             fake=bool(self.v_fake.get()), port=port, access_mode=self.v_mode.get(),
             pin=self.v_pin.get().strip(), remember_pin=bool(self.v_remember.get()),
             serial_port=self.v_serial.get().strip(), serial_baud=self._int(self.v_baud, -1),
-            bridge_port=self._int(self.v_bport, -1), bridge_open=bool(self.v_bopen.get()))
+            bridge_port=self._int(self.v_bport, -1), bridge_open=bool(self.v_bopen.get()),
+            agent_provider=self.v_aprov.get(), agent_model=self.v_amodel.get().strip(),
+            agent_base_url=self.v_aurl.get().strip(), agent_daily_limit=self._int(self.v_alimit, -1),
+            agent_max_motions=self._int(self.v_amot, -1), agent_dry_run=bool(self.v_adry.get()))
 
     @staticmethod
     def _int(var: tk.StringVar, default: int) -> int:
@@ -203,6 +252,45 @@ class HubWindow:
             return int(var.get().strip())
         except ValueError:
             return default
+
+    # --- ajan anahtarı (yalnızca bu pencere ve 127.0.0.1; settings.json'a YAZILMAZ) ---------------
+    def _keys(self) -> Any:
+        if self.keystore is None:
+            from control_hub.agent import KeyStore
+            self.keystore = KeyStore()
+        return self.keystore
+
+    def _key_text(self) -> str:
+        status = self._keys().status()
+        def word(v: dict) -> str:
+            if not v['set']:
+                return 'yok'
+            return 'ayarlı (hatırlanıyor)' if v['remembered'] else 'ayarlı (yalnızca bellekte)'
+        parts = [f'{p}: {word(v)}' for p, v in status.items()]
+        return 'Anahtar — ' + ', '.join(parts)
+
+    def agent_set_key(self) -> None:
+        provider = self.v_aprov.get()
+        if provider == 'offline':
+            self.info('Anahtar gerekmez', 'Çevrimdışı kural çözücü bir LLM değildir; anahtar istemez.')
+            return
+        try:
+            remembered, warning = self._keys().set(provider, self.v_akey.get(), bool(self.v_aremember.get()))
+        except ValueError as exc:
+            self.error('Anahtar kabul edilmedi', str(exc))
+            return
+        finally:
+            self.v_akey.set('')                           # anahtar kutuda kalmasın
+        self.l_akey.config(text=self._key_text())
+        if warning:
+            self.info('Anahtar', warning)
+
+    def agent_clear_key(self) -> None:
+        provider = self.v_aprov.get()
+        if provider == 'offline':
+            return
+        self._keys().clear(provider, forget=True)
+        self.l_akey.config(text=self._key_text())
 
     def refresh_ports(self) -> None:
         self.cb_serial.config(values=list_serial_ports())
@@ -213,6 +301,9 @@ class HubWindow:
             w.state(['disabled'] if running else ['!disabled'])
         self.cb_mode.state(['disabled'] if running else ['!disabled', 'readonly'])
         self.cb_serial.state(['disabled'] if running else ['!disabled'])
+        for w in (self.e_amodel, self.e_aurl, self.e_alimit, self.e_amot, self.c_adry):
+            w.state(['disabled'] if running else ['!disabled'])
+        self.cb_aprov.state(['disabled'] if running else ['!disabled', 'readonly'])
         self.b_stop.state(['!disabled'] if running else ['disabled'])
 
     # --- başlat/durdur -------------------------------------------------------------------------
@@ -223,6 +314,8 @@ class HubWindow:
             self.error('Ayarlar geçersiz', '\n'.join(problems))
             return
         svc = self.service_factory(s)
+        if self.keystore is not None:                     # pencerede girilen anahtar yeniden başlatmada kalır
+            svc.keystore = self.keystore
         try:
             svc.start()
         except ServiceError as exc:

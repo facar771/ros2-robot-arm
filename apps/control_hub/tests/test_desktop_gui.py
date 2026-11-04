@@ -169,3 +169,34 @@ def test_open_bridge_shows_the_token_in_the_log(root):
         assert 'token' in w.t_log.get('1.0', 'end') and w.service.bridge_token in w.t_log.get('1.0', 'end')
     finally:
         w.stop()
+
+
+def test_agent_key_entry_is_memory_only_cleared_and_never_in_settings(root, tmp_path):
+    from control_hub.agent import KeyStore
+    from control_hub.desktop import settings as settings_mod
+    from tests.helpers_agent import CANARY, MemoryKeyring
+    spy = Spy()
+    kr = MemoryKeyring()
+    w = make(root, spy, agent_provider='openai', agent_model='m', agent_base_url='https://api.example.com/v1')
+    w.keystore = KeyStore(kr)
+    w.v_akey.set(CANARY)
+    w.agent_set_key()
+    assert w.v_akey.get() == ''                                        # kutu boşaldı
+    assert w.keystore.get('openai') == CANARY and kr.data == {}        # varsayılan: yalnızca bellek
+    assert 'ayarlı (yalnızca bellekte)' in w.l_akey.cget('text') and CANARY not in w.l_akey.cget('text')
+    saved = settings_mod.save(w.read_settings(), tmp_path / 's.json').read_text()
+    assert CANARY not in saved and w.read_settings().agent_provider == 'openai'
+    w.v_aremember.set(True)
+    w.v_akey.set(CANARY)
+    w.agent_set_key()
+    assert list(kr.data.values()) == [CANARY] and 'hatırlanıyor' in w.l_akey.cget('text')
+    w.start()                                                          # Hub aynı depoyu kullanır
+    try:
+        assert w.service.hub.agent.keys is w.keystore
+    finally:
+        w.stop()
+    w.agent_clear_key()
+    assert kr.data == {} and w.keystore.get('openai') is None
+    w.v_akey.set('boş bırakma yok')
+    w.agent_set_key()
+    assert spy.errors                                                  # boşluklu anahtar reddedilir

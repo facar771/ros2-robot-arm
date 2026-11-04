@@ -28,6 +28,14 @@ class Settings:
     serial_baud: int = 921600
     bridge_port: int = 8770            # köprünün TCP portu (ROS düğümü buna bağlanır)
     bridge_open: bool = False          # True: 0.0.0.0 (Docker/başka makine) + token zorunlu
+    # Yapay zekâ ajanı: yalnızca SIR OLMAYAN ayarlar. API anahtarı buraya ASLA yazılmaz
+    # (bellek ya da isteğe bağlı Windows Credential Manager).
+    agent_provider: str = 'anthropic'  # anthropic | openai | offline
+    agent_model: str = ''
+    agent_base_url: str = ''           # openai uç adresi (https)
+    agent_daily_limit: int = 200
+    agent_max_motions: int = 3
+    agent_dry_run: bool = False
 
     def problems(self) -> List[str]:
         out: List[str] = []
@@ -46,7 +54,14 @@ class Settings:
                 out.append('Seri baud 300-4000000 arasında olmalı')
             if not 1024 <= self.bridge_port <= 65535 or self.bridge_port == self.port:
                 out.append('Köprü portu 1024-65535 olmalı ve Hub portundan farklı olmalı')
+        out.extend(self.agent_config().problems())
         return out
+
+    def agent_config(self):
+        from control_hub.agent import AgentConfig
+        return AgentConfig(provider=self.agent_provider, model=self.agent_model,
+                           base_url=self.agent_base_url, daily_limit=self.agent_daily_limit,
+                           max_motions=self.agent_max_motions, dry_run=self.agent_dry_run)
 
 
 def settings_path(base: Optional[Path] = None) -> Path:

@@ -72,6 +72,19 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument('--bridge-only', action='store_true',
                    help='yalnızca köprüyü çalıştır (web arayüzü/robot API yok)')
     g.add_argument('--list-serial-ports', action='store_true', help='seri portları listele ve çık')
+    a = p.add_argument_group('Yapay zekâ ajanı (sohbet paneli)')
+    a.add_argument('--no-agent', action='store_true', help='ajan panelini kapat')
+    a.add_argument('--agent-provider', choices=('anthropic', 'openai', 'offline'), default='anthropic',
+                   help="LLM sağlayıcısı; 'offline' = anahtarsız yerleşik kural çözücü (LLM değil)")
+    a.add_argument('--agent-model', default='', help='model adı (openai için zorunlu; yapılandırma değeri)')
+    a.add_argument('--agent-base-url', default='',
+                   help='openai uç adresi (zorunlu; https, http yalnızca yerel makinede)')
+    a.add_argument('--agent-daily-limit', type=int, default=200, help='günlük LLM isteği sınırı')
+    a.add_argument('--agent-max-motions', type=int, default=3, help='tur başına hareket tavanı')
+    a.add_argument('--agent-dry-run', action='store_true',
+                   help='ajan hareket araçları robota GİTMEZ, ne olacağını söyler (ilk deneme için)')
+    a.add_argument('--agent-key-prompt', choices=('anthropic', 'openai'), metavar='SAĞLAYICI',
+                   help='açılışta anahtarı terminalden gizli sor (yalnızca bellekte tutulur)')
     p.add_argument('--firewall-help', action='store_true',
                    help='telefon erişimi için güvenlik duvarı komutlarını YAZDIR (hiçbir şey eklemez)')
     return p
@@ -141,7 +154,28 @@ def build_hub(args: argparse.Namespace) -> Hub:
         hub.bridge = _make_bridge(
             args, on_event=lambda kind, msg, lvl: hub.events.emit(
                 f'hw_{kind}', msg, level=lvl if lvl in ('info', 'warning', 'error') else 'info'))
+    if not args.no_agent and not args.check_config:
+        hub.agent = make_agent(hub, args)
     return hub
+
+
+def make_agent(hub: Hub, args: argparse.Namespace):
+    from control_hub.agent import AgentConfig, AgentError, AgentService
+    config = AgentConfig(provider=args.agent_provider, model=args.agent_model,
+                         base_url=args.agent_base_url, daily_limit=args.agent_daily_limit,
+                         max_motions=args.agent_max_motions, dry_run=args.agent_dry_run)
+    problems = config.problems()
+    if problems:
+        raise ValueError('ajan ayarı: ' + '; '.join(problems))
+    service = AgentService(hub, config)
+    if args.agent_key_prompt and service.enabled:
+        import getpass
+        key = getpass.getpass(f'{args.agent_key_prompt} API anahtarı (görünmez, yalnızca bellekte): ')
+        try:
+            service.set_key(args.agent_key_prompt, key, remember=False)
+        except AgentError as exc:
+            raise ValueError(exc.message) from None
+    return service
 
 
 def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
@@ -174,6 +208,13 @@ def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
         st = hub.bridge.status()
         print(f'  ESP32 köprüsü : {st["serial"]} ↔ tcp://{st["listen"]} (Docker: host.docker.internal:'
               f'{hub.bridge.listen_port})')
+    if hub.agent is not None:
+        if hub.agent.enabled:
+            cfg = hub.agent.config
+            print(f'  AI ajanı      : {cfg.provider}' + (' (KURU ÇALIŞTIRMA)' if cfg.dry_run else '')
+                  + f' — tur başına en çok {cfg.max_motions} hareket, hareket onayı Hub arayüzünde')
+        else:
+            print(f'  AI ajanı      : KAPALI — {hub.agent.unavailable}')
     if hub.access.mode == 'pin':
         print(f'  PIN           : {hub.access.pin}')
     if hub.access.mode == 'open' and host not in ('127.0.0.1', 'localhost', '::1'):

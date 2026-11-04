@@ -182,6 +182,52 @@ cd ~/ros2-robot-arm/apps/control_hub && python -m control_hub --fake --pin 12345
 cd ~/ros2-robot-arm/src/robot_hw_bridge && python3 -m robot_hw_bridge demo --connect 127.0.0.1:8770
 ```
 
+## Yapay zekâ ajanı (sohbet paneli)
+
+Hub'a doğal dille robot komutu veren bir sohbet paneli eklenir. `robot_agent` **kütüphane olarak Hub
+sürecinde** çalışır ve Robot API'ye HTTP ile bağlanır (**Robot API'ye LLM ucu eklenmez**). Sağlayıcılar:
+Claude (Anthropic) ve OpenAI-uyumlu uç; model adı ve OpenAI uç adresi **yapılandırma değeridir** (koda
+gömülü değil). `offline` sağlayıcı anahtarsız yerleşik kural çözücüdür (LLM değil; denemek için).
+
+```bash
+# WSL'de — ilk deneme: sahte robot, KURU ÇALIŞTIRMA (hareket robota gitmez), anahtar gerekmez
+cd ~/ros2-robot-arm/apps/control_hub
+pip install -r requirements.txt
+python -m control_hub --fake --pin 123456 --agent-provider offline --agent-dry-run
+# tarayıcı: http://localhost:8765  → "Yapay zekâ ajanı" kartı → "yeşil nesnenin üstüne git"
+```
+Gerçek LLM için (anahtar **argümana/ortam değişkenine konmaz**, gizli sorulur ve yalnızca bellekte tutulur):
+```bash
+# WSL'de
+python -m control_hub --fake --agent-provider openai --agent-model <MODEL> \
+       --agent-base-url https://<UÇ-ADRESİ>/v1 --agent-key-prompt openai --agent-dry-run
+```
+
+**Güvenlik modeli (dıştan içe):**
+
+| Konu | Davranış |
+|---|---|
+| ACİL DUR | Ajandan **bağımsız yoldan** çalışır (`/api/estop`: oturumsuz, ajan kilidi/kuyruğu yok). Ajan buna engel olamaz; yalnızca dinleyici olarak turunu keser ve bekleyen onayları reddeder. Ajanın `emergency_stop` aracı onaysızdır, günlük limit/hareket tavanı ona uygulanmaz ve Hub kilidini de koyar. Kilidi açma aracı **yoktur**. |
+| Onay kuyruğu | Robotu ya da kamerayı hareket ettiren her araç Hub arayüzünde **Onayla/Reddet** ister. **Zaman aşımında (varsayılan 60 sn) REDDEDİLİR.** ACİL DUR, iptal ya da kapanışta bekleyen onaylar hemen reddedilir; ACİL DUR kilitliyken onay verilemez (`423`). |
+| Sınırlar | Tur başına hareket tavanı (varsayılan 3) ve günlük LLM isteği sınırı (varsayılan 200; bellekte, yeniden başlatınca sıfırlanır: maliyet freni, güvenlik sınırı değil). Her mesaj bağımsız bir turdur (konuşma geçmişi LLM'e taşınmaz). |
+| API anahtarı | Varsayılan **yalnızca bellekte**. "Beni hatırla" işaretlenirse işletim sisteminin anahtar deposuna (`keyring`; Windows'ta Credential Manager); depo yoksa anahtar yine bellekte kalır ve uyarı verilir. `settings.json`'a, olay günlüğüne, Hub günlüğüne ya da HTTP yanıtına **asla** yazılmaz; sunucu yalnızca `{ayarlı, hatırlanıyor}` bayraklarını döner. |
+| Anahtar/ayar girişi | **Yalnızca masaüstü penceresinden ya da `127.0.0.1`'den** (bağlantı loopback + `Host` loopback + vekil başlığı yok). Telefon (LAN) anahtarı giremez, silemez, göremez; sağlayıcı/model/**uç adresi** de değiştiremez (uç adresi anahtarın gideceği yerdir). Docker/NAT arkasından gelen bağlantı yerel sayılmaz (kapalı kalır). |
+| CSRF | `/api/agent/*` POST'ları PIN oturumuna ek olarak oturuma bağlı `X-CSRF-Token` ister (`GET /api/agent/status` verir); `Origin`/`Content-Type` denetimleri aynen geçerli. |
+| Robot tarafı | `robot_agent`'ın beyaz liste araçları, şema denetimi, güvenli kutu, kuru çalıştırma ve anahtar sızıntı koruması aynen geçerli. Eklenti araçları (`run_plugin`) Hub'da **kapalı**. |
+
+`robot_agent` ve `robot_core` depo çıkışında `src/` altından otomatik bulunur; kurulu paket/`PYTHONPATH` varsa
+o kullanılır. Bulunamazsa panel kapalı kalır ve nedeni gösterilir (Hub çalışmaya devam eder). Docker `hub-fake`
+imajında `robot_agent` yoktur: panel kapalıdır. **`.exe`'ye `keyring` ve `robot_agent` paketleme ayrı PR'dır (A3).**
+
+Kaynaklar (resmî dokümandan teyit, 2026-11-04): OpenAI Chat Completions —
+developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create ve
+/api/docs/guides/function-calling (uç `/chat/completions`, `Authorization: Bearer`, `max_completion_tokens`,
+`tools[].function`, `tool_calls[].function.arguments` JSON dizgesi, `tool` rolü + `tool_call_id`). Anthropic
+Messages API — platform.claude.com/docs/en/api/overview ve /api/messages/create: güncel genel bakışta
+`Authorization: Bearer` birincil, `x-api-key` "eski yedek, hâlâ destekleniyor", `anthropic-version`
+zorunlu (örnek değer `2026-10-21`; eski sayfalarda `2023-06-01`). `robot_agent.llm.AnthropicLLM` (A1)
+`x-api-key` + `2023-06-01` kullanır; bu PR'da değiştirilmedi.
+
 ## Yapı
 
 ```
@@ -200,6 +246,7 @@ control_hub/
   web/        düz HTML/CSS/JS, derleme yok, mobil öncelikli, PWA manifest
   desktop/    Windows .exe'nin pencere + servis + güvenlik duvarı mantığı (Tk yalnızca gui.py'de)
   hw/         ESP32 köprüsü: COM↔TCP (bayt şeffaf), yeniden bağlanma, token
+  agent/      LLM ajanı: AgentService (robot_agent'ı sarar), anahtar deposu, onay kuyruğu, sahte Robot API portu
   paths.py    gömülü/kullanıcı yolları (PyInstaller _MEIPASS dahil)
 config/       scenarios.yaml (butonlar), ui.config.json (yerleşim + tema)
 hub.spec, exe_entry.py, assets/   PyInstaller tek dosya derlemesi
@@ -223,6 +270,7 @@ tests/
 | PIN | Her açılışta rastgele 6 hane (ya da `--pin`); yalnızca terminalde/masaüstünde gösterilir, API'de asla. Oturum çerezi `HttpOnly; SameSite=Strict`, 12 saat. |
 | Deneme sınırı | İstemci başına 5 hatalı PIN → 60 sn kilit; tüm istemciler toplamı 20 hata → 5 dk. (Docker'da istemciler ağ geçidi adresiyle aynı görünebilir; o durumda kilit herkese uygulanır.) |
 | Başka siteden saldırı | `Host` yalnızca IP / `localhost` / `*.local` / `--allow-host` (DNS rebinding); `/api` POST'ları `application/json` ister; yabancı `Origin`/`cross-site` `403`; sıkı CSP. |
+| Ajan | `/api/agent/*`: PIN oturumu + CSRF belirteci; anahtar/ayar yalnızca yerelden; ayrıntı "Yapay zekâ ajanı" bölümünde. |
 | **ACİL DUR** | Her kipte ve **oturumsuz** çalışır; senaryoyu keser, kilitler (`423`), kilidi açmak (`/api/estop/reset`) kontrol yetkisi ister. Bedeli: ağdaki herkes robotu durdurabilir; bilinçli seçim. |
 
 **İnternete açma, router'da port yönlendirme YAPMA.** Hub ev ağı içindir; PIN, şifreli olmayan HTTP
