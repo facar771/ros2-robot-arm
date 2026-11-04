@@ -6,6 +6,7 @@ gösterilebilir) fırlatır; Hub açılırken robot kapalıysa sorun değil (yen
 from __future__ import annotations
 
 import logging
+import secrets
 import socket
 import sys
 import threading
@@ -25,6 +26,7 @@ from control_hub.hub_core import (
     load_ui_config,
 )
 from control_hub.hub_core.scenarios import ConfigError
+from control_hub.hw import BridgeError, SerialTcpBridge
 from control_hub.paths import resolve_config_dir
 from control_hub.server import create_app
 
@@ -90,6 +92,12 @@ class HubService:
         except ValueError as exc:
             raise ServiceError(str(exc)) from exc
         self.hub = Hub(backend, scenarios, ui, access)
+        if self.settings.serial_port:
+            try:
+                self._start_bridge()
+            except ServiceError:
+                self._cleanup()
+                raise
         config = uvicorn.Config(create_app(self.hub), host=self.host, port=self.settings.port,
                                 log_level='warning', log_config=None)
         self._server = uvicorn.Server(config)
@@ -107,6 +115,24 @@ class HubService:
         err = self._error
         self._cleanup()
         raise ServiceError(f'Sunucu başlamadı: {err}' if err else 'Sunucu zamanında başlamadı')
+
+    @property
+    def bridge_token(self) -> Optional[str]:
+        return self.hub.bridge.token if self.hub and self.hub.bridge else None
+
+    def _start_bridge(self) -> None:
+        s = self.settings
+        host = '0.0.0.0' if s.bridge_open else '127.0.0.1'
+        token = secrets.token_urlsafe(9) if s.bridge_open else None     # açıkken token şart
+        try:
+            bridge = SerialTcpBridge(
+                s.serial_port, baud=s.serial_baud, listen=(host, s.bridge_port), token=token,
+                on_event=lambda kind, msg, lvl: self.hub.events.emit(  # type: ignore[union-attr]
+                    f'hw_{kind}', msg, level=lvl if lvl in ('info', 'warning', 'error') else 'info'))
+            bridge.start()
+        except BridgeError as exc:
+            raise ServiceError(str(exc)) from exc
+        self.hub.bridge = bridge                                          # type: ignore[union-attr]
 
     def _run(self) -> None:
         try:

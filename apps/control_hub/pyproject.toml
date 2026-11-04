@@ -9,8 +9,8 @@ dependencies = ["fastapi>=0.110", "uvicorn>=0.29", "pyyaml>=6", "segno>=1.6"]
 test = ["pytest", "httpx", "websockets", "ruff"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
+testpaths = ["tests", "../../src/robot_hw_bridge/tests"]
+pythonpath = [".", "../../src/robot_hw_bridge"]
 addopts = "-q"
 
 [tool.ruff]

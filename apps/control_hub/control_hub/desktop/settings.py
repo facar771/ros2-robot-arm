@@ -24,6 +24,10 @@ class Settings:
     access_mode: str = 'pin'
     pin: str = ''                      # '' = her açılışta rastgele
     remember_pin: bool = False         # True: PIN settings.json'a düz metin yazılır
+    serial_port: str = ''              # ESP32 köprüsü: 'COM5' ya da 'socket://host:port'; boş = köprü yok
+    serial_baud: int = 921600
+    bridge_port: int = 8770            # köprünün TCP portu (ROS düğümü buna bağlanır)
+    bridge_open: bool = False          # True: 0.0.0.0 (Docker/başka makine) + token zorunlu
 
     def problems(self) -> List[str]:
         out: List[str] = []
@@ -37,6 +41,11 @@ class Settings:
             out.append(f'Erişim kipi {ACCESS_MODES} içinden olmalı')
         if self.pin and not (self.pin.isdigit() and 4 <= len(self.pin) <= 12):
             out.append('PIN 4-12 haneli rakam olmalı (boş bırakırsan rastgele üretilir)')
+        if self.serial_port:
+            if not 300 <= self.serial_baud <= 4_000_000:
+                out.append('Seri baud 300-4000000 arasında olmalı')
+            if not 1024 <= self.bridge_port <= 65535 or self.bridge_port == self.port:
+                out.append('Köprü portu 1024-65535 olmalı ve Hub portundan farklı olmalı')
         return out
 
 

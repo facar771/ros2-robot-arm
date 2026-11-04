@@ -68,3 +68,28 @@ def test_turkish_output_survives_a_cp1252_console(monkeypatch):
     sys.stdout.flush()
     assert 'Yapılandırma geçerli: şğüöç İ' in raw.getvalue().decode('utf-8')
     print('ekstra', file=sys.stderr)                 # stderr de çökmemeli
+
+
+def test_bridge_cli_flags(capsys):
+    assert launcher.main(['--list-serial-ports']) == 0
+    assert launcher.main(['--bridge-only']) == 2                        # port verilmedi
+    assert 'serial-bridge' in capsys.readouterr().err
+    with __import__('pytest').raises(SystemExit, match='token'):
+        launcher.main(['--bridge-only', '--serial-bridge', 'COM3', '--bridge-listen', '0.0.0.0:8770'])
+
+
+def test_cli_builds_hub_with_bridge_but_does_not_open_it(monkeypatch):
+    args = cli.build_parser().parse_args(['--fake', '--serial-bridge', 'COM5', '--pin', '123456'])
+    hub = cli.build_hub(args)
+    try:
+        assert hub.bridge is not None and hub.snapshot()['bridge']['serial_connected'] is False
+        assert hub.bridge.serial_url == 'COM5'
+    finally:
+        hub.close()
+    args = cli.build_parser().parse_args(['--fake', '--serial-bridge', 'COM5', '--check-config'])
+    assert cli.build_hub(args).bridge is None                           # --check-config köprüyü kurmaz
+
+
+def test_bridge_selftest_runs_in_process(capsys):
+    assert launcher.main(['--bridge-selftest']) == 0
+    assert 'BRIDGE-SELFTEST OK' in capsys.readouterr().out

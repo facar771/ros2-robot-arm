@@ -59,6 +59,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Host başlığı olarak kabul edilecek ek ad (örn. robot.evim). Tekrarlanabilir.")
     p.add_argument('--no-qr', action='store_true', help='terminalde QR kodu gösterme')
     p.add_argument('--check-config', action='store_true', help='yapılandırmayı doğrula ve çık')
+    g = p.add_argument_group('ESP32 donanım köprüsü (USB-seri ↔ TCP)')
+    g.add_argument('--serial-bridge', metavar='PORT', default=os.environ.get('HUB_SERIAL'),
+                   help="seri port ('COM5', '/dev/ttyUSB0' ya da test için 'socket://127.0.0.1:8771'): "
+                        'açılır ve TCP üzerinden tek istemciye sunulur')
+    g.add_argument('--serial-baud', type=int, default=921600)
+    g.add_argument('--bridge-listen', default='127.0.0.1:8770', metavar='HOST:PORT',
+                   help='köprünün TCP adresi (varsayılan yalnızca bu bilgisayar). 0.0.0.0 için '
+                        '--bridge-token şart')
+    g.add_argument('--bridge-token', default=os.environ.get('HUB_BRIDGE_TOKEN'),
+                   help='istemci ilk satırda "HUBBRIDGE-AUTH <token>" göndermeli')
+    g.add_argument('--bridge-only', action='store_true',
+                   help='yalnızca köprüyü çalıştır (web arayüzü/robot API yok)')
+    g.add_argument('--list-serial-ports', action='store_true', help='seri portları listele ve çık')
     p.add_argument('--firewall-help', action='store_true',
                    help='telefon erişimi için güvenlik duvarı komutlarını YAZDIR (hiçbir şey eklemez)')
     return p
@@ -73,6 +86,47 @@ def print_firewall_help(port: int) -> None:
     print('  Kaldır:\n    ' + fw.powershell_remove())
 
 
+def _make_bridge(args: argparse.Namespace, on_event=None):
+    from control_hub.hw import BridgeError, SerialTcpBridge
+    from control_hub.hw.bridge import parse_listen
+    try:
+        host, port = parse_listen(args.bridge_listen)
+        return SerialTcpBridge(args.serial_bridge, baud=args.serial_baud, listen=(host, port),
+                               token=args.bridge_token or None, on_event=on_event)
+    except (BridgeError, ValueError) as exc:
+        raise SystemExit(f'Köprü ayarı hatalı: {exc}') from exc
+
+
+def run_bridge_only(args: argparse.Namespace) -> int:
+    import time
+    if not args.serial_bridge:
+        print('--bridge-only için --serial-bridge PORT gerekli (--list-serial-ports ile bak).',
+              file=sys.stderr)
+        return 2
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    bridge = _make_bridge(args)
+    try:
+        bridge.start()
+    except Exception as exc:                                   # noqa: BLE001
+        print(f'Köprü başlatılamadı: {exc}', file=sys.stderr)
+        return 2
+    st = bridge.status()
+    print(f'Köprü çalışıyor: {st["serial"]} ↔ tcp://{st["listen"]}   (Ctrl-C ile durdur)')
+    print('Docker içinden bağlanmak için: host.docker.internal:' + str(bridge.listen_port))
+    try:
+        while True:
+            time.sleep(5)
+            st = bridge.status()
+            print(f'  seri={"bağlı" if st["serial_connected"] else "YOK"} '
+                  f'istemci={"var" if st["client_connected"] else "yok"} '
+                  f'→seri={st["bytes_to_serial"]}B →istemci={st["bytes_to_client"]}B')
+    except KeyboardInterrupt:
+        pass
+    finally:
+        bridge.stop()
+    return 0
+
+
 def build_hub(args: argparse.Namespace) -> Hub:
     config_dir = resolve_config_dir(args.config_dir)
     scenarios = load_scenarios(config_dir / 'scenarios.yaml')
@@ -82,7 +136,12 @@ def build_hub(args: argparse.Namespace) -> Hub:
         backend = FakeBackend(time_scale=args.fake_speed)
     else:
         backend = RobotApiBackend(args.robot_url, autostart=not args.check_config)
-    return Hub(backend, scenarios, ui, access)
+    hub = Hub(backend, scenarios, ui, access)
+    if args.serial_bridge and not args.check_config:
+        hub.bridge = _make_bridge(
+            args, on_event=lambda kind, msg, lvl: hub.events.emit(
+                f'hw_{kind}', msg, level=lvl if lvl in ('info', 'warning', 'error') else 'info'))
+    return hub
 
 
 def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
@@ -111,6 +170,10 @@ def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
             print('  UYARI: robot adresi loopback değil; robot API\'si yalnızca 127.0.0.1 kabul eder.')
     else:
         print('  Robot         : SAHTE (--fake)')
+    if hub.bridge is not None:
+        st = hub.bridge.status()
+        print(f'  ESP32 köprüsü : {st["serial"]} ↔ tcp://{st["listen"]} (Docker: host.docker.internal:'
+              f'{hub.bridge.listen_port})')
     if hub.access.mode == 'pin':
         print(f'  PIN           : {hub.access.pin}')
     if hub.access.mode == 'open' and host not in ('127.0.0.1', 'localhost', '::1'):
@@ -131,6 +194,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.firewall_help:
         print_firewall_help(args.port)
         return 0
+    if args.list_serial_ports:
+        from control_hub.hw import list_serial_ports
+        ports = list_serial_ports()
+        print('\n'.join(ports) if ports else 'Seri port bulunamadı.')
+        return 0
+    if args.bridge_only:
+        return run_bridge_only(args)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     try:
         hub = build_hub(args)
@@ -146,6 +216,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     import uvicorn
 
     from control_hub.server import create_app
+    if hub.bridge is not None:
+        try:
+            hub.bridge.start()
+        except Exception as exc:                               # noqa: BLE001
+            print(f'Köprü başlatılamadı: {exc}', file=sys.stderr)
+            hub.close()
+            return 2
     _print_banner(hub, args.host, args.port, show_qr=not args.no_qr)
     try:
         uvicorn.run(create_app(hub, extra_allowed_hosts=args.allow_host), host=args.host,
