@@ -217,7 +217,9 @@ python -m control_hub --fake --agent-provider openai --agent-model <MODEL> \
 
 `robot_agent` ve `robot_core` depo çıkışında `src/` altından otomatik bulunur; kurulu paket/`PYTHONPATH` varsa
 o kullanılır. Bulunamazsa panel kapalı kalır ve nedeni gösterilir (Hub çalışmaya devam eder). Docker `hub-fake`
-imajında `robot_agent` yoktur: panel kapalıdır. **`.exe`'ye `keyring` ve `robot_agent` paketleme ayrı PR'dır (A3).**
+imajında `robot_agent` yoktur: panel kapalıdır. **`ControlHub.exe` ajanı içerir** (`robot_agent`, `robot_core` alt kümesi, `keyring` + Windows Credential Manager
+arka ucu `hub.spec` ile gömülü; `robot_plugins` yok). Öz-sınama: `ControlHub.exe --agent-selftest` (sahte yerel LLM,
+kuru çalıştırma, canary, anahtar deposu; gerçek depo çalışmazsa `KEYRING-REAL: SKIPPED <neden>` yazar).
 
 Kaynaklar (resmî dokümandan teyit, 2026-11-04): OpenAI Chat Completions —
 developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create ve

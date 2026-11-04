@@ -134,6 +134,73 @@ jobs:
           Write-Host "::$level title=gui-selftest (.exe)::$t"
           exit $rc
 
+      # A3: LLM ajanı .exe'nin içinde. Sahte yerel LLM sunucusuna karşı kuru çalıştırma, canary taraması (HTTP
+      # yanıtları + olaylar + günlük) ve anahtar deposu yaz-oku-sil. Gerçek Credential Manager çalışmazsa
+      # "KEYRING-REAL: SKIPPED <neden>" annotation'ı WARNING olarak görünür (sessiz atlama yok).
+      - name: Açılış testi 4 - LLM ajanı (kuru çalıştırma, canary, anahtar deposu)
+        run: |
+          $exe = (Resolve-Path dist/ControlHub.exe).Path
+          $canary = 'sk-CANARY-' + [guid]::NewGuid().ToString('N')
+          $env:HUB_SELFTEST_CANARY = $canary
+          $job = Start-Process -FilePath $exe -ArgumentList '--agent-selftest' -PassThru -Wait:$false `
+                   -RedirectStandardOutput agent_out.txt -RedirectStandardError agent_err.txt -WindowStyle Hidden
+          if (-not $job.WaitForExit(120000)) { Stop-Process -Id $job.Id -Force; $rc = 124 } else { $rc = $job.ExitCode }
+          Remove-Item Env:HUB_SELFTEST_CANARY
+          $text = (Get-Content agent_out.txt, agent_err.txt -ErrorAction SilentlyContinue | Out-String)
+          $leak = $text.Contains($canary)
+          $real = ($text -split "`n" | Where-Object { $_ -match 'KEYRING-REAL' }) -join ' '
+          $t = ("rc=$rc leak=$leak`n" + $text).Trim()
+          if ($t.Length -gt 2800) { $t = $t.Substring(0, 2800) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0 -and -not $leak) { 'notice' } else { 'error' }
+          Write-Host "::$level title=agent-selftest (.exe)::$t"
+          if ($real -match 'SKIPPED') {
+            $r = ($real.Trim() -replace '%','%25')
+            Write-Host "::warning title=KEYRING-REAL ATLANDI (Credential Manager denenmedi)::$r"
+          }
+          if ($leak) { Write-Host "::error title=CANARY::anahtar .exe çıktısında göründü" }
+          if ($rc -ne 0 -or $leak) { exit 1 }
+
+      - name: Açılış testi 5 - çalışan .exe'de ajan kartı (durum ucu + arayüz dosyaları) ve canary günlüğü
+        run: |
+          $exe = (Resolve-Path dist/ControlHub.exe).Path
+          $canary = 'sk-CANARY-' + [guid]::NewGuid().ToString('N')
+          $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden `
+                 -ArgumentList '--fake','--pin','123456','--port','18766','--no-qr','--agent-dry-run' `
+                 -RedirectStandardOutput agent_hub_out.txt -RedirectStandardError agent_hub_err.txt
+          $msg = ''; $ok = $false
+          try {
+            $base = 'http://127.0.0.1:18766'
+            for ($i = 0; $i -lt 60; $i++) {
+              try { Invoke-RestMethod "$base/health" -TimeoutSec 2 | Out-Null; break } catch { Start-Sleep 1 }
+            }
+            $sess = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+            Invoke-RestMethod "$base/api/login" -Method Post -ContentType 'application/json' `
+              -Body '{"pin":"123456"}' -WebSession $sess | Out-Null
+            $st = Invoke-RestMethod "$base/api/agent/status" -WebSession $sess
+            $html = (Invoke-WebRequest "$base/" -WebSession $sess -UseBasicParsing).Content
+            $js = (Invoke-WebRequest "$base/agent.js" -WebSession $sess -UseBasicParsing).Content
+            $hdr = @{ 'X-CSRF-Token' = $st.csrf }
+            Invoke-RestMethod "$base/api/agent/key" -Method Post -ContentType 'application/json' -Headers $hdr `
+              -Body (@{ provider = 'openai'; key = $canary; remember = $false } | ConvertTo-Json) `
+              -WebSession $sess | Out-Null
+            $after = (Invoke-WebRequest "$base/api/agent/status" -WebSession $sess -UseBasicParsing).Content
+            $ev = (Invoke-WebRequest "$base/api/events" -WebSession $sess -UseBasicParsing).Content
+            $ok = ($st.enabled -eq $true) -and ($html -match 'agent\.js') -and ($js -match 'p-agent') `
+                  -and (-not $after.Contains($canary)) -and (-not $ev.Contains($canary))
+            $msg = "enabled=$($st.enabled) provider=$($st.provider) dry_run=$($st.dry_run) unavailable=$($st.unavailable)"
+          } catch { $msg = "hata: $($_.Exception.Message)" }
+          finally { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
+          Start-Sleep 1
+          $logs = (Get-Content agent_hub_out.txt, agent_hub_err.txt -ErrorAction SilentlyContinue | Out-String)
+          $leak = $logs.Contains($canary)
+          $t = ("ok=$ok leak=$leak`n$msg`n--- .exe çıktısı ---`n$logs").Trim()
+          if ($t.Length -gt 2800) { $t = $t.Substring(0, 2800) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($ok -and -not $leak) { 'notice' } else { 'error' }
+          Write-Host "::$level title=ajan kartı + canary (.exe)::$t"
+          if (-not $ok -or $leak) { exit 1 }
+
       - name: ControlHub.exe'yi artifact olarak yükle
         if: always() && hashFiles('apps/control_hub/dist/ControlHub.exe') != ''
         uses: actions/upload-artifact@v4

@@ -7,6 +7,8 @@
     ControlHub.exe --gui-selftest       pencereyi kur, sahte robotla Hub'ı başlat, /health'e bak, ardından
                                         köprü öz-sınamasını yap, çık (CI)
     ControlHub.exe --bridge-selftest    yalnızca ESP32 köprüsü öz-sınaması (pyserial gömülü mü)
+    ControlHub.exe --agent-selftest     LLM ajanı öz-sınaması (robot_agent gömülü mü, kuru çalıştırma, canary,
+                                        anahtar deposu yaz-oku-sil)
 """
 from __future__ import annotations
 
@@ -132,6 +134,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == '--bridge-selftest':
         return bridge_selftest()
+    if argv and argv[0] == '--agent-selftest':
+        from control_hub.agent.selftest import agent_selftest
+        return agent_selftest()
     if argv and argv[0] == '--gui-selftest':
         return gui_selftest()
     if not argv or argv == ['--gui']:

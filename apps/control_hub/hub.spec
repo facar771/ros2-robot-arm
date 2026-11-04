@@ -6,22 +6,33 @@
 # PowerShell'den bayrakla açılınca çıktı (--check-config, --help ...) normal görünür.
 import sys
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+
+# LLM ajanı (A3): robot_agent + robot_core (yalnızca saf-Python alt kümesi; numpy YOK, ROS YOK) depo kaynağından
+# gömülür. robot_plugins gömülmez (ajan eklenti köprüsü boş katalogla kapalı açılır).
+AGENT_PATHS = ['../../src/robot_agent', '../../src/robot_core']
+CORE_MODULES = ['config', 'errors', 'interpreter', 'models', 'ports', 'safezone', 'scenario', 'skills',
+                'supervisor', 'targets', 'webcmd']
 
 hidden = (
     collect_submodules('uvicorn')            # protokol/loop modülleri dinamik import edilir
     + collect_submodules('websockets')       # /ws için (yoksa arayüz yoklamaya düşer)
     + collect_submodules('serial')           # ESP32 köprüsü: pyserial (Windows COM, socket:// vb. işleyiciler)
     + collect_submodules('control_hub')
+    + collect_submodules('robot_agent')
+    + ['robot_core'] + ['robot_core.' + m for m in CORE_MODULES]
+    # anahtar deposu: keyring arka uçlarını entry point (importlib.metadata) ile bulur -> dist-info gömülür,
+    # Windows Credential Manager arka ucu (WinVaultKeyring) pywin32-ctypes (win32ctypes) ile çalışır
+    + collect_submodules('keyring') + collect_submodules('win32ctypes')
     + ['yaml', 'segno', 'h11', 'anyio._backends._asyncio', 'tkinter', 'tkinter.ttk', 'tkinter.messagebox']
 )
 
 a = Analysis(
     ['exe_entry.py'],
-    pathex=['.'],
-    datas=[('control_hub/web', 'control_hub/web'), ('config', 'config')],
+    pathex=['.'] + AGENT_PATHS,
+    datas=[('control_hub/web', 'control_hub/web'), ('config', 'config')] + copy_metadata('keyring'),
     hiddenimports=hidden,
-    excludes=['numpy', 'PIL', 'pytest', 'robot_core', 'matplotlib', 'IPython'],
+    excludes=['numpy', 'PIL', 'pytest', 'matplotlib', 'IPython'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
