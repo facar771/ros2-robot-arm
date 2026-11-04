@@ -1,0 +1,53 @@
+# EXAMPLE of the user-frames file (robot_core.frames.FrameStore). The real file lives in the data
+# directory, not in the repo; its path is a parameter. Points are TCP POSITIONS in the base frame
+# (metres), not joint angles; `pose` is derived from them and checked on load.
+frames_version: 1
+frames:
+- name: table
+  points:
+    origin:
+    - 0.4
+    - 0.0
+    - 0.3
+    x:
+    - 0.55
+    - 0.0
+    - 0.3
+    xy:
+    - 0.4
+    - 0.12
+    - 0.3
+  pose:
+    position:
+    - 0.4
+    - 0.0
+    - 0.3
+    quaternion_xyzw:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+- name: fixture_a
+  points:
+    origin:
+    - 0.3
+    - -0.2
+    - 0.25
+    x:
+    - 0.3
+    - -0.05
+    - 0.25
+    xy:
+    - 0.2
+    - -0.2
+    - 0.25
+  pose:
+    position:
+    - 0.3
+    - -0.2
+    - 0.25
+    quaternion_xyzw:
+    - 0.0
+    - 0.0
+    - 0.7071067811865475
+    - 0.7071067811865476
