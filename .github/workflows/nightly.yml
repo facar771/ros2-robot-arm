@@ -39,6 +39,7 @@ jobs:
           - gazebo-agent
           - gazebo-integration
           - gazebo-tracking
+          - hw
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

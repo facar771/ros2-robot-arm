@@ -26,7 +26,10 @@ def generate_launch_description():
         DeclareLaunchArgument('mode', default_value='gazebo',
                               description='mock | gazebo | real: what the robot is, shown in '
                                           '/api/state (robot.mode)'),
-        SetParameter(name='use_sim_time', value=True),
+        DeclareLaunchArgument('use_sim_time', default_value='true',
+                              description='false for the real robot (mode:=real): no /clock'),
+        SetParameter(name='use_sim_time',
+                     value=ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)),
         Node(package='robot_viz', executable='web_view', output='screen',
              parameters=[{'host': ParameterValue(LaunchConfiguration('host'), value_type=str),
                           'port': ParameterValue(LaunchConfiguration('port'), value_type=int),

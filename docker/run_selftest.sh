@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking]
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw]
 #   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
@@ -32,6 +32,12 @@
 # gazebo-tracking = NO robot arm: robot_sim/worlds/tracking.sdf (3-DoF camera platform + scripted red target)
 #                 and robot_vision_ros' tracking node; runs only tracking_check (lock behaviour on four
 #                 scenarios, thresholds shared with the unit simulation). Slow: ~5 min (sim runs at 0.4x).
+# hw            = NO simulator: robot_hw_bridge's hw_stack (robot_state_publisher + move_group + hw_bridge_node)
+#                 against the ESP32 SIMULATOR (Esp32Sim, served over TCP by the check on 127.0.0.1:8771, the
+#                 way the Hub bridge will serve the real board) + the browser with commands in `mode: real`;
+#                 runs only hw_check (unhomed boot, refusal before homing, homing, measured motion vs.
+#                 hardware.py, Robot API e-stop, MCU e-stop, lost link, frozen node -> MCU watchdog).
+#                 No physics: this proves the bridge logic, NOT a real motor or the real firmware.
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -59,7 +65,9 @@ case "$MODE" in
     gazebo-integration) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py world:=workspace perception:=true perception_scene:=true)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true); CTRL_TIMEOUT=180 ;;
     gazebo-tracking) LAUNCH=(ros2 launch robot_vision_ros tracking.launch.py); CTRL_TIMEOUT=240 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking]"; exit 64 ;;
+    hw) LAUNCH=(ros2 launch robot_hw_bridge hw_stack.launch.py bridge_host:=127.0.0.1 bridge_port:=8771 loop_stall_ms:=300 robot_api_url:=http://127.0.0.1:8080)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=real use_sim_time:=false); CTRL_TIMEOUT=60 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -136,7 +144,15 @@ camera_and_joints_ready() {
         && timeout 20 ros2 topic list 2>/dev/null | grep -q '^/platform/joint_states$'
 }
 
-if [ "$MODE" = "gazebo-tracking" ]; then
+hw_ready() {
+    timeout 20 ros2 action list 2>/dev/null | grep -q '^/arm_controller/follow_joint_trajectory$'
+}
+
+if [ "$MODE" = "hw" ]; then
+    # no ros2_control here: the bridge node IS the controller. The ESP32 simulator is started by hw_check.
+    wait_for "move_group node" 90 bash -c 'ros2 node list 2>/dev/null | grep -q move_group'
+    wait_for "hw_bridge action server" "$CTRL_TIMEOUT" hw_ready
+elif [ "$MODE" = "gazebo-tracking" ]; then
     wait_for "camera + platform joint states" "$CTRL_TIMEOUT" camera_and_joints_ready
 else
     wait_for "move_group node" 90 bash -c 'ros2 node list 2>/dev/null | grep -q move_group'
@@ -162,6 +178,8 @@ elif [ "$MODE" = "gazebo-agent" ]; then
     timeout 900 ros2 run robot_viz agent_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-integration" ]; then
     timeout 1500 ros2 run robot_viz integration_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+elif [ "$MODE" = "hw" ]; then
+    timeout 600 ros2 run robot_viz hw_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-tracking" ]; then
     timeout 1500 ros2 run robot_vision_ros tracking_check --out /tmp/tracking 2>&1 | tee /tmp/tracking_check.log
     STATUS=${PIPESTATUS[0]}

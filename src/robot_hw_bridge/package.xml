@@ -7,6 +7,15 @@
   <maintainer email="facar7711@gmail.com">facar771</maintainer>
   <license>Apache-2.0</license>
 
+  <depend>rclpy</depend>
+  <depend>robot_core</depend>
+  <depend>control_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>robot_moveit_config</exec_depend>   <!-- hw_stack.launch.py: rsp + move_group -->
+
   <test_depend>python3-pytest</test_depend>
 
   <export>

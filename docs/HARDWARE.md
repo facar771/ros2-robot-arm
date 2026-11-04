@@ -174,7 +174,56 @@ Tek istemci; ikinci bağlantı reddedilir. Varsayılan yalnızca `127.0.0.1`; `0
 
 ## 10. Sonraki adımlar / açık kararlar
 
-* **B2:** ROS 2 düğümü (`HwLink` sarmalayıcı), eksen birimi dönüşümü (`motors`), `ros2_control` donanım arayüzü ya da basit köprü düğümü, ACİL DUR ↔ Robot API `/api/stop` bağı, hat kopunca otomatik yazılım acil dur.
+* **B2 (yapıldı, §11):** ROS 2 köprü düğümü, `FollowJointTrajectory`, `/joint_states`, iki yönlü watchdog, Robot API acil dur bağı. Kalan: tek istemci kuralı ve gerçek donanımla doğrulama (B4).
 * **B3:** ESP32 firmware (PlatformIO), step üretimi (RMT/LEDC/timer), encoder (PCNT/AS5600...), NC girişi, §6 doğrulama listesi.
 * **Açık:** (1) STATUS/heartbeat 50 ms yeterli mi (USB gerçek jitter'ı), (2) tek istemci kuralı B2'de yeterli mi, (3) Wi-Fi anahtar dağıtımı (şimdilik önceden paylaşılan anahtar),
   (4) çok eksenli senkron hareket (şimdilik eksen başına bağımsız `MOVE`; koordineli yörünge B2/B3'te).
+
+## 11. ROS 2 köprü düğümü (`hw_bridge_node`, B2)
+
+Paket `robot_hw_bridge`; ROS'tan bağımsız çekirdek `core.py` (`HwBridge`), Robot API istemcisi `robot_api.py`,
+düğüm `node.py`. Eklem↔motor dönüşümü **yalnızca** `robot_core.hardware`'dan gelir (`joints_to_steps`,
+`to_steps_int`, `soft_limits`, `hard_limits`); düğümde ikinci bir formül yoktur.
+
+```
+ros2 launch robot_hw_bridge hw_stack.launch.py bridge_host:=host.docker.internal bridge_port:=8770
+ros2 launch robot_viz web_view.launch.py commands:=true mode:=real use_sim_time:=false
+```
+
+| Arayüz | Açıklama |
+|---|---|
+| `/arm_controller/follow_joint_trajectory` | MoveIt'in kullandığı action; aynı ad, `moveit_controllers.yaml` değişmedi |
+| `/joint_states` | `joint_1..joint_6`, konum = MCU komut sayacından (açık döngü: **kestirim**, ölçüm değil) |
+| `~/state` (`std_msgs/String`, JSON) | bağlantı, `homed`, MCU durumu, uyarılar |
+| `~/home`, `~/clear` (`std_srvs/Trigger`) | homing; NC döngü kapalıyken ACİL DUR kilidini aç |
+| parametreler | `hardware_profile`, `bridge_host`, `bridge_port`, `bridge_token` (ya da `HUB_BRIDGE_TOKEN`), `watchdog_ms` (200-500, varsayılan 300), `loop_stall_ms` (50..watchdog, varsayılan 250), `robot_api_url` (yalnızca loopback) |
+
+**Açılış = UNHOMED.** Düğüm hiçbir hedefi homing yapılana kadar kabul etmez (`INVALID_GOAL`). Her acil dur,
+arıza ya da hat kaybı bilgiyi geçersiz kılar; yeniden bağlanınca yine homing gerekir. Homing sonrası MCU sayacı,
+profilin home konumunun `hardware.py` karşılığına (±3 adım) eşit olmalıdır; değilse düğüm reddeder.
+
+**İki yönlü watchdog.** PC→MCU: kalp atışı 50 ms; düğümün kendi döngüsü `loop_stall_ms` içinde ilerlemezse
+kalp atışı kesilir ve MCU watchdog'u (300 ms) robotu durdurur (süreç donsa bile). MCU→PC: telemetri
+`watchdog_ms` içinde gelmezse düğüm Robot API'ye `POST /api/stop` (yeniden denemeli) gönderir; Robot API
+`estopped` olur, işler iptal edilir.
+
+**Robot API ↔ donanım.** Robot API acil dur kilitlendiyse düğüm donanıma `CMD_ESTOP` yollar (donanım kilidi
+`clear` + yeniden homing ister); hedef iptali ise kontrollü `STOP`'tur. Robot API `/api/reset` yalnızca
+yazılım kilidini açar; donanım kilidi için `~/clear` ve `~/home` gerekir. **Reset aracı (LLM) yoktur.**
+
+**Önemli: yazılım acil dur donanım acil durdurmanın YERİNE GEÇMEZ.** Bu zincir USB/TCP, PC ve MCU yazılımına
+bağlıdır. Güvenlik NC acil dur butonuna (sürücü gücünü donanım düzeyinde keser, §6) dayanır; yazılım yolu
+ek bir katmandır.
+
+**Varsayılanlar dardır:** kısa watchdog, `loop_stall_ms` < watchdog, yazılım limitleri profilden (daha dar
+olan kazanır), açılışta unhomed, açık döngü uyarısı her zaman görünür.
+
+**Doğrulama (`run_selftest hw`, Esp32Sim ile, fizik/motor yok):** açılış UNHOMED, homing öncesi ret, ölçülen
+hareket = `hardware.py` adımları, Robot API acil dur → MCU `ESTOPPED/HOST_CMD`, NC butonu → Robot API
+`estopped`, hat kopması, düğüm dondurma (SIGSTOP) → MCU watchdog.
+**Doğrulanmadı:** gerçek ESP32/firmware, gerçek motor ve sürücü, Hub köprüsünün gerçek COM portu, gerçek
+Windows↔Docker ağı (`host.docker.internal`), uzun süreli jitter.
+
+**Bulgu (B3 için):** MCU (ve Esp32Sim) geri giden `seq`'li çerçeveyi atar; yeniden bağlanan bir istemci
+`seq`'i 0'dan başlatırsa `HELLO_REQ` bile duyulmaz. Düğüm kaldığı `seq`'ten sürer, ama düğüm *süreci* yeniden
+başlarsa aynı sorun olur. Öneri (v1'e eklemeli): `HELLO_REQ` alındığında MCU `rx` seq izleyicisini sıfırlasın.
