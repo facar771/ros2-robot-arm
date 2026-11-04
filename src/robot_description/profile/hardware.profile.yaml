@@ -1,0 +1,49 @@
+# Hardware profile v1: motors, drivers, encoders and homing of the REAL robot (design:
+# docs/ROBOT_PROFILE.md, wire contract: docs/HARDWARE.md). Used ONLY by the bridge and the firmware;
+# it never enters the URDF or the MoveIt files (the simulation does not know it exists).
+#
+# The firmware limit header is GENERATED from this file + the robot profile:
+#     cd src/robot_core && python3 -m robot_core.hardware_gen [--check]
+#
+# Conversion (motor shaft angle in rad, then microsteps from the motor zero):
+#     motor_rad = direction * gear_ratio * (joint_rad - zero_offset)
+#     steps     = motor_rad / (2*pi) * steps_per_rev * microstep
+# Units of everything below are JOINT units (rad, rad/s): the validator does the conversion.
+#
+# Rules: the joint limits (robot profile = URDF) must lie inside `limits - margin` of every axis.
+# An axis with encoder `none` (open loop) MUST have a home switch: steps lost under load are NOT
+# detected, position is only an estimate (docs/HARDWARE.md §7). Defaults are the narrower choice:
+# margin 0.05 rad and 0.05 rad/s, homing speed 0.1 rad/s, backoff 0.05 rad.
+#
+# !! The values below are PLACEHOLDERS for the simulated robot (identity mapping, limits equal to the
+# !! joint limits, margin 0, nominal 200 steps/rev x 16, no real gearbox). A real robot must state its
+# !! real drive data, real limit margins and its real home switch positions before this is used.
+hardware_version: 1
+robot: six_axis_robot            # robot profile this belongs to: <robot>.yaml next to this file
+
+axes:                            # same names and order as the robot profile's joints
+  joint_1: &axis
+    motor: {type: step, steps_per_rev: 200, model: placeholder}
+    driver: {microstep: 16, model: placeholder}
+    direction: 1                 # +1 / -1: motor turns the same / the opposite way as the joint
+    zero_offset: 0.0             # joint angle (rad) at which the motor counter reads 0
+    gear_ratio: 1.0              # motor turns per joint turn
+    encoder: none                # none | incremental | absolute (open loop when none)
+    limits: {position: [-3.14, 3.14], velocity: 1.0, acceleration: 1.0}
+    margin: {position: 0.0, velocity: 0.0}
+    homing: {method: switch, direction: -1, speed: 0.1, position: 0.0, backoff: 0.05}
+  joint_2:
+    <<: *axis
+    limits: {position: [-1.57, 1.57], velocity: 1.0, acceleration: 1.0}
+  joint_3:
+    <<: *axis
+    limits: {position: [-2.0, 2.0], velocity: 1.0, acceleration: 1.0}
+  joint_4:
+    <<: *axis
+    limits: {position: [-3.14, 3.14], velocity: 1.0, acceleration: 1.0}
+  joint_5:
+    <<: *axis
+    limits: {position: [-1.57, 1.57], velocity: 1.0, acceleration: 1.0}
+  joint_6:
+    <<: *axis
+    limits: {position: [-3.14, 3.14], velocity: 1.0, acceleration: 1.0}

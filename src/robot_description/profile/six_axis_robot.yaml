@@ -1,4 +1,4 @@
-# Robot profile v2: the ONE place that describes the robot (design: docs/ROBOT_PROFILE.md).
+# Robot profile v3: the ONE place that describes the robot (design: docs/ROBOT_PROFILE.md).
 #
 # The files the planner reads are GENERATED from this file:
 #     python3 -m robot_core.profile_gen            # regenerate
@@ -8,15 +8,17 @@
 # are out of date, and when this robot stops being identical to the golden snapshot of the
 # original hand-written robot (tests/golden/today_robot.json).
 #
+# Motors, drivers, encoders and homing are NOT here: hardware.profile.yaml (same folder).
+#
 # Scope: serial chain, revolute joints only. Units: metres, radians, rad/s, rad/s^2, kg.
 # Every link frame sits at its parent joint; all frames are aligned in the zero configuration,
 # `axis` is expressed in that common orientation (no frame rotations).
 #
 # Defaults when a value is omitted are always the narrower/safer one (see profile.py): velocity and
-# acceleration 0.5, effort 10, max_velocity_scale 0.5, motor margins 0.05; position limits, axes,
-# lengths, mass and motor limits are REQUIRED. Without `safety.box` a box inside half the
+# acceleration 0.5, effort 10, max_velocity_scale 0.5, position limits, axes,
+# lengths and mass are REQUIRED. Without `safety.box` a box inside half the
 # straight-arm reach is derived.
-profile_version: 2
+profile_version: 3
 robot: six_axis_robot
 
 materials:                      # name: [r, g, b, a]
@@ -138,79 +140,3 @@ safety:
     y: [-0.5, 0.5]
     z: [0.02, 0.7]
   max_velocity_scale: 0.5       # upper bound for the velocity/acceleration scaling, 0 < s <= 1
-
-# ---- motors (SEPARATE: not used by URDF / SRDF / MoveIt; only by a hardware bridge, later) ------
-# motor_position = direction * gear_ratio * (joint_position - zero_offset)     [rad at the motor shaft]
-#   type        : step (stepper); steps_per_rev = full steps per motor revolution, microstep =
-#                 microsteps per full step -> steps_per_rev * microstep microsteps per revolution
-#   direction   : +1 / -1, sign of the motor relative to the joint axis
-#   zero_offset : joint position (rad) at which the motor reads 0
-#   gear_ratio  : motor turns per joint turn (> 0; 1 = direct drive / no gearbox)
-#   encoder     : none | incremental | absolute (optional, default none)
-#   limits      : what the drive can reach, in JOINT units (rad, rad/s). The joint (URDF) limits must
-#                 lie inside limits - margin (checked on load). margin defaults to 0.05 rad and
-#                 0.05 rad/s when omitted.
-# The simulated robot has no motors: identity mapping, limits equal to the joint limits, margin 0
-# (no mechanical stop beyond the software limit) and PLACEHOLDER step values. A real robot must
-# state its real drive limits and a margin.
-motors:
-  joint_1:
-    type: step
-    steps_per_rev: 200
-    microstep: 16
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-3.14, 3.14], velocity: 1.0}
-    margin: {position: 0.0, velocity: 0.0}
-  joint_2:
-    type: step
-    steps_per_rev: 200
-    microstep: 16
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-1.57, 1.57], velocity: 1.0}
-    margin: {position: 0.0, velocity: 0.0}
-  joint_3:
-    type: step
-    steps_per_rev: 200
-    microstep: 16
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-2.0, 2.0], velocity: 1.0}
-    margin: {position: 0.0, velocity: 0.0}
-  joint_4:
-    type: step
-    steps_per_rev: 200
-    microstep: 16
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-3.14, 3.14], velocity: 1.0}
-    margin: {position: 0.0, velocity: 0.0}
-  joint_5:
-    type: step
-    steps_per_rev: 200
-    microstep: 16
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-1.57, 1.57], velocity: 1.0}
-    margin: {position: 0.0, velocity: 0.0}
-  joint_6:
-    type: step
-    steps_per_rev: 200
-    microstep: 16
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-3.14, 3.14], velocity: 1.0}
-    margin: {position: 0.0, velocity: 0.0}

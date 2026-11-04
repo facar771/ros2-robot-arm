@@ -4,13 +4,16 @@ One YAML (``robot_description/profile/<robot>.yaml``) describes the robot;
 ``robot_core.profile_gen`` derives URDF/xacro, joint limits, SRDF, safe zone and controller files
 from it.
 
+Motors, drivers, encoders and homing are NOT here: they live in ``hardware.profile.yaml``
+(``robot_core.hardware``) and never enter the URDF/MoveIt files.
+
 Scope: a SERIAL chain of REVOLUTE joints. Parallel/closed-loop mechanisms, mimic joints and
 prismatic joints are rejected with a clear message rather than half-supported.
 
 Rules for defaults (always the narrower / safer choice) and for required values:
-- values with no safe default are REQUIRED (position limits, axes, lengths, mass, motor limits);
+- values with no safe default are REQUIRED (position limits, axes, lengths, mass);
 - omitted velocity/acceleration limit = 0.5, omitted effort = 10.0, omitted
-  ``max_velocity_scale`` = 0.5, omitted motor margin = 0.05 rad and 0.05 rad/s;
+  ``max_velocity_scale`` = 0.5;
 - omitted ``safety.box`` = the axis-aligned box inside the sphere of half the straight-arm reach
   around the shoulder (a box given explicitly must lie inside the full reach, otherwise: error).
 
@@ -28,7 +31,7 @@ import yaml
 
 from robot_core.safezone import AXES, SafetyConfig, SafetyConfigError, parse_safety
 
-PROFILE_VERSION = 2
+PROFILE_VERSION = 3
 Vec = Tuple[float, float, float]
 _NAME = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*$')
 _POSE_NAME = re.compile(r'^[a-z][a-z0-9_]*$')
@@ -50,7 +53,6 @@ DEFAULT_MARGIN_POSITION = 0.05
 DEFAULT_MARGIN_VELOCITY = 0.05
 BOX_FLOOR = 0.02                 # m: derived/explicit safe boxes stay above the ground
 BOX_NEAR = 0.05                  # m: derived boxes keep clear of the base column
-ENCODERS = ('none', 'incremental', 'absolute')
 
 
 class ProfileError(ValueError):
@@ -85,37 +87,6 @@ class Joint:
 
 
 @dataclass(frozen=True)
-class Motor:
-    joint: str
-    type: str                        # 'step'
-    steps_per_rev: int               # full steps per motor-shaft revolution
-    microstep: int                   # microsteps per full step
-    direction: int                   # +1 / -1
-    zero_offset: float               # joint position (rad) at which the motor reads 0
-    gear_ratio: float                # motor turns per joint turn
-    encoder: str                     # none | incremental | absolute
-    position_limits: Tuple[float, float]   # joint-space rad the drive can reach
-    velocity_limit: float                  # joint-space rad/s
-    margin_position: float
-    margin_velocity: float
-
-    def to_motor(self, joint_position: float) -> float:
-        """Motor-shaft position (rad) for a joint position (rad)."""
-        return self.direction * self.gear_ratio * (joint_position - self.zero_offset)
-
-    def to_joint(self, motor_position: float) -> float:
-        return self.zero_offset + motor_position / (self.direction * self.gear_ratio)
-
-    @property
-    def steps_per_motor_rev(self) -> int:
-        return self.steps_per_rev * self.microstep
-
-    def to_steps(self, joint_position: float) -> float:
-        """Microsteps (fractional) from the zero position for a joint position."""
-        return self.to_motor(joint_position) / (2 * math.pi) * self.steps_per_motor_rev
-
-
-@dataclass(frozen=True)
 class Profile:
     robot: str
     materials: Mapping[str, Tuple[float, float, float, float]]
@@ -129,7 +100,6 @@ class Profile:
     named_poses: Mapping[str, Tuple[float, ...]]
     allow_extra: Tuple[Tuple[str, str, str], ...]
     safety: SafetyConfig
-    motors: Mapping[str, Motor]
     reach_center: Vec                                # shoulder: where joint_2's frame sits at zero
     reach_radius: float                              # straight-arm reach from the shoulder
     box_derived: bool
@@ -322,59 +292,9 @@ def _parse_joint(name: str, data: Any, parent_link: Link) -> Joint:
                 hi=MAX_EFFORT))
 
 
-def _parse_motor(name: str, data: Any, joint: Joint) -> Motor:
-    where = f'motors.{name}'
-    d = _mapping(data, where, ('type', 'steps_per_rev', 'microstep', 'direction', 'zero_offset',
-                               'gear_ratio', 'encoder', 'limits', 'margin'),
-                 ('type', 'steps_per_rev', 'microstep', 'direction', 'zero_offset', 'gear_ratio',
-                  'limits'))
-    if d['type'] != 'step':
-        raise _fail(f'{where}.type', f"yalnızca 'step' destekleniyor, bulunan: {d['type']!r}")
-    direction = d['direction']
-    if isinstance(direction, bool) or direction not in (1, -1) or not isinstance(direction, int):
-        raise _fail(f'{where}.direction', f'+1 ya da -1 (tam sayı) olmalı, bulunan: {direction!r}')
-    encoder = d.get('encoder', 'none')
-    if encoder not in ENCODERS:
-        raise _fail(f'{where}.encoder', f"{' | '.join(ENCODERS)} olmalı, bulunan: {encoder!r}")
-    limits = _mapping(d['limits'], f'{where}.limits', ('position', 'velocity'),
-                      ('position', 'velocity'))
-    pos = _vector(limits['position'], 2, f'{where}.limits.position')
-    for i, v in enumerate(pos):
-        _number(v, f'{where}.limits.position[{i}]', lo=-MAX_ANGLE, hi=MAX_ANGLE)
-    if not pos[0] < pos[1]:
-        raise _fail(f'{where}.limits.position', f'alt sınır üstten küçük olmalı: {list(pos)}')
-    margin = _mapping(d.get('margin', {}), f'{where}.margin', ('position', 'velocity'))
-    margin_pos = _number(margin.get('position', DEFAULT_MARGIN_POSITION),
-                         f'{where}.margin.position', lo=0.0, hi=MAX_ANGLE)
-    margin_vel = _number(margin.get('velocity', DEFAULT_MARGIN_VELOCITY),
-                         f'{where}.margin.velocity', lo=0.0, hi=MAX_SPEED)
-    motor = Motor(
-        joint=name, type='step',
-        steps_per_rev=_integer(d['steps_per_rev'], f'{where}.steps_per_rev', 1, 100000),
-        microstep=_integer(d['microstep'], f'{where}.microstep', 1, 256),
-        direction=direction,
-        zero_offset=_number(d['zero_offset'], f'{where}.zero_offset', lo=-MAX_ANGLE,
-                            hi=MAX_ANGLE),
-        gear_ratio=_number(d['gear_ratio'], f'{where}.gear_ratio', positive=True, hi=10000.0),
-        encoder=encoder, position_limits=(pos[0], pos[1]),
-        velocity_limit=_number(limits['velocity'], f'{where}.limits.velocity', positive=True,
-                               hi=MAX_SPEED),
-        margin_position=margin_pos, margin_velocity=margin_vel)
-    # the joint's (URDF) limits must lie inside the motor's limits minus the margin
-    lo, hi = motor.position_limits[0] + margin_pos, motor.position_limits[1] - margin_pos
-    if not (joint.lower >= lo - 1e-12 and joint.upper <= hi + 1e-12):
-        raise _fail(where, f'eklem limiti [{joint.lower:g}, {joint.upper:g}] motor limiti − marj '
-                           f'[{lo:g}, {hi:g}] içinde değil (motor [{pos[0]:g}, {pos[1]:g}], '
-                           f'marj {margin_pos:g} rad)')
-    if joint.velocity > motor.velocity_limit - margin_vel + 1e-12:
-        raise _fail(where, f'eklem hız limiti {joint.velocity:g} rad/s motor hızı − marj '
-                           f'({motor.velocity_limit:g} − {margin_vel:g}) değerini aşıyor')
-    return motor
-
-
 def parse_profile(data: Any) -> Profile:
     top = ('profile_version', 'robot', 'materials', 'mount', 'links', 'joints', 'moveit',
-           'safety', 'motors')
+           'safety')
     d = _mapping(data, 'profil', top, tuple(k for k in top if k != 'safety'))
     if d['profile_version'] != PROFILE_VERSION:
         raise _fail('profile_version',
@@ -477,13 +397,6 @@ def parse_profile(data: Any) -> Profile:
             raise _fail('safety.box', f'kutunun en uzak köşesi omuzdan {far:.3f} m, kolun erişimi '
                                       f'{reach:.3f} m; kutuyu küçült')
 
-    # motors (separate section; consistency with the joints is checked here)
-    motors_in = d['motors']
-    if not isinstance(motors_in, Mapping) or list(motors_in) != names:
-        raise ProfileError(f'motors: eklemlerle aynı adlar ve sırada olmalı ({names}), bulunan: '
-                           f'{list(motors_in) if isinstance(motors_in, Mapping) else motors_in!r}')
-    motors = {n: _parse_motor(n, motors_in[n], by_name[n]) for n in names}
-
     return Profile(
         robot=robot, materials=materials, mount=mount, links=links, joints=tuple(joints),
         planning_group=_name(mv.get('planning_group', 'robot_arm'), 'moveit.planning_group'),
@@ -493,7 +406,7 @@ def parse_profile(data: Any) -> Profile:
                                              'moveit.default_acceleration_scaling', positive=True,
                                              hi=1.0),
         initial_positions=initial, named_poses=poses, allow_extra=tuple(extra), safety=safety,
-        motors=motors, reach_center=shoulder, reach_radius=reach, box_derived=derived)
+        reach_center=shoulder, reach_radius=reach, box_derived=derived)
 
 
 def load_profile(path: Union[str, Path]) -> Profile:
