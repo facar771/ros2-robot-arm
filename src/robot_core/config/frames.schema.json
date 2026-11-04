@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "robot_core user frames file (frames_version 1)",
+  "description": "Structure only. FrameStore additionally recomputes each pose from the three points and rejects a file whose stored pose differs, whose points are degenerate (|Px-O| < 20 mm, sin < 0.17: suggested limits), or that holds more than 10 frames or a repeated name.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["frames_version", "frames"],
+  "properties": {
+    "frames_version": {"const": 1},
+    "frames": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "points", "pose"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$", "not": {"enum": ["World", "Tool", "world", "tool"]}},
+          "points": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["origin", "x", "xy"],
+            "properties": {
+              "origin": {"$ref": "#/$defs/vec3"},
+              "x": {"$ref": "#/$defs/vec3"},
+              "xy": {"$ref": "#/$defs/vec3"}
+            }
+          },
+          "pose": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["position", "quaternion_xyzw"],
+            "properties": {
+              "position": {"$ref": "#/$defs/vec3"},
+              "quaternion_xyzw": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "vec3": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number", "minimum": -5, "maximum": 5}}
+  }
+}
