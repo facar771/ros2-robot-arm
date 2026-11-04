@@ -3,14 +3,14 @@ name = "control-hub"
 version = "0.1.0"
 description = "Robot Kontrol Merkezi: robot senaryoları için web arayüzü + masaüstü uygulaması"
 requires-python = ">=3.10"
-dependencies = ["fastapi>=0.110", "uvicorn>=0.29", "pyyaml>=6", "segno>=1.6"]
+dependencies = ["fastapi>=0.110", "uvicorn>=0.29", "pyyaml>=6", "segno>=1.6", "keyring>=24"]
 
 [project.optional-dependencies]
 test = ["pytest", "httpx", "websockets", "ruff"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "../../src/robot_hw_bridge/tests"]
-pythonpath = [".", "../../src/robot_hw_bridge"]
+pythonpath = [".", "../../src/robot_hw_bridge", "../../src/robot_agent", "../../src/robot_core"]
 addopts = "-q"
 
 [tool.ruff]

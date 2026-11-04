@@ -116,3 +116,26 @@ button.reset:disabled { opacity: .4; cursor: not-allowed; }
 .toast { background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px;
          font-size: .9rem; box-shadow: 0 6px 24px rgba(0, 0, 0, .5); }
 .toast.bad { border-color: #8e2a26; color: #ffb4b0; }
+
+/* Yapay zekâ ajanı paneli */
+.ag-chat { list-style: none; margin: 0 0 10px; padding: 0; max-height: 280px; overflow: auto; font-size: .9rem; }
+.ag-m { padding: 6px 0; border-bottom: 1px solid var(--border); display: flex; gap: 8px; }
+.ag-m b { flex: none; min-width: 46px; color: var(--muted); font-size: .75rem; text-transform: uppercase; }
+.ag-m span { overflow-wrap: anywhere; }
+.ag-m.user span { color: var(--accent); }
+.ag-m.tool { font-size: .8rem; color: var(--muted); }
+.ag-m.tool.bad, .ag-m.system { color: #e3b341; }
+.ag-approval { border: 2px solid var(--warn); border-radius: 12px; padding: 10px 12px; margin: 8px 0;
+               background: #2a2209; display: grid; gap: 6px; }
+.ag-send { display: flex; gap: 8px; margin-top: 8px; }
+.ag-send input { flex: 1; min-width: 0; font: inherit; padding: 10px; border-radius: 10px;
+                 border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.ag-cfg { margin-top: 12px; }
+.ag-cfg summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
+.ag-form { display: grid; gap: 8px; margin-top: 8px; }
+.ag-f { display: grid; gap: 4px; font-size: .8rem; color: var(--muted); }
+.ag-f.row { display: flex; gap: 8px; align-items: center; }
+.ag-f input[type=text], .ag-f input[type=url], .ag-f input[type=number], .ag-f input[type=password], .ag-f select {
+  font: inherit; padding: 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); }
+.ag-send button.small, .ag-approval button.primary { width: auto; padding: 8px 14px; }

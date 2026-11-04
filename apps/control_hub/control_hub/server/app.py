@@ -235,6 +235,9 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
             raise ApiError(409, 'reset_refused', f'Robot kilidi açmayı reddetti: {exc}') from None
         return {'ok': True, 'estop': False}
 
+    from control_hub.server.agent_routes import install_agent_routes
+    install_agent_routes(app, hub, token_of=token_of, need_view=need_view, need_control=need_control)
+
     # --- canlı akış ----------------------------------------------------------------------------
     @app.websocket('/ws')
     async def ws(sock: WebSocket):

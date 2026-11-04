@@ -136,6 +136,7 @@ function buildUi() {
   for (const p of lay.panels) panels.append(builders[p]());
   const c = $('btn-cancel'); if (c) c.addEventListener('click', onCancel);
   S.events = [];
+  if (window.AgentPanel) AgentPanel.mount();
   api('/api/events').then((r) => { S.events = r.events; renderLog(); }).catch(() => {});
 }
 
@@ -176,6 +177,7 @@ const hhmmss = (ts) => new Date(ts * 1000).toLocaleTimeString('tr-TR', { hour12:
 
 function render() {
   const s = S.snap; if (!s || !S.ui) return;
+  if (window.AgentPanel) AgentPanel.onState(s);
   const canControl = s.me.can_control && !s.estop.latched;
   const run = s.runner;
   const readOnly = s.access.mode === 'locked';

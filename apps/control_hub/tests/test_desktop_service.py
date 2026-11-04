@@ -133,3 +133,25 @@ def test_busy_bridge_port_fails_cleanly_and_releases_the_hub_port():
         assert svc.hub is None and port_free(hub_port, '127.0.0.1')
     finally:
         s.close()
+
+
+def test_service_attaches_the_agent_with_the_shared_keystore_and_never_writes_the_key(tmp_path):
+    from control_hub.agent import KeyStore
+    from tests.helpers_agent import CANARY, MemoryKeyring
+    ks = KeyStore(MemoryKeyring())
+    ks.set('openai', CANARY)
+    s = Settings(fake=True, port=free_port(), pin='123456', agent_provider='openai', agent_model='m',
+                 agent_base_url='https://api.example.com/v1')
+    svc = HubService(s, host='127.0.0.1', keystore=ks)
+    svc.start()
+    try:
+        agent = svc.hub.agent
+        assert agent is not None and agent.keys is ks and agent.config.provider == 'openai'
+        assert agent.status()['keys']['openai']['set'] is True
+        status, doc = get(f'http://127.0.0.1:{svc.port}/health')
+        assert status == 200 and CANARY not in json.dumps(doc)
+    finally:
+        svc.stop()
+    from control_hub.desktop import settings as st
+    saved = st.save(s, tmp_path / 'settings.json').read_text()
+    assert CANARY not in saved
