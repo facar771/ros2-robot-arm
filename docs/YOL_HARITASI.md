@@ -42,9 +42,10 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 ## Sıradaki işler (öncelik sırasıyla)
 1. 🟡 **L4** TCP profilde (#42): incele, birleştir.
 2. 🟡 **L3** Hub jog paneli (#44, Robot_4): incele. #44 kapsamında 3 nokta düzlem sihirbazı var mı kontrol et; yoksa L3 tamam sayılmaz, eksik kısım ayrı görev. Ardından **L6** düzleme paralel jog doğrulaması.
-3. **H4** Kamera elle kontrolünü Robot API + Hub'a bağla (Robot_5 çekirdek, Robot_3 API, Robot_4 arayüz; L3'ten sonra).
-4. **J4** Hub'da robot profili görüntüleme, sonra düzenleme (eksen yönü/tipi, limit, link uzunluğu, motor yön/ofset).
-5. **K3** Firmware iskeleti ⏸ donanım gelince. **N** bölümü doğrulama borçları.
+3. **L7** Küresel çerçeve çekirdeği (Robot_2) ve **O1** nokta deposu çekirdeği (Robot_2/Robot_3): ikisi de L1/L2 üzerine kurulu, #42/#44 beklemeden **paralel başlayabilir**. Sonra **O2** API, **O3** Hub "Algoritmalar" sayfası, **L8** küresel çerçeve API+Hub.
+4. **H4** Kamera elle kontrolünü Robot API + Hub'a bağla (Robot_5 çekirdek, Robot_3 API, Robot_4 arayüz; L3'ten sonra).
+5. **J4** Hub'da robot profili görüntüleme, sonra düzenleme (eksen yönü/tipi, limit, link uzunluğu, motor yön/ofset).
+6. **R1–R4** Tool kamerası + nişan alma (L7/L8 sonrası). **K3** Firmware iskeleti ⏸ donanım gelince. **N** bölümü doğrulama borçları.
 
 ---
 
@@ -87,7 +88,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 ## H. Görüntü eklentileri ve kamera
 - [x] H1 Görüntü çekirdeği, takip, eklenti SDK'sı, tarama (V1–V4, #25 içinde)
 - [x] H2 Eklenti tek giriş noktası `run_plugin` (#26), şema NaN/inf reddi (#30)
-- [x] H3 Kamera platformu elle kontrol (pan/tilt/konum) (#32)
+- [x] H3 Kamera platformu elle kontrol (pan/tilt/konum) (#32). **Not:** Bu, kolun ucundaki kamera DEĞİL; `tracking.sdf`'teki ayrı yaw/slide/pitch platformu. Yalnız ROS düğümü (`camera_manual`); Robot API ve Hub arayüzü yok (H4). Kol ucu kamerası için R1'e bak.
 - [ ] H4 Kamera elle kontrolü Robot API + Hub arayüzüne bağla (L3'ten sonra)
 - [ ] H5 Eklentiler Hub'da (`run_plugin` Hub'da şimdilik kapalı)
 
@@ -119,7 +120,23 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] L3 🟡 (#44) Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
 - [ ] L4 🟡 TCP profilde + ready pozu (#42)
 - [ ] L6 **Düzleme paralel jog ("düzlem modu")**: seçili çerçevenin (World ya da 3 noktayla öğretilen User) XY düzleminde ileri-geri/sağ-sol hareket; Z ve takım yönelimi kilitli (Z ayrı tuş). Önce L1/L2'deki World/User jog'unun bunu zaten karşılayıp karşılamadığı Robot_2/Robot_3 tarafından doğrulanır, eksik varsa eklenir; hesap çok tekilliğe duyarlı olmalı (L1 DLS'i kullan). Arayüz tuşları L3'ün parçası olabilir, sahibi L6 ilk adımında belirlenir.
+- [ ] L7 **Küresel çerçeve (merkez noktalı, "kubbe kamera")** (Robot_2, `FrameStore` + `jog`): çerçeve türü `sphere`. Tanım: merkez noktası C (World'de, ya da taban orijinine göre ofset, örn. taban ekseninin 10 cm üstü) ve yarıçap r. Jog girdileri: **sağ-sol = azimut** (C'den geçen düşey eksen etrafında), **yukarı-aşağı = yükselme açısı** (TCP, C'ye sabit r uzaklıkta kalır), **içeri-dışarı = r** (ayrı tuş). Seçilen takım ekseni (varsayılan tool z) **her zaman C'ye bakar** (look-at). Hesap yeni çözücü değil: türdeki girdi, anlık Kartezyen twist'e çevrilir ve mevcut L1 DLS motoruna verilir (güvenli kutu, tekillik, TTL aynen geçerli). Bilinmesi gerekenler: C taban ekseni üzerindeyse azimut hareketi saf 1. eksen dönüşü olur (beklenen davranış, testle doğrulanır); zirvede (yükselme ±90°) azimut tanımsız, bu yüzden yükselme ≤85° ile sınırlanır; kolun erişemediği (kutu/limit/tekillik) bölgeye girilince jog durur ve nedeni söyler, çerçeve oluştururken (C, r) erişilebilir yükselme/azimut aralığı hesaplanıp kullanıcıya gösterilir. Çerçeve türleri envanteri (bu iş sonunda `docs/JOG.md`'de listelenir): Joint, World, Tool, User (3 nokta), Sphere (yeni). Silindirik vb. türler ihtiyaç doğarsa ayrı madde.
+- [ ] L8 Küresel çerçeve: Robot API (`/api/frames` türü `sphere`) + Hub çerçeve sihirbazı (C'yi sayıyla ya da "şu anki TCP'yi merkez al/10 cm yukarı" ile gir, r gir, erişim aralığını göster) (Robot_3, Robot_4; L3 ve L7'den sonra)
 - [ ] L5 Jog'u Gazebo'da elle dene (Ferhat); Windows↔WSL jitter ölç, gerekirse TTL 300 ms
+
+## O. Nokta öğretme ve algoritma yönetimi (Hub "Algoritmalar" sayfası)
+> Hedef: robotu elle (jog) bir noktaya götür → "kaydet" → başka noktaya götür → "kaydet" → "A'dan B'ye git". Çekirdekte `go_to_named_pose`/`go_to_position`/senaryo yorumlayıcısı var, ama kullanıcı noktayı arayüzden öğretemiyor ve çalıştıramıyor.
+- [ ] O1 Nokta deposu çekirdeği (Robot_2, ROS'suz): `waypoints.yaml` (ad, eklem değerleri, TCP pozu ve hangi çerçevede, oluşturma zamanı). `frames.yaml` ile aynı kurallar: atomik yazma, şema, sürüm, yükte doğrulama. **Kaydederken** nokta eklem limitleri ve güvenli kutu içinde değilse reddedilir.
+- [ ] O2 Robot API: `GET/PUT/DELETE /api/waypoints`, `POST /api/waypoints/record` (şu anki eklem/TCP'yi kaydeder), `POST /api/jobs` komutu `goto_waypoint` (Robot_3). **Kural:** noktaya gidiş MoveIt planı ve çarpışma denetimiyle yapılır; adlandırılmış eklem pozlarındaki gibi denetimsiz eklem hedefi değil. Güvenli kutu, ACİL DUR, 423 aynen geçerli.
+- [ ] O3 Hub "Algoritmalar" sayfası (Robot_4; L3'ten sonra): noktaları listele/yeniden adlandır/sil, "şu anki konumu nokta olarak kaydet" (jog panelinin yanında), iki nokta seç → "git". Gösterilen her hareket ACİL DUR ile birlikte.
+- [ ] O4 Sıra (algoritma) editörü: kayıtlı noktalardan adım listesi (git, bekle, döngü, kamera/eklenti çalıştır), mevcut senaryo YAML biçimine derlenir; "öğret ve oynat" (kaydet → oynat); yürütme sırasında durdur/acil dur (Robot_4 + Robot_2)
+
+## P. Tool kamerası ve nişan alma (L7/L8'e bağlı)
+> Hedef: kol ucundaki kamera (ve lazer göstergesi) küresel çerçeve üzerinde, görüntü işlemeyle bulunan hedefi (örn. yüz/alın) görüntü merkezinde tutar.
+- [ ] P1 Simülasyonda kol ucuna kamera (+ lazer ışını göstergesi) ekle; profil/URDF'ten üretilir, elle düzenlenmez (Robot_2 profil, Robot_5 algı)
+- [ ] P2 El-göz kalibrasyonu: kamera↔tool dönüşümü, lazer↔kamera ofseti; kalibrasyon dosyası ve doğrulama ölçümü (Robot_5)
+- [ ] P3 "Nişan al" eklentisi: hedef görüntü merkezinden saptıkça küresel çerçevede azimut/yükselme düzeltmesi; güvenli kutu ve TTL aynen geçerli, kaybolan hedefte robot durur (Robot_5 + Robot_3)
+- [ ] P4 **Lazer güvenliği (donanımdan önce zorunlu):** yalnız Sınıf 1/2 düşük güçlü lazer; açma/kapama yazılımdan bağımsız donanım kilidiyle (NC acil dur hattıyla birlikte kesilir); varsayılan kapalı, her oturumda elle açılır; yüz/göz bölgesine ışın **tutulmaz** (ilk denemeler kağıt/duvar hedefine); lazer açıkken hedef kaybı ya da ACİL DUR'da anında kapanır. Bu madde bitmeden gerçek lazer takılmaz.
 
 ## M. RL araştırma
 - [x] M1 URDF→MJCF, Gymnasium ortamları, klasik IK/RRT tabanı (#16)
@@ -134,6 +151,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] N5 Nightly workflow GitHub'da ilk koşu doğrulaması
 
 ## Değişiklik günlüğü
+- 2026-11-05: L7/L8 (küresel çerçeve), O1–O4 (nokta öğretme + algoritma sayfası), P1–P4 (tool kamerası + nişan, lazer güvenliği) eklendi (Ferhat isteği); H3 satırına "kol kamerası değil" notu.
 - 2026-11-05: İlk sürüm (Müdür). Kaynak: birleşen PR'lar #1–#41, açık #42.
 - 2026-11-05: Kural 6-7 ve "Müdür iş akışı" eklendi (PR başlığı ↔ ID eşlemesi: #42=L4, #44=L3); L3 🟡 #44 olarak işaretlendi.
 - 2026-11-05: L3 genişletildi (düzlem seçimi + 3 nokta sihirbazı), L6 eklendi (düzleme paralel jog), terimler notu (Ferhat'ın düzlem tarifi).
