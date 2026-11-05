@@ -153,3 +153,13 @@ button.reset:disabled { opacity: .4; cursor: not-allowed; }
 .jg-hold { display: block; margin-top: 10px; font-size: .9rem; }
 .jg-msg.bad { color: #ffb4b0; }
 .jg-f select { font: inherit; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px; }
+
+/* Düzlem öğretme sihirbazı (L3) */
+.fw-list { list-style: none; margin: 0 0 10px; padding: 0; }
+.fw-item { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: .9rem; }
+.fw-warn { color: var(--warn); font-size: .8rem; }
+.fw-form { display: grid; gap: 10px; margin-top: 10px; }
+.fw-form input[type=text] { font: inherit; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.fw-step { display: grid; gap: 4px; padding: 8px; border: 1px solid var(--border); border-radius: 12px; }
+.fw-step.done { border-color: #23552f; }
+.fw-pt { font-variant-numeric: tabular-nums; }

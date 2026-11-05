@@ -44,6 +44,7 @@ window.JogPanel = (() => {
     api('/api/jog').then((st) => {
       if (!st || !st.enabled) return;            // robotta jog kapalı: panel çizilmez
       J.st = st; J.mounted = true; build(); refreshFrames();
+      if (window.FrameWizard) FrameWizard.mount();
       if (J.snap) onState(J.snap); else apply();   // ilk durum mount'tan önce gelmiş olabilir
     }).catch(() => { /* jog yok (403/501/502): panel hiç görünmez */ });
   }
@@ -179,6 +180,7 @@ window.JogPanel = (() => {
   function onState(s) {
     J.snap = s;
     if (!J.mounted) return;
+    if (window.FrameWizard) FrameWizard.onState(s);
     const r = s.robot || {}, tcp = r.tcp;
     if (tcp) {
       [0, 1, 2].forEach((i) => { q(`jg-v${i}`).textContent = (tcp.position[i] * 1000).toFixed(1); });
@@ -189,5 +191,8 @@ window.JogPanel = (() => {
       (jg.messages && jg.messages.length ? ` · ${jg.messages.join('; ')}` : '') : (r.state ? `Robot: ${r.state}` : '');
     apply();
   }
-  return { mount, onState };
+  /* Öğretme sihirbazı (frames.js) için: çerçeve seçimi/yenileme, bırakma, hata metni, ham TCP. */
+  function setFrame(name) { J.frame = name; const sel = q('jg-frame'); if (sel) sel.value = name; }
+  const tcp = () => (J.snap && J.snap.robot && J.snap.robot.tcp) || null;
+  return { mount, onState, explain, release, refreshFrames, setFrame, tcp, frame: () => J.frame };
 })();

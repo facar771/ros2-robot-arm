@@ -27,6 +27,10 @@ def _err(status: int, message: str, **extra: Any) -> Reply:
     return status, {'ok': False, 'error': message, **extra}
 
 
+def np_sub(a, b):
+    return [x - y for x, y in zip(a, b)]
+
+
 class FakeJog:
     def __init__(self, *, get_tool: Callable[[], Tuple[float, float, float]],
                  set_tool: Callable[[Tuple[float, float, float]], None],
@@ -187,6 +191,17 @@ class FakeJog:
                         for v in p)
                     for p in pts.values())):
                 return _err(400, f'{name}: points {{"origin","x","xy"}} üç noktalı olmalı (3 sayı)')
+            px, pv = (np_sub(pts[k], pts['origin']) for k in ('x', 'xy'))
+            dist = math.sqrt(sum(v * v for v in px))
+            if dist < 0.020:
+                return _err(400, f'{name}: orijin ile X noktası arası en az 20 mm olmalı (X yönü belirsiz)')
+            cross = [px[1] * pv[2] - px[2] * pv[1], px[2] * pv[0] - px[0] * pv[2],
+                     px[0] * pv[1] - px[1] * pv[0]]
+            lv = math.sqrt(sum(v * v for v in pv))
+            sin = math.sqrt(sum(v * v for v in cross)) / (dist * lv) if lv > 1e-9 else 0.0
+            if sin < 0.17:
+                return _err(400, f'{name}: XY noktası X ekseniyle neredeyse aynı doğru üzerinde '
+                                 f'(sin={sin:.3f} < 0.17); düzlem belirsiz, noktayı X ekseninden uzaklaştır')
             names.add(name)
             out.append({'name': name, 'points': pts, 'pose': {'position': pts['origin']},
                         'wpr_deg': [0.0, 0.0, 0.0], 'warnings': ['sahte robot: dönüş hesaplanmaz']})
