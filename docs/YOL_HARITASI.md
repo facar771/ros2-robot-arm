@@ -1,6 +1,6 @@
 # Yol Haritası (tek doğruluk kaynağı)
 
-Son güncelleme: 2026-11-05 · main 916204f (PR #41) · Güncelleyen: Müdür
+Son güncelleme: 2026-11-05 · main cb27e06 (PR #43; #42 ve #44 birleşti) · Güncelleyen: Müdür
 
 ## Kullanım kuralları (herkes için)
 1. **Her görev bu dosyadaki bir ID'ye bağlıdır** (örn. `L3`). PR başlığına/gövdesine "Yol haritası: L3" yaz. ID'si olmayan iş yapılmaz; yeni iş eklemek Ferhat ya da Müdür kararıdır.
@@ -40,13 +40,13 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - Her merge sonrası: WSL'de `cd ~/ros2-robot-arm && git checkout main && git pull` (+ kod/imaj değiştiyse `docker compose build`). Selftest: `docker compose run --rm selftest-<mod>`.
 
 ## Sıradaki işler (öncelik sırasıyla)
-1. 🟡 **L4** TCP profilde (#42) ve 🟡 **L3** Hub jog paneli (#44): incele, birleştir.
-2. **Hemen paralel başlayabilir** (#42/#44'ü beklemez, farklı dosyalar):
+1. **L3 kalanı** (Robot_4): 3 nokta öğretme sihirbazı. Jog paneli #44 ile birleşti ama sihirbaz yok, L3 bu yüzden `[x]` değil. L4 bitti (#42).
+2. **Hemen paralel başlayabilir** (farklı dosyalar):
    - **H6** hareketli kamerada algı doğruluğu (Robot_5)
    - **H4 (API kısmı)** izleme kamerasını Robot API'ye bağla (Robot_3). Arayüz kısmı L3 sonrası (Robot_4).
    - **L7** küresel çerçeve çekirdeği (Robot_2)
    - **O1** nokta deposu çekirdeği (Robot_3, yeni dosya)
-3. L4 birleşince **Q1** takım (tool) tanımı. Sonra **O2** API, **O3** Hub "Algoritmalar" sayfası, **L8** küresel çerçeve API+Hub, **H4 arayüz**.
+3. L4 birleşti (#42), **Q1** takım (tool) tanımı başlayabilir. Sonra **O2** API, **O3** Hub "Algoritmalar" sayfası, **L8** küresel çerçeve API+Hub, **H4 arayüz**.
 4. **J5** esnek profil (K8'den önce), **K6–K8** karma robot (2 step + SG90 servo) için aktüatör türü ve profil. Donanım malzemeleri elde, firmware (K3) buna bağlı.
 5. **P1–P4** tool kamerası + nişan (Q1, L7/L8, H6 sonrası). **J4** Hub'da robot profili. **N** bölümü doğrulama borçları.
 
@@ -130,8 +130,8 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 - [x] L1 Jog çekirdeği: SE3/W-P-R, 3 noktadan çerçeve, FK/Jacobian, DLS motoru (#40)
 - [x] L2 Robot API: /api/jog (kiralama+TTL), /api/frames, jogging durumu, selftest-jog (#41)
-- [ ] L3 🟡 (#44) Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
-- [ ] L4 🟡 TCP profilde + ready pozu (#42)
+- [ ] L3 **kısmen** (#44 birleşti): jog paneli, çerçeve seçici (`/api/frames`'ten), artımlı adım, basılı-tut (real/telefonda kapalı), "Hazır pozuna git", 409/423/403/502 metinleri var. **Eksik: 3 nokta öğretme sihirbazı** (Hub'da ve #44'te yok; yalnız `PUT /api/frames` üç nokta doğrulaması var). Gerçek Robot API ile uçtan uca denenmedi (L5). Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
+- [x] L4 TCP profilde + `FrameStore.replace_all` + ready pozu (#42)
 - [ ] L6 **Düzleme paralel jog ("düzlem modu")**: seçili çerçevenin (World ya da 3 noktayla öğretilen User) XY düzleminde ileri-geri/sağ-sol hareket; Z ve takım yönelimi kilitli (Z ayrı tuş). Önce L1/L2'deki World/User jog'unun bunu zaten karşılayıp karşılamadığı Robot_2/Robot_3 tarafından doğrulanır, eksik varsa eklenir; hesap çok tekilliğe duyarlı olmalı (L1 DLS'i kullan). Arayüz tuşları L3'ün parçası olabilir, sahibi L6 ilk adımında belirlenir.
 - [ ] L7 **Küresel çerçeve (merkez noktalı, "kubbe kamera")** (Robot_2, `FrameStore` + `jog`): çerçeve türü `sphere`. Tanım: merkez noktası C (World'de, ya da taban orijinine göre ofset, örn. taban ekseninin 10 cm üstü) ve yarıçap r. Jog girdileri: **sağ-sol = azimut** (C'den geçen düşey eksen etrafında), **yukarı-aşağı = yükselme açısı** (TCP, C'ye sabit r uzaklıkta kalır), **içeri-dışarı = r** (ayrı tuş). Seçilen takım ekseni (varsayılan tool z) **her zaman C'ye bakar** (look-at). Hesap yeni çözücü değil: türdeki girdi, anlık Kartezyen twist'e çevrilir ve mevcut L1 DLS motoruna verilir (güvenli kutu, tekillik, TTL aynen geçerli). Bilinmesi gerekenler: C taban ekseni üzerindeyse azimut hareketi saf 1. eksen dönüşü olur (beklenen davranış, testle doğrulanır); zirvede (yükselme ±90°) azimut tanımsız, bu yüzden yükselme ≤85° ile sınırlanır; kolun erişemediği (kutu/limit/tekillik) bölgeye girilince jog durur ve nedeni söyler, çerçeve oluştururken (C, r) erişilebilir yükselme/azimut aralığı hesaplanıp kullanıcıya gösterilir. Çerçeve türleri envanteri (bu iş sonunda `docs/JOG.md`'de listelenir): Joint, World, Tool, User (3 nokta), Sphere (yeni). Silindirik vb. türler ihtiyaç doğarsa ayrı madde.
 - [ ] L8 Küresel çerçeve: Robot API (`/api/frames` türü `sphere`) + Hub çerçeve sihirbazı (C'yi sayıyla ya da "şu anki TCP'yi merkez al/10 cm yukarı" ile gir, r gir, erişim aralığını göster) (Robot_3, Robot_4; L3 ve L7'den sonra)
@@ -170,6 +170,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] N5 Nightly workflow GitHub'da ilk koşu doğrulaması
 
 ## Değişiklik günlüğü
+- 2026-11-05: #42 (L4) ve #44 (L3) birleşti. L4 `[x]`. L3 kısmen: 3 nokta öğretme sihirbazı yok, `[x]` yapılmadı. Main CI bu güncelleme sırasında tamamlanmamıştı (Lint + unit tests koşuyordu).
 - 2026-11-05: J5 (eksik bilgiyle çalışan, sonradan doldurulan profil: kalite etiketi + olgunluk seviyeleri + real kapısı) eklendi; K8 artık Ferhat'ın ölçülerini beklemez.
 - 2026-11-05: H4 genişletildi (izleme kamerası), H6 (hareketli kamerada algı), Q1–Q3 (takımlar), K6–K8 (SG90 servo + iki robot: karma ve tam step) eklendi; "Sıradaki işler" yeniden sıralandı; O1 sahibi Robot_3.
 - 2026-11-05: L7/L8 (küresel çerçeve), O1–O4 (nokta öğretme + algoritma sayfası), P1–P4 (tool kamerası + nişan, lazer güvenliği) eklendi (Ferhat isteği); H3 satırına "kol kamerası değil" notu.
