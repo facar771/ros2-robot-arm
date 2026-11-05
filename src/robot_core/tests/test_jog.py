@@ -458,3 +458,29 @@ def test_a_thousand_ticks_take_seconds(chain, profile):
     run(eng, Q0, [0, 0.02, 0, 0, 0, 0], 1000, dt=0.01)
     assert time.perf_counter() - start < 10.0
 
+
+
+# ---- TCP from the profile (J4) ----------------------------------------------------------------
+def test_chain_uses_the_profile_tcp(profile):
+    import copy
+
+    import yaml
+    from robot_core.profile import parse_profile
+    raw = yaml.safe_load(PROFILE_PATH.read_text(encoding='utf-8'))
+    raw = copy.deepcopy(raw)
+    raw['tcp'] = {'offset': [0.0, 0.0, 0.12], 'wpr': [0.0, 0.0, 0.0]}
+    with_tool = Chain(parse_profile(raw))
+    flange = Chain(profile)
+    q = Q0
+    t_flange, t_tool = flange.fk(q), with_tool.fk(q)
+    assert np.allclose(t_flange[:3, :3], t_tool[:3, :3])
+    assert t_tool[:3, 3] - t_flange[:3, 3] == pytest.approx(t_flange[:3, :3] @ [0, 0, 0.12])
+    # the Jacobian is about the TCP: numerical derivative of the shifted FK
+    eps = 1e-6
+    for i in range(6):
+        d = np.zeros(6)
+        d[i] = eps
+        lin = (with_tool.fk(q + d)[:3, 3] - with_tool.fk(q - d)[:3, 3]) / (2 * eps)
+        assert with_tool.jacobian(q)[:3, i] == pytest.approx(lin, abs=1e-6)
+    # an explicit argument still overrides the profile
+    assert np.allclose(Chain(parse_profile(raw), tcp=np.eye(4)).fk(q), t_flange)

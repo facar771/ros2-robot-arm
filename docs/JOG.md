@@ -24,7 +24,7 @@ sabit Z etrafında R) — URDF `rpy` ile aynı (roll = W, pitch = P, yaw = R).
 | Çerçeve | Anlam |
 |---|---|
 | `World` | URDF `world` linki. Profilde montaj dönüşümü yok: bugün taban çerçevesiyle aynıdır. |
-| `Tool` | TCP çerçevesi = **son bağlantının (link_6/flanş) çerçevesi**, **geçici**: profile TCP alanı J4'te gelecek. Her tick TCP'yi izler. |
+| `Tool` | TCP çerçevesi = robot profilindeki **`tcp`** (`offset` + `wpr`, link_6/flanş çerçevesine göre; yazılmamışsa flanşın kendisi). Her tick TCP'yi izler. FK/Jacobian/güvenli kutu da bu noktayı kullanır. MoveIt poz hedefleri **flanşa** gider, TCP'ye değil (bkz. `ROBOT_PROFILE.md`). |
 | `User` | 3 noktadan öğretilir, `FrameStore`'da durur. |
 
 **3 nokta:** orijin `O`, +X üzerindeki `Px`, XY düzleminden (+Y tarafı) `Pv`. Noktalar **base çerçevesinde TCP
@@ -39,7 +39,7 @@ konumudur** (eklem açısı değil). `x = (Px−O)/|Px−O|`, `z = x × (Pv−O)
 listesi (üç nokta = kaynak, türetilmiş poz). **Atomik yazma:** aynı dizinde geçici dosya → `fsync` → `os.replace`
 (yazma yarıda kesilirse eski dosya sağlam kalır, geçici dosya silinir). **Yüklemede poz noktalardan yeniden
 hesaplanır** ve kayıtlıyla uyuşmalı (elle bozulmuş dosya reddedilir); sürüm/bilinmeyen anahtar/tekrarlı ad/10'dan
-fazla çerçeve de reddedilir. Hata mesajı dosya adını söyler. `resolve_rotation(ad, store)` jog çerçevesinin
+fazla çerçeve de reddedilir. `replace_all([(ad, orijin, x, xy), …])` tüm listeyi değiştirir (önce hepsi doğrulanır, sonra atomik yazılır; hata olursa dosya ve bellek aynen kalır; `[]` listeyi boşaltır). Hata mesajı dosya adını söyler. `resolve_rotation(ad, store)` jog çerçevesinin
 dönüşünü verir (`Tool` için `None` = her tick TCP'den).
 
 ## 3. Jog motoru (`jog.py`)
@@ -94,7 +94,7 @@ değişmez. Bu modülün çalışma zamanı self-collision denetimi **yoktur** (
 - **Gazebo/MoveIt/gerçek robotta hiçbir şey denenmedi**; testler mükemmel (ya da sentetik gürültülü) bir eklem
   oturucusuyla kapalı döngüdür. Gerçek controller gecikmesi, titreşim, ölçüm gürültüsü, jog tuşu bırakma davranışı denenmedi.
 - Jog çağrı aralığı (`dt`) testlerde 10–20 ms; farklı/değişken `dt` ve kaçırılan tick'ler için kalite ölçülmedi.
-- Eşikler (σ, marjlar, hız) ve `Tool` = flanş varsayımı simülasyonda ayarlanmadı; TCP ofseti (J4) yok.
+- Eşikler (σ, marjlar, hız) simülasyonda ayarlanmadı; profildeki `tcp` yalnız birim testlerle (FK/Jacobian) denendi, gerçek bir takımla ya da Gazebo'da denenmedi.
 - Robot API, controller, Hub, UI entegrasyonu ve `FrameStore`'un çok süreçli (iki yazar) kullanımı yok; kilit yalnız süreç içidir.
 - `FrameStore` yalnız POSIX/Linux'ta denendi; Windows'ta `os.replace` aynı dizinde atomiktir ama burada çalıştırılmadı.
 - Self-collision, hız/ivme üst sınırı dışındaki dinamik etkiler (tork), kutu dışındaki başlangıçtan çıkış stratejileri kapsam dışı.

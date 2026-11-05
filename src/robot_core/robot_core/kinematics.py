@@ -2,9 +2,10 @@
 
 Same chain the generated URDF has (``robot_core.profile``: each joint sits at ``origin`` in its
 parent link frame, rotates about the unit ``axis`` expressed in that common orientation). The
-profile has no mount transform: ``world`` == ``base_link`` today. The tool point is the frame of
-the LAST link (the flange / ``RobotConfig.tip_link``), a temporary stand-in until a TCP field
-exists in the profile (J4); ``tcp`` lets a caller shift it.
+profile has no mount transform: ``world`` == ``base_link`` today. The tool point is the profile's
+``tcp`` (offset + W-P-R relative to the LAST link's frame, the flange / ``RobotConfig.tip_link``);
+without a ``tcp`` section it is the flange itself. An explicit ``tcp`` argument overrides it.
+MoveIt / pose goals still address the flange frame: the TCP applies to this chain (jog) only.
 
 ``jacobian`` is the geometric Jacobian in the BASE frame about the tool point: rows 0-2 linear
 velocity of the point, rows 3-5 angular velocity, columns = joints.
@@ -27,7 +28,7 @@ class Chain:
         self.lower = np.array([j.lower for j in profile.joints])
         self.upper = np.array([j.upper for j in profile.joints])
         self.velocity = np.array([j.velocity for j in profile.joints])
-        self.tcp = np.eye(4) if tcp is None else np.asarray(tcp, float)
+        self.tcp = profile.tcp.transform if tcp is None else np.asarray(tcp, float)
         self.tip_link = profile.tip_link
 
     @property

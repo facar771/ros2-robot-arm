@@ -2,6 +2,7 @@
 import copy
 import math
 
+import numpy as np
 import pytest
 import yaml
 from robot_core.profile import (
@@ -191,3 +192,49 @@ def test_load_profile_names_the_file_and_the_problem(tmp_path):
     path.write_text('a: [1', encoding='utf-8')
     with pytest.raises(ProfileError, match='geçerli YAML değil'):
         load_profile(path)
+
+
+# ---- tool centre point and the `ready` pose (J4) ------------------------------------------------
+def test_tcp_defaults_to_the_flange_and_is_optional(raw, profile):
+    assert profile.tcp.offset == (0.0, 0.0, 0.0) and profile.tcp.wpr == (0.0, 0.0, 0.0)
+    assert (profile.tcp.transform == np.eye(4)).all()
+    assert good(raw, lambda d: d.pop('tcp')).tcp == profile.tcp          # omitted = the flange
+    assert good(raw, lambda d: d.update(tcp=None)).tcp == profile.tcp
+    assert good(raw, lambda d: d.update(tcp={})).tcp == profile.tcp
+
+
+def test_tcp_values_are_parsed_and_validated(raw):
+    p = good(raw, lambda d: d.update(tcp={'offset': [0.01, -0.02, 0.15], 'wpr': [0.1, 0.2, 0.3]}))
+    assert p.tcp.offset == (0.01, -0.02, 0.15) and p.tcp.wpr == (0.1, 0.2, 0.3)
+    assert p.tcp.transform[:3, 3] == pytest.approx([0.01, -0.02, 0.15])
+    bad(raw, lambda d: d.update(tcp={'offset': [0, 0, 150]}), r'tcp\.offset\[2\]')     # mm typed
+    bad(raw, lambda d: d.update(tcp={'offset': [0, 0]}), r'3 sayılık')
+    bad(raw, lambda d: d.update(tcp={'offset': [0, 0, math.nan]}), 'sonlu')
+    # degrees typed where radians belong
+    bad(raw, lambda d: d.update(tcp={'wpr': [0, 0, 90]}), r'tcp\.wpr\[2\]')
+    bad(raw, lambda d: d.update(tcp={'rpy': [0, 0, 0]}), 'bilinmeyen anahtar')
+    bad(raw, lambda d: d.update(tcp=[0, 0, 0]), 'eşleme')
+
+
+def test_tcp_does_not_widen_the_derived_safe_box(raw, profile):
+    p = good(raw, lambda d: (d.update(tcp={'offset': [0, 0, 0.4]}), d['safety'].pop('box')))
+    q = good(raw, lambda d: d['safety'].pop('box'))
+    assert p.safety.zone == q.safety.zone                                # narrower default stays
+    assert p.reach_radius == pytest.approx(q.reach_radius + 0.35)         # 0.4 - tool link 0.05
+
+
+def test_ready_pose_is_inside_the_box_well_clear_of_limits_and_not_singular(profile):
+    from robot_core.kinematics import Chain
+    ready = np.array(profile.named_poses['ready'])
+    assert ready.tolist() == [0.0, -0.1, 1.65, 0.0, 1.2, 0.0]
+    chain = Chain(profile)
+    pose, jac = chain.fk_and_jacobian(ready)
+    assert profile.safety.zone.check(tuple(pose[:3, 3])) is None
+    assert np.linalg.svd(jac, compute_uv=False)[-1] == pytest.approx(0.23, abs=0.01)
+    assert np.min(np.minimum(ready - chain.lower, chain.upper - ready)) >= 0.3
+
+
+def test_ready_pose_matches_the_constant_the_jog_api_still_carries(profile):
+    """jogapi.READY_POSE is a copy (Robot_3's file); this keeps the two from drifting apart."""
+    from robot_core.jogapi import READY_NAME, READY_POSE
+    assert profile.named_poses[READY_NAME] == pytest.approx(READY_POSE, abs=0)

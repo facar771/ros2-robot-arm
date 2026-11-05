@@ -25,7 +25,7 @@ import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import yaml
@@ -274,6 +274,32 @@ class FrameStore:
             rest = {k: v for k, v in self._frames.items() if k != name}
             self._save(rest)
             self._frames = rest
+
+    def replace_all(self, entries: Iterable[Tuple[str, Sequence[float], Sequence[float],
+                                                  Sequence[float]]]) -> List[Frame]:
+        """Replace the WHOLE list with frames taught from ``(name, origin, px, pv)`` entries.
+
+        Everything is validated first (names, case-insensitive uniqueness, ``max_frames``, the
+        three-point geometry); only then is the file written (atomically) and the in-memory list
+        swapped. On any ``FrameError`` the file and the store are untouched; ``[]`` clears it.
+        """
+        entries = list(entries)
+        with self._lock:
+            if len(entries) > self.limits.max_frames:
+                raise FrameError(f'en çok {self.limits.max_frames} çerçeve')
+            new: Dict[str, Frame] = {}
+            for i, entry in enumerate(entries):
+                try:
+                    name, origin, px, pv = entry
+                except (TypeError, ValueError) as exc:
+                    raise FrameError(f'frames[{i}]: (ad, orijin, x, xy) olmalı') from exc
+                name = check_name(name)
+                if name.lower() in {n.lower() for n in new}:
+                    raise FrameError(f'frames[{i}]: ad tekrar ediyor: {name!r}')
+                new[name] = frame_from_three_points(name, origin, px, pv, self.limits)
+            self._save(new)
+            self._frames = new
+            return list(new.values())
 
     def _save(self, frames: Mapping[str, Frame]) -> None:
         """Write the whole file to a temp file in the same directory, fsync, then rename."""
