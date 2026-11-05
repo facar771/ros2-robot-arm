@@ -30,6 +30,7 @@ from robot_core.profile import load_profile
 from sensor_msgs.msg import JointState
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
+from trajectory_msgs.msg import JointTrajectory
 
 from robot_hw_bridge import core
 from robot_hw_bridge.host import HwLink
@@ -65,6 +66,7 @@ class HwBridgeNode(Node):
         self.declare_parameter('bridge_port', 8770)
         self.declare_parameter('bridge_token', '')        # ya da ortam değişkeni HUB_BRIDGE_TOKEN
         self.declare_parameter('watchdog_ms', 300)          # 200-500
+        self.declare_parameter('jog_topic', '/arm_controller/joint_trajectory')
         self.declare_parameter('loop_stall_ms', 250)        # 50..watchdog_ms; dar = daha güvenli
         self.declare_parameter('robot_api_url', 'http://127.0.0.1:8080')    # '' = bağ yok
         self.declare_parameter('joint_states_hz', 20.0)
@@ -85,6 +87,7 @@ class HwBridgeNode(Node):
                                     moving=lambda: self.bridge.executing).start()
         ticks = MutuallyExclusiveCallbackGroup()
         work = ReentrantCallbackGroup()
+        jog_group = MutuallyExclusiveCallbackGroup()
         self._pub = self.create_publisher(JointState, '/joint_states', 10)
         self._state_pub = self.create_publisher(String, '~/state', 10)
         hz = max(1.0, float(self.get_parameter('joint_states_hz').value))
@@ -95,6 +98,9 @@ class HwBridgeNode(Node):
         self.create_service(Trigger, '~/clear', self._srv_clear, callback_group=work)
         self.create_subscription(String, '/trajectory_execution_event', self._on_event, 10,
                                  callback_group=ticks)
+        # jog: kısa ufuklu setpoint akışı (robot_viz web_view); topic adı ros2_control'ün varsayılanıdır
+        self.create_subscription(JointTrajectory, str(self.get_parameter('jog_topic').value),
+                                 self._on_jog, 1, callback_group=jog_group)
         self._server = ActionServer(
             self, FollowJointTrajectory, str(self.get_parameter('action_name').value),
             execute_callback=self._execute, goal_callback=lambda goal: GoalResponse.ACCEPT,
@@ -163,6 +169,14 @@ class HwBridgeNode(Node):
     def _on_event(self, msg: String) -> None:
         if msg.data == 'stop':
             self.bridge.stop('MoveIt/robot API durdur')
+
+    def _on_jog(self, msg: JointTrajectory) -> None:
+        points = [core.Point(p.time_from_start.sec + p.time_from_start.nanosec * 1e-9,
+                             tuple(p.positions)) for p in msg.points]
+        outcome = self.bridge.setpoint(list(msg.joint_names), points)
+        if not outcome.ok:
+            self.get_logger().warning(f'jog setpoint reddedildi: {outcome.message}',
+                                      throttle_duration_sec=2.0)
 
     # ---- servisler --------------------------------------------------------------------------
     def _srv_home(self, request, response):

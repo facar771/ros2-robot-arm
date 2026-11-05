@@ -15,7 +15,7 @@ from tests.test_viz import box_size
 WORLD = SRC / 'robot_sim' / 'worlds' / 'workspace.sdf'
 JOINTS = tuple(f'joint_{i}' for i in range(1, 7))
 STATE_KEYS = {'api_version', 'time', 'robot', 'camera', 'objects', 'objects_age_s', 'joints',
-              'tool', 'commands', 'command'}
+              'tool', 'tcp', 'commands', 'command'}
 
 
 @pytest.fixture(scope='module')

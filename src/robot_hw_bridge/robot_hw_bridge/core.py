@@ -60,6 +60,8 @@ class BridgeConfig:
     home_tol_steps: int = 3           # homing sonrası sayaç ile beklenen home adımı arasındaki fark
     loop_stall_s: float = 0.25        # düğüm döngüsü bu kadar sessiz kalırsa kalp atışı kesilir
     max_points: int = 20000
+    setpoint_max_s: float = 0.15       # jog: tek setpoint yörüngesinin en uzun ufku (s)
+    setpoint_max_step: float = 0.05    # jog: hedef ölçülen konumdan en fazla bu kadar (rad) uzak olabilir
 
     def __post_init__(self) -> None:
         if not WATCHDOG_MIN_MS <= self.watchdog_ms <= WATCHDOG_MAX_MS:
@@ -401,6 +403,48 @@ class HwBridge:
             return self._run(link, pts, cancelled, feedback)
         finally:
             self.executing = False
+            self._exec_lock.release()
+
+    def setpoint(self, names: Sequence[str], points: Sequence[Point]) -> ExecResult:
+        """Jog: kısa ufuklu (<= ~100 ms) tek bir yörünge; her çağrı bir öncekinin yerine geçer ve her eksene
+        bir MOVE yollar. Bir şey yollanmazsa eksenler son hedefte durur ("düğüm ölürse robot durur").
+        Action yörüngesi çalışırken ya da homing yokken reddedilir; her şey ``validate`` ile denetlenir."""
+        link = self._link
+        if link is None or not link.link_ok:
+            return ExecResult(INVALID_GOAL, 'ESP32 hattı yok')
+        if not self._homed_ok:
+            return ExecResult(INVALID_GOAL, 'önce homing gerekli')
+        bad = self.validate(names, points)
+        if bad is not None:
+            return bad
+        if points[-1].t > self.cfg.setpoint_max_s:
+            return ExecResult(INVALID_GOAL, f'jog ufku {self.cfg.setpoint_max_s:g} s\'den uzun olamaz')
+        order = [list(names).index(j) for j in self.hw.joint_names]
+        tgt = [points[-1].q[k] for k in order]
+        cur, st = self.positions(), self._status
+        if cur is None or st is None or st.state not in (State.HOMED, State.ENABLED):
+            return ExecResult(INVALID_GOAL, 'MCU hareket edilebilir durumda değil')
+        if max(abs(a - b) for a, b in zip(cur, tgt)) > self.cfg.setpoint_max_step:
+            return ExecResult(INVALID_GOAL, 'jog hedefi konumdan çok uzak')
+        if not self._exec_lock.acquire(blocking=False):
+            return ExecResult(INVALID_GOAL, 'bir yörünge çalışıyor: jog reddedildi')
+        try:
+            if st.state == State.HOMED:
+                ack = link.enable()
+                if ack.result != Result.OK:
+                    return ExecResult(INVALID_GOAL, f'ENABLE reddedildi: {ack.result.name}')
+            span = max(points[-1].t, self.cfg.command_period_s)
+            for i, ax in enumerate(self.hw.axes):
+                delta = abs(ax.to_steps(tgt[i]) - ax.to_steps(cur[i]))
+                vmax = max(1, rate_steps(ax, ax.velocity_limit))
+                v = int(min(vmax, max(1.0, math.ceil(delta / span * 1.25) + 5)))
+                ack = link.move(i, self.hw.joints_to_steps(tgt)[i], v,
+                                max(1, rate_steps(ax, ax.acceleration_limit)))
+                if ack.result != Result.OK:
+                    link.stop_axes()
+                    return ExecResult(INVALID_GOAL, f'{ax.joint}: MOVE reddedildi ({ack.result.name})')
+            return ExecResult(SUCCESSFUL, 'tamam')
+        finally:
             self._exec_lock.release()
 
     def _abort_now(self, link: HwLink, why: str, code: int) -> ExecResult:

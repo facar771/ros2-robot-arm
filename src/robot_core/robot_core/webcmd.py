@@ -6,6 +6,8 @@ parsed command at a time on the :class:`~robot_core.skills.Skills` layer (a seco
 is running gets :class:`Busy`) and keeps a short log that ``/api/state`` shows live.
 
     home                          robot to the named pose 'home'
+    ready                         robot to the named pose 'ready' (inside the safe box, away from
+                                  the wrist singularity: where jogging starts)
     objects                       list the objects the robot knows about
     above <red|green|blue> [m]    tool above that object, clearance in metres (default 0.10, 0-0.5)
     demo_scenario                 home -> above green -> above red -> home, every step measured
@@ -34,7 +36,7 @@ COLORS = ('red', 'green', 'blue')
 ALIASES = {'kırmızı': 'red', 'kirmizi': 'red', 'yeşil': 'green', 'yesil': 'green', 'mavi': 'blue'}
 MAX_LINE = 64
 HEIGHT_MIN, HEIGHT_MAX, HEIGHT_DEFAULT = 0.0, 0.5, 0.10
-USAGE = ('home', 'objects', 'above <red|green|blue> [height_m]', 'demo_scenario')
+USAGE = ('home', 'ready', 'objects', 'above <red|green|blue> [height_m]', 'demo_scenario')
 _ALLOWED_CHARS = re.compile(r'[0-9A-Za-zçğıöşüÇĞİÖŞÜ.,_ ]+')
 _NUMBER = re.compile(r'[0-9]+(?:[.,][0-9]+)?')
 
@@ -79,7 +81,7 @@ def parse_command(text: Any) -> Command:
                            'virgül dışında bir şey kullanılamaz)')
     tokens = text.split()
     verb, args = tokens[0].lower(), tokens[1:]
-    if verb in ('home', 'objects', 'demo_scenario'):
+    if verb in ('home', 'ready', 'objects', 'demo_scenario'):
         if args:
             raise CommandError(f"'{verb}' argüman almaz, verilen: {' '.join(args)}")
         return Command(verb)
@@ -212,6 +214,9 @@ class CommandRunner:
     def _dispatch(self, command: Command):
         if command.verb == 'home':
             r = self._skills.go_to_named_pose('home')
+            return r.ok, r.message, dict(r.data)
+        if command.verb == 'ready':
+            r = self._skills.go_to_named_pose('ready')
             return r.ok, r.message, dict(r.data)
         if command.verb == 'objects':
             objs = self._skills.list_objects()

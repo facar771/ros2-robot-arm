@@ -227,3 +227,11 @@ Windows↔Docker ağı (`host.docker.internal`), uzun süreli jitter.
 **Bulgu (B3 için):** MCU (ve Esp32Sim) geri giden `seq`'li çerçeveyi atar; yeniden bağlanan bir istemci
 `seq`'i 0'dan başlatırsa `HELLO_REQ` bile duyulmaz. Düğüm kaldığı `seq`'ten sürer, ama düğüm *süreci* yeniden
 başlarsa aynı sorun olur. Öneri (v1'e eklemeli): `HELLO_REQ` alındığında MCU `rx` seq izleyicisini sıfırlasın.
+
+### Jog setpoint girişi (J2)
+`hw_bridge_node` ayrıca `/arm_controller/joint_trajectory` (`jog_topic`) konusunu dinler: Robot API'nin jog'u her ~20 ms'de
+≤ 100 ms ufuklu kısa bir yörünge yollar; köprü her mesajı `HwBridge.setpoint` ile doğrular (homed, limitler, hedef ölçülen
+konumdan en çok 0,05 rad uzak, action yörüngesi çalışmıyor) ve eksenlere `MOVE` yollar. Setpoint gelmezse eksenler son
+hedefte durur; sıfır hızda bile kalp atışı 20 Hz (50 ms) gider (`HEARTBEAT_PERIOD_MS`), MCU watchdog'u (300 ms) bunu bekler.
+**Doğrulanmadı:** gerçek ESP32 ile jog (yalnız birim testi ve `run_selftest hw`'deki köprü yolu; jog→köprü zinciri Esp32Sim ile
+birlikte koşulmadı).

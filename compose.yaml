@@ -11,6 +11,8 @@
 # docker compose run --rm selftest-cmd      -> browser commands: white list, refusals, demo scenario (cmd_check)
 # docker compose run --rm selftest-integration -> Hub -> Robot API -> perception -> motion + vision plugin + agent (integration_check)
 # docker compose run --rm selftest-hw       -> hardware bridge node against the ESP32 simulator (hw_check, no Gazebo)
+# docker compose run --rm selftest-jog      -> jog over the Robot API on mock_components (jog_check)
+# docker compose run --rm selftest-jog-gazebo -> the same on Gazebo physics
 # docker compose run --rm selftest-tracking -> camera platform + moving target: lock behaviour (tracking_check, ~5 min)
 # docker compose up demo                     -> interactive demo, browser view + buttons at http://localhost:8080
 #                                               (second terminal: ./docker/cli.sh)
@@ -166,6 +168,22 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "hw"]
+
+  selftest-jog:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "jog"]
+
+  selftest-jog-gazebo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-jog"]
 
   selftest-tracking:
     build:

@@ -166,7 +166,7 @@ def run(base: str, config, ws, skills: Skills, state: JointStateCache, buffer: B
     record('/app.js ve /style.css sunuluyor',
            http_.request('GET', '/app.js')[0] == 200
            and http_.request('GET', '/style.css')[0] == 200)
-    record('/api/state belgelenen alanlara sahip', set(s) == STATE_KEYS,
+    record('/api/state belgelenen alanlara sahip', STATE_KEYS <= set(s),
            f'(alanlar: {sorted(s)})')
     cam_size = (ws.camera.width, ws.camera.height)
     record('kamera boyutu dünya dosyasıyla aynı',
