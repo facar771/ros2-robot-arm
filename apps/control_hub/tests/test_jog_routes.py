@@ -228,3 +228,41 @@ def test_unreachable_robot_gives_502(scenarios, ui):
     r = inc(client)
     assert r.status_code == 502 and r.json()['error'] == 'robot_unreachable'
     hub.close()
+
+
+# --- L3: 3 nokta öğretme (Hub yalnızca geçirir; doğrulama robotta) -----------------------------------
+def _frame(name, o, x, xy):
+    return {'name': name, 'points': {'origin': o, 'x': x, 'xy': xy}}
+
+
+def test_frame_teaching_invalid_points_show_robot_text(local):
+    client, _ = local
+    near = _frame('Yakin', [0.3, 0, 0.1], [0.31, 0, 0.1], [0.3, 0.1, 0.1])            # 10 mm < 20 mm
+    r = client.put('/api/frames', json={'frames': [near]})
+    assert r.status_code == 400 and '20 mm' in r.json()['message']
+    line = _frame('Dogru', [0.3, 0, 0.1], [0.4, 0, 0.1], [0.5, 0, 0.1])               # aynı doğru
+    r = client.put('/api/frames', json={'frames': [line]})
+    assert r.status_code == 400 and 'aynı doğru' in r.json()['message']
+    assert client.get('/api/frames').json()['frames'] == []                           # hiçbir şey yazılmadı
+
+
+def test_frame_teaching_appends_and_deletes_whole_list(local):
+    client, _ = local
+    a = _frame('A', [0.3, 0, 0.1], [0.4, 0, 0.1], [0.3, 0.1, 0.1])
+    b = _frame('B', [0.2, 0, 0.1], [0.2, 0.1, 0.1], [0.1, 0.1, 0.1])
+    assert client.put('/api/frames', json={'frames': [a]}).status_code == 200
+    got = client.get('/api/frames').json()['frames']
+    both = [{'name': f['name'], 'points': f['points']} for f in got] + [b]
+    assert client.put('/api/frames', json={'frames': both}).status_code == 200
+    assert [f['name'] for f in client.get('/api/frames').json()['frames']] == ['A', 'B']
+    assert client.put('/api/frames', json={'frames': [b]}).status_code == 200
+    assert [f['name'] for f in client.get('/api/frames').json()['frames']] == ['B']
+    assert inc(client, frame='B').status_code == 200
+    assert inc(client, frame='A').status_code == 400                                   # silinen çerçeve yok
+
+
+def test_wizard_assets_served(local):
+    client, _ = local
+    assert 'frames.js' in client.get('/').text
+    js = client.get('/frames.js').text
+    assert 'window.FrameWizard' in js and "'/api/frames', 'PUT'" in js and '.innerHTML' not in js

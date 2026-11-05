@@ -309,6 +309,12 @@ Robot API'sinin `POST /api/jog` + `GET/PUT /api/frames` uçlarını (J2) Hub **g
 Panel: **artımlı varsayılan** (0.1 / 1 / 10 mm ya da °). Basılı-tut yalnızca `hold_allowed` ise açılır ve
 kullanıcı kutuyu işaretlerse çalışır; kapalıysa nedeni panelde yazar (gerçek mod, `jog_hold` kapalı, telefon,
 Docker NAT'ta robotun reddi: `403`). `409` = başka istemci/iş, `423` = ACİL DUR kilidi, `502` = robota ulaşılamıyor.
+**Düzlem öğretme sihirbazı (L3):** "Düzlemler" kartı. Orijin, +X yönü ve XY düzlemi noktaları robot jog ile
+götürülüp "Şu anki TCP'yi kaydet" ile alınır (sihirbaz robotu hareket ettirmez); "Düzlemi kaydet" taze listeyi
+okuyup yenisini ekleyerek **tüm listeyi** `PUT /api/frames` ile yollar (dosyayı robot yazar). Geçersiz nokta
+(20 mm'den yakın, aynı doğru) robotun hata metniyle gösterilir; 409/423/403 aynen. Kayıtlı düzlemler listelenir,
+"Jog'da seç" ile jog çerçevesi olur, çift tıkla (onaylı) silinir.
+
 Tuş bırakılınca, sekme gizlenince, pencere odağı kaybolunca ve sayfa kapanınca kiralama bırakılır; bunlar
 yalnızca kibarlıktır, **asıl dead-man robot tarafındaki TTL'dir**. Yazılım dead-man donanım acil durdurmanın
 yerine geçmez. `--fake` robotunda jog kartezyen toplamadır (kinematik/güvenli kutu yok).
