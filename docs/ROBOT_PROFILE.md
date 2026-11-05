@@ -49,6 +49,24 @@ kırılır; CI `core` işi bunu zaten koşar.
   **Türetilmiş güvenli kutu TCP'den etkilenmez** (varsayılan hep dar); açıkça yazılan kutu doğrulanırken erişim,
   araç linkinden uzun çıkan ofset kadar genişler. **MoveIt/poz hedefleri hâlâ link_6 (flanş) çerçevesine gider, TCP'ye değil**;
   URDF'e TCP linki eklenmedi.
+- **`tools`** + **`active_tool`** (Q1, isteğe bağlı): değiştirilebilir takımlar (`robot_core/profile.py`: `Tool`, `apply_tool`). Yoksa ya da
+  `active_tool` yazılmadıysa **takım yok = flanş** (en dar seçim) ve üretilen dosyalar takımsız robotla **bayt bayt aynıdır**.
+  Her takım (`tools.<ad>`): `tcp: {offset, wpr}` (flanş çerçevesine göre), `mass` (kg, **zorunlu**, ≤ 20), `com` ve `inertia`
+  (isteğe bağlı; yoksa geometri sınırlarının merkezi ve o sınırların katı kutu ataleti), `collision` (**zorunlu**, 1–8 şekil:
+  `cylinder`/`box`/`sphere`, flanş çerçevesinde `origin`+`wpr`), `box_margin`, `material`, `sensors`.
+  - **Sensörler:** `camera` (`name`, `pose: {offset, wpr}` flanşa göre, `resolution: [w, h]`, `fov` = YATAY açı, rad, z = optik eksen;
+    `CameraSensor.intrinsics()` kare piksel/bozulmasız kamera_info sayılarını türetir), `laser` (`name`, `origin`, birim `axis`, flanş çerçevesinde).
+    Sensörler şimdilik yalnız profilde doğrulanır/okunur; **URDF/SDF'e yazılmazlar** (URDF dallanırsa `RobotConfig` seri zinciri reddeder; Gazebo kamera/lazer = P1).
+  - **Tek geçiş, birlikte güncellenir:** `apply_tool(profile, ad | None)` (ya da YAML `active_tool` / `load_profile(yol, tool=ad)`) TCP'yi
+    (`Chain`/jog/`Tool` çerçevesi), güvenli kutuyu (her duvardan `box_margin` kadar daralır) ve çarpışma geometrisini+kütleyi (üretilen URDF'te
+    flanşa sabit `tool_<ad>` linki, SRDF'te `tip_link`–`tool_<ad>` komşu çifti) beraber değiştirir. Saf fonksiyondur; çalışma zamanında takım
+    değiştirme (robot durgunken, ACİL DUR) Q3'tür.
+  - **Daha dar varsayılan:** `box_margin` yazılmazsa takım geometrisinin TCP çevresindeki en uzak noktası (sınırlayıcı küre). Bu, takım ucunun
+    zemine değmesini engeller; bilerek küçültmek için `box_margin` açıkça yazılır. Kutu payla boşalıyorsa hata verir.
+  - Üst düzey `tcp:` ile `active_tool` birlikte kullanılamaz (TCP takımdan gelir; ikisi de sıfırsa serbest). Açık kutunun erişim denetimi
+    takımsız (flanş/`tcp:`) erişimle yapılır, takım ofseti erişimi genişletmez.
+  - **`tip_link`:** takım aktifken URDF'in son linki `tool_<ad>` olur (çerçevesi flanşla aynı, sıfır ofsetli sabit eklem); MoveIt poz hedefleri
+    yine flanş çerçevesidir, TCP değil.
 - Motor/sürücü/encoder **bu dosyada yok** (v3): `hardware.profile.yaml` (aşağıda, "Donanım profili").
 
 ## Doğrulayıcının denetledikleri (`robot_core/profile.py`; hata mesajı YAML'daki yeri söyler)
@@ -129,6 +147,7 @@ eklem limitleri, marj 0, encoder yok, homing konumu 0 rad. **Gerçek bir robot i
 home anahtarı konumları yazılmadan kullanılmamalıdır.** Gerçek donanımda hiçbir şey denenmedi.
 
 ## Bu aşamada olmayanlar
+Takım kütüphanesi (Q2), Hub/Robot API'de takım seçimi ve çalışma zamanı değişimi (Q3), sensörlerin URDF/SDF/Gazebo'ya yazılması (P1), takım kütlesinin tork denetimine girmesi (K7);
 Paralel/kapalı çevrim, mimic, prizmatik eklem; IK çözücü seçimi; launch/RViz üretimi; firmware kaynak kodu ve
 ROS köprü düğümü (B2/B3), dönüşümün çalışma zamanında köprüye bağlanması; profilin çalışma zamanında okunması (`profile/` CMake ile kurulmuyor, ilk tüketici gelince);
 UI'dan düzenleme.

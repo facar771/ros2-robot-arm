@@ -23,13 +23,13 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import yaml
 
-from robot_core.safezone import AXES, SafetyConfig, SafetyConfigError, parse_safety
+from robot_core.safezone import AXES, SafetyConfig, SafetyConfigError, SafeZone, parse_safety
 from robot_core.se3 import make_transform, matrix_from_wpr
 
 PROFILE_VERSION = 3
@@ -45,6 +45,8 @@ MAX_LENGTH = 5.0                 # m: more means millimetres
 MIN_LENGTH = 0.001               # m: less means a typo (or metres typed as km)
 MAX_MASS = 1000.0                # kg
 MAX_EFFORT = 10000.0             # N*m
+MAX_TOOL_MASS = 20.0             # kg: more is a different robot (or grams typed as kg)
+MAX_TOOL_SHAPES = 8
 MAX_TCP_OFFSET = 1.0             # m: a longer tool offset is a unit mistake (mm?) or a new robot
 
 DEFAULT_VELOCITY = 0.5
@@ -100,6 +102,65 @@ class Tcp:
 
 
 @dataclass(frozen=True)
+class ToolShape:
+    """One collision/visual primitive of a tool, in the flange frame."""
+    kind: str                                # 'cylinder' | 'box' | 'sphere'
+    dims: Tuple[float, ...]                  # cylinder (radius, length); box (x, y, z); sphere (r,)
+    origin: Vec = (0.0, 0.0, 0.0)            # m, shape centre in the flange frame
+    wpr: Vec = (0.0, 0.0, 0.0)               # rad, R = Rz(R) Ry(P) Rx(W)
+
+    @property
+    def half_extents(self) -> Vec:           # local axis-aligned half sizes
+        if self.kind == 'sphere':
+            return (self.dims[0],) * 3
+        if self.kind == 'cylinder':
+            return (self.dims[0], self.dims[0], self.dims[1] / 2)
+        return tuple(d / 2 for d in self.dims)
+
+
+@dataclass(frozen=True)
+class CameraSensor:
+    """Camera: pose of the camera frame in the flange frame (z = optical axis)."""
+    name: str
+    offset: Vec
+    wpr: Vec
+    resolution: Tuple[int, int]              # width, height (px)
+    fov: float                               # rad, HORIZONTAL field of view
+
+    def intrinsics(self) -> Dict[str, float]:
+        """Pinhole camera_info numbers derived from resolution + FOV (square pixels, no
+        distortion)."""
+        w, h = self.resolution
+        f = (w / 2) / math.tan(self.fov / 2)
+        return {'fx': f, 'fy': f, 'cx': w / 2, 'cy': h / 2, 'width': w, 'height': h}
+
+
+@dataclass(frozen=True)
+class LaserSensor:
+    """Laser pointer: exit point and beam direction (unit) in the flange frame."""
+    name: str
+    origin: Vec
+    axis: Vec
+
+
+@dataclass(frozen=True)
+class Tool:
+    name: str
+    tcp: Tcp                                 # relative to the flange (tool link) frame
+    mass: float                              # kg
+    com: Vec                                 # centre of mass in the flange frame
+    inertia: Tuple[float, float, float]      # ixx, iyy, izz about the COM, flange axes
+    shapes: Tuple[ToolShape, ...]            # collision + visual geometry
+    box_margin: float                        # m the safe box shrinks on every wall
+    material: str
+    sensors: Tuple[Union[CameraSensor, LaserSensor], ...] = ()
+
+    @property
+    def link_name(self) -> str:
+        return f'tool_{self.name}'
+
+
+@dataclass(frozen=True)
 class Profile:
     robot: str
     materials: Mapping[str, Tuple[float, float, float, float]]
@@ -117,6 +178,16 @@ class Profile:
     reach_center: Vec                                # shoulder: where joint_2's frame sits at zero
     reach_radius: float                              # straight-arm reach from the shoulder
     box_derived: bool
+    # tools (Q1): `tcp` and `safety` above are the EFFECTIVE ones for `active_tool`; the base_*
+    # fields keep the tool-less values so `apply_tool` can switch without re-reading the YAML.
+    tools: Mapping[str, Tool] = field(default_factory=dict)
+    active_tool: Optional[str] = None
+    base_tcp: Tcp = Tcp()
+    base_safety: Optional[SafetyConfig] = None
+
+    @property
+    def tool(self) -> Optional[Tool]:
+        return self.tools[self.active_tool] if self.active_tool else None
 
     @property
     def joint_names(self) -> Tuple[str, ...]:
@@ -130,7 +201,10 @@ class Profile:
         return next(link for link in self.links if link.name == name)
 
     def adjacent_pairs(self) -> List[Tuple[str, str]]:
-        return [(j.parent, j.child) for j in self.joints]
+        pairs = [(j.parent, j.child) for j in self.joints]
+        if self.tool:                        # the tool link hangs on the flange (fixed joint)
+            pairs.append((self.tip_link, self.tool.link_name))
+        return pairs
 
 
 # ---- small validators -------------------------------------------------------------------------
@@ -306,10 +380,153 @@ def _parse_joint(name: str, data: Any, parent_link: Link) -> Joint:
                 hi=MAX_EFFORT))
 
 
-def parse_profile(data: Any) -> Profile:
+# ---- tools (Q1) -------------------------------------------------------------------------------
+def _parse_wpr_pose(d: Mapping, where: str, off_key: str = 'offset') -> Tuple[Vec, Vec]:
+    offset = tuple(_number(v, f'{where}.{off_key}[{i}]', lo=-MAX_TCP_OFFSET, hi=MAX_TCP_OFFSET)
+                   for i, v in enumerate(_vector(d.get(off_key, (0, 0, 0)), 3,
+                                                 f'{where}.{off_key}')))
+    wpr = tuple(_number(v, f'{where}.wpr[{i}]', lo=-MAX_ANGLE, hi=MAX_ANGLE)
+                for i, v in enumerate(_vector(d.get('wpr', (0, 0, 0)), 3, f'{where}.wpr')))
+    return offset, wpr
+
+
+def _parse_shape(data: Any, where: str) -> ToolShape:
+    d = _mapping(data, where, ('type', 'radius', 'length', 'size', 'origin', 'wpr'), ('type',))
+    kind = d['type']
+    dim = dict(lo=MIN_LENGTH, hi=MAX_LENGTH)
+    if kind == 'sphere':
+        _mapping(d, where, ('type', 'radius', 'origin', 'wpr'), ('type', 'radius'))
+        dims: Tuple[float, ...] = (_number(d['radius'], f'{where}.radius', **dim),)
+    elif kind == 'cylinder':
+        _mapping(d, where, ('type', 'radius', 'length', 'origin', 'wpr'),
+                 ('type', 'radius', 'length'))
+        dims = (_number(d['radius'], f'{where}.radius', **dim),
+                _number(d['length'], f'{where}.length', **dim))
+    elif kind == 'box':
+        _mapping(d, where, ('type', 'size', 'origin', 'wpr'), ('type', 'size'))
+        dims = tuple(_number(v, f'{where}.size[{i}]', **dim)
+                     for i, v in enumerate(_vector(d['size'], 3, f'{where}.size')))
+    else:
+        raise _fail(f'{where}.type', f"'sphere', 'cylinder' ya da 'box' olmalı, bulunan: {kind!r}")
+    origin, wpr = _parse_wpr_pose(d, where, 'origin')
+    return ToolShape(kind, dims, origin, wpr)
+
+
+def _parse_sensor(data: Any, where: str) -> Union[CameraSensor, LaserSensor]:
+    kind = data.get('type') if isinstance(data, Mapping) else None
+    if kind == 'camera':
+        d = _mapping(data, where, ('type', 'name', 'pose', 'resolution', 'fov'),
+                     ('type', 'name', 'pose', 'resolution', 'fov'))
+        pose = _mapping(d['pose'], f'{where}.pose', ('offset', 'wpr'), ('offset',))
+        offset, wpr = _parse_wpr_pose(pose, f'{where}.pose')
+        res = d['resolution']
+        if not isinstance(res, (list, tuple)) or len(res) != 2:
+            raise _fail(f'{where}.resolution', f'[genişlik, yükseklik] olmalı: {res!r}')
+        width, height = (_integer(v, f'{where}.resolution[{i}]', 16, 8192)
+                         for i, v in enumerate(res))
+        fov = _number(d['fov'], f'{where}.fov', lo=0.05, hi=3.0)   # rad: > ~172 deg = degrees typed
+        return CameraSensor(_name(d['name'], f'{where}.name'), offset, wpr, (width, height), fov)
+    if kind == 'laser':
+        d = _mapping(data, where, ('type', 'name', 'origin', 'axis'),
+                     ('type', 'name', 'origin', 'axis'))
+        origin = tuple(_number(v, f'{where}.origin[{i}]', lo=-MAX_TCP_OFFSET, hi=MAX_TCP_OFFSET)
+                       for i, v in enumerate(_vector(d['origin'], 3, f'{where}.origin')))
+        axis = _vector(d['axis'], 3, f'{where}.axis')
+        if abs(_norm(axis) - 1.0) > 1e-9:
+            raise _fail(f'{where}.axis', f'birim vektör olmalı (uzunluk {_norm(axis):g}): '
+                                         f'{list(axis)}')
+        return LaserSensor(_name(d['name'], f'{where}.name'), origin, axis)
+    raise _fail(f'{where}.type', f"'camera' ya da 'laser' olmalı, bulunan: {kind!r}")
+
+
+def _shape_bounds(shapes: Sequence[ToolShape]) -> Tuple[Vec, Vec]:
+    """Axis-aligned bounds (flange frame) of all shapes, rotations included."""
+    lo, hi = [math.inf] * 3, [-math.inf] * 3
+    for sh in shapes:
+        rot = abs(matrix_from_wpr(*sh.wpr))
+        reach = [sum(rot[i][j] * sh.half_extents[j] for j in range(3)) for i in range(3)]
+        for i in range(3):
+            lo[i], hi[i] = min(lo[i], sh.origin[i] - reach[i]), max(hi[i], sh.origin[i] + reach[i])
+    return tuple(lo), tuple(hi)
+
+
+def _parse_tool(name: str, data: Any, materials: Mapping, used: set) -> Tool:
+    where = f'tools.{name}'
+    d = _mapping(data, where, ('tcp', 'mass', 'com', 'inertia', 'box_margin', 'material',
+                               'collision', 'sensors'), ('mass', 'collision'))
+    link_name = f'tool_{name}'
+    if link_name in used:
+        raise _fail(where, f'ad çakışması: {link_name}')
+    tcp_in = _mapping(d.get('tcp') or {}, f'{where}.tcp', ('offset', 'wpr'))
+    offset, wpr = _parse_wpr_pose(tcp_in, f'{where}.tcp')
+    mass = _number(d['mass'], f'{where}.mass', positive=True, hi=MAX_TOOL_MASS)
+    raw_shapes = d['collision']
+    if (not isinstance(raw_shapes, (list, tuple)) or not 1 <= len(raw_shapes) <= MAX_TOOL_SHAPES):
+        raise _fail(f'{where}.collision', f'1-{MAX_TOOL_SHAPES} şekilli liste olmalı (çarpışma '
+                                          f'geometrisi zorunlu): {raw_shapes!r}')
+    shapes = tuple(_parse_shape(sh, f'{where}.collision[{i}]') for i, sh in enumerate(raw_shapes))
+    lo, hi = _shape_bounds(shapes)
+    # defaults: COM at the centre of the bounds, inertia of a solid box of those bounds
+    com = (tuple(_number(v, f'{where}.com[{i}]', lo=-MAX_TCP_OFFSET, hi=MAX_TCP_OFFSET)
+                 for i, v in enumerate(_vector(d['com'], 3, f'{where}.com'))) if 'com' in d
+           else tuple((a + b) / 2 for a, b in zip(lo, hi)))
+    if 'inertia' in d:
+        inertia = tuple(_number(v, f'{where}.inertia[{i}]', positive=True)
+                        for i, v in enumerate(_vector(d['inertia'], 3, f'{where}.inertia')))
+    else:
+        inertia = solid_inertia('box', [max(b - a, MIN_LENGTH) for a, b in zip(lo, hi)], mass)
+    tcp_point = Tcp(offset, wpr).transform[:3, 3]
+    # narrow default: the box shrinks by the farthest reach of the tool geometry around the TCP
+    bound = max(math.dist(sh.origin, tcp_point) + _norm(sh.half_extents) for sh in shapes)
+    margin = (_number(d['box_margin'], f'{where}.box_margin', lo=0.0, hi=MAX_TCP_OFFSET)
+              if 'box_margin' in d else bound)
+    material = d.get('material', next(iter(materials)))
+    if material not in materials:
+        raise _fail(f'{where}.material', f'tanımsız malzeme {material!r}')
+    sensors = []
+    raw_sensors = d.get('sensors') or []
+    if not isinstance(raw_sensors, (list, tuple)):
+        raise _fail(f'{where}.sensors', f'liste olmalı: {raw_sensors!r}')
+    for i, sensor in enumerate(raw_sensors):
+        sensors.append(_parse_sensor(sensor, f'{where}.sensors[{i}]'))
+    if len({s.name for s in sensors}) != len(sensors):
+        raise _fail(f'{where}.sensors', 'sensör adları benzersiz olmalı')
+    return Tool(name, Tcp(offset, wpr), mass, com, inertia, shapes, margin, material,
+                tuple(sensors))
+
+
+def apply_tool(profile: Profile, name: Optional[str]) -> Profile:
+    """Profile with tool ``name`` mounted (``None`` = the bare flange, the narrowest choice).
+
+    One call updates everything that depends on the tool together: the TCP (Chain / jog FK and
+    Jacobian, ``Tool`` jog frame), the safe box (shrunk on every wall by the tool's ``box_margin``)
+    and the collision geometry (the generated URDF/SRDF read ``profile.tool``). Pure: returns a new
+    ``Profile``; never moves anything (changing the tool on a running robot is Q3)."""
+    base_safety = profile.base_safety or profile.safety
+    if name is None:
+        return replace(profile, active_tool=None, tcp=profile.base_tcp, safety=base_safety)
+    if name not in profile.tools:
+        raise ProfileError(f'tools: {name!r} adlı takım yok (tanımlılar: '
+                           f'{sorted(profile.tools) or "hiçbiri"})')
+    tool = profile.tools[name]
+    zone = base_safety.zone
+    m = tool.box_margin
+    lower = tuple(v + m for v in zone.lower)
+    upper = tuple(v - m for v in zone.upper)
+    if not all(lo < hi for lo, hi in zip(lower, upper)):
+        raise _fail(f'tools.{name}.box_margin',
+                    f'güvenli kutu {m:.3f} m payla boşalıyor; kutuyu büyüt ya da payı bilerek '
+                    'küçült (varsayılan: takım geometrisinin TCP çevresindeki en uzak noktası)')
+    safety = SafetyConfig(SafeZone(lower, upper, zone.frame), base_safety.max_velocity_scale)
+    return replace(profile, active_tool=name, tcp=tool.tcp, safety=safety)
+
+
+def parse_profile(data: Any, tool: Optional[str] = None) -> Profile:
+    """``tool`` overrides ``active_tool`` of the YAML (``None`` = use the YAML)."""
     top = ('profile_version', 'robot', 'materials', 'mount', 'links', 'joints', 'moveit',
-           'safety', 'tcp')
-    d = _mapping(data, 'profil', top, tuple(k for k in top if k not in ('safety', 'tcp')))
+           'safety', 'tcp', 'tools', 'active_tool')
+    d = _mapping(data, 'profil', top, tuple(k for k in top if k not in (
+        'safety', 'tcp', 'tools', 'active_tool')))
     if d['profile_version'] != PROFILE_VERSION:
         raise _fail('profile_version',
                     f"{PROFILE_VERSION} olmalı, bulunan: {d['profile_version']!r}")
@@ -421,7 +638,21 @@ def parse_profile(data: Any) -> Profile:
             raise _fail('safety.box', f'kutunun en uzak köşesi omuzdan {far:.3f} m, kolun erişimi '
                                       f'{reach:.3f} m; kutuyu küçült')
 
-    return Profile(
+    tools_in = d.get('tools') or {}
+    if not isinstance(tools_in, Mapping):
+        raise _fail('tools', f'eşleme (ad: takım) olmalı, bulunan: {tools_in!r}')
+    tools = {_name(n, f'tools.{n}'): _parse_tool(n, v, materials, used)
+             for n, v in tools_in.items()}
+    wanted = tool if tool is not None else d.get('active_tool')
+    if wanted is not None and wanted not in tools:
+        raise _fail('active_tool', f'{wanted!r} adlı takım yok (tanımlılar: '
+                                   f'{sorted(tools) or "hiçbiri"})')
+    if wanted is not None and ('offset' in tcp_in or 'wpr' in tcp_in) and (
+            tcp.offset != (0.0, 0.0, 0.0) or tcp.wpr != (0.0, 0.0, 0.0)):
+        raise _fail('tcp', 'active_tool varken üst düzey `tcp` yazılamaz: TCP takımdan gelir '
+                           '(takımın `tcp`si)')
+
+    base = Profile(
         robot=robot, materials=materials, mount=mount, links=links, joints=tuple(joints),
         planning_group=_name(mv.get('planning_group', 'robot_arm'), 'moveit.planning_group'),
         default_velocity_scaling=_number(mv.get('default_velocity_scaling', DEFAULT_SCALE),
@@ -430,10 +661,12 @@ def parse_profile(data: Any) -> Profile:
                                              'moveit.default_acceleration_scaling', positive=True,
                                              hi=1.0),
         initial_positions=initial, named_poses=poses, allow_extra=tuple(extra), safety=safety,
-        tcp=tcp, reach_center=shoulder, reach_radius=reach, box_derived=derived)
+        tcp=tcp, reach_center=shoulder, reach_radius=reach, box_derived=derived,
+        tools=tools, active_tool=None, base_tcp=tcp, base_safety=safety)
+    return apply_tool(base, wanted)
 
 
-def load_profile(path: Union[str, Path]) -> Profile:
+def load_profile(path: Union[str, Path], tool: Optional[str] = None) -> Profile:
     try:
         with open(path, encoding='utf-8') as handle:
             data = yaml.safe_load(handle)
@@ -442,6 +675,6 @@ def load_profile(path: Union[str, Path]) -> Profile:
     except yaml.YAMLError as exc:
         raise ProfileError(f'{path}: geçerli YAML değil ({exc})') from exc
     try:
-        return parse_profile(data)
+        return parse_profile(data, tool)
     except ProfileError as exc:
         raise ProfileError(f'{path}: {exc}') from exc

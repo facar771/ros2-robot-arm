@@ -141,6 +141,35 @@ tcp:
   offset: [0.0, 0.0, 0.0]
   wpr: [0.0, 0.0, 0.0]
 
+# ---- tools (Q1) -------------------------------------------------------------------------------
+# Exchangeable tools. Omitted/empty `tools` and no `active_tool` = the bare flange (the narrowest
+# choice; generated files are then byte-identical to a robot without this section). `active_tool`
+# picks ONE tool; a single switch updates together: the TCP (jog / Chain / Tool frame, so a
+# top-level `tcp:` must stay unset), the safe box (shrunk on every wall by `box_margin`, default
+# = the farthest point of the tool geometry around the TCP: narrow), the collision geometry and
+# mass in the generated URDF (link `tool_<name>` fixed to the flange; SRDF adjacent pair).
+# MoveIt pose goals address the tool link, whose frame equals the flange frame (NOT the TCP).
+# Edit here, regenerate; never edit robot.urdf by hand. Library of real tools = Q2.
+#
+#   active_tool: pointer
+#   tools:
+#     pointer:
+#       tcp: {offset: [0.0, 0.0, 0.15], wpr: [0.0, 0.0, 0.0]}   # flange frame (m, rad)
+#       mass: 0.2                                              # kg (REQUIRED)
+#       com: [0.0, 0.0, 0.075]                  # optional; default centre of the geometry bounds
+#       inertia: [0.0005, 0.0005, 0.00001]      # optional; default solid box of those bounds
+#       box_margin: 0.15                        # optional (m); default see above
+#       material: orange                        # optional; default first material
+#       collision:                              # REQUIRED, 1-8 shapes in the flange frame
+#         - {type: cylinder, radius: 0.01, length: 0.15, origin: [0.0, 0.0, 0.075]}
+#         - {type: box, size: [0.04, 0.04, 0.03], origin: [0.0, 0.0, 0.015], wpr: [0.0, 0.0, 0.0]}
+#         - {type: sphere, radius: 0.02, origin: [0.0, 0.0, 0.15]}
+#       sensors:                                # optional
+#         - {type: camera, name: cam, pose: {offset: [0.05, 0.0, 0.03], wpr: [0.0, 0.0, 0.0]},
+#            resolution: [640, 480], fov: 1.2}   # fov = HORIZONTAL, rad; z = optical axis
+#         - {type: laser, name: laser, origin: [0.0, 0.0, 0.14], axis: [0.0, 0.0, 1.0]}
+tools: {}
+
 # ---- safety -----------------------------------------------------------------------------------
 safety:
   frame: world
