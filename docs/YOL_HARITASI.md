@@ -47,7 +47,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
    - **L7** küresel çerçeve çekirdeği (Robot_2)
    - **O1** nokta deposu çekirdeği (Robot_3, yeni dosya)
 3. L4 birleşince **Q1** takım (tool) tanımı. Sonra **O2** API, **O3** Hub "Algoritmalar" sayfası, **L8** küresel çerçeve API+Hub, **H4 arayüz**.
-4. **K6–K8** karma robot (2 step + SG90 servo) için aktüatör türü ve profil. Donanım malzemeleri elde, firmware (K3) buna bağlı.
+4. **J5** esnek profil (K8'den önce), **K6–K8** karma robot (2 step + SG90 servo) için aktüatör türü ve profil. Donanım malzemeleri elde, firmware (K3) buna bağlı.
 5. **P1–P4** tool kamerası + nişan (Q1, L7/L8, H6 sonrası). **J4** Hub'da robot profili. **N** bölümü doğrulama borçları.
 
 ---
@@ -112,10 +112,16 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [x] K1 Protokol (`HARDWARE.md`, COBS+CRC+seq), codec, ESP32 simülatörü, Hub COM↔TCP köprüsü (#35)
 - [x] K2 `robot_hw_bridge` ROS düğümü, iki yönlü watchdog, `selftest-hw` (#39)
 - [ ] K3 Firmware iskeleti (PlatformIO, derleme CI) ⏸ K6'ya bağlı (malzemeler elde); gerçek donanımda denenmediğini yaz
+- [ ] J5 **Eksik bilgiyle çalışan, sonradan doldurulan robot profili** (Robot_2 şema/doğrulayıcı, Robot_4 Hub; J4 ile birlikte tasarlanır). Fiziksel değerler (kol uzunluğu, kütle, motor/sürücü modeli, dişli, encoder/limit anahtarı, servo darbe aralığı, tork) sonradan girilebilir. Kurallar:
+  1. Her değer bir **kalite etiketi** taşır: `measured` (ölçüldü) · `estimated` (tahmin) · `placeholder` (yer tutucu). Boş bırakılan değer yok, ya etiketli varsayılan ya da `null`.
+  2. Profil üç olgunluk seviyesinde doğrulanır: **taslak** (şema geçerli) → **simülasyona hazır** (kinematik ve limitler tutarlı) → **donanıma hazır** (kritik alanların hepsi `measured`: link uzunlukları, motor türü, adım/dişli, eksen limitleri, home/limit anahtarı, servo aralığı, tork denetimi geçti).
+  3. **`mode: real` ve ESP32'ye hareket komutu, yalnız "donanıma hazır" profille açılır.** Placeholder/estimated değer gerçek donanımda sessizce kullanılmaz, robot reddeder ve eksik alanları söyler.
+  4. Hub'da profil sihirbazı: eksik/tahmini alanları listeler, adım adım doldurulur, kaydedince üretilen dosyalar yeniden üretilir (elle düzenleme yok). Değişiklik günlüğü kalır (kim, ne zaman, eski → yeni).
+  5. Testler: eksik alanlı profil simülasyonda açılır ama real'de reddedilir; etiket düşürme (measured → estimated) olgunluğu geri düşürür.
 - [ ] K4 İlk bring-up prosedürü (motorlar yükten ayrık, düşük hız, homing, sınır anahtarı, NC acil dur)
 - [ ] K6 **Aktüatör türü `hobby_servo` (SG90) + iki robot** (Robot_2 `hardware.py`, Robot_4 `HARDWARE.md`/protokol/simülatör). Bugünkü donanım profili ve protokol yalnız step motor varsayıyor (`motor_type: 'step'`, MOVE hedefi adım, HOME/ENABLE durum makinesi). Servo için: eksen türü alanı `step | hobby_servo`; servo alanları: darbe µs ↔ açı, açı sınırı, yazılım hız (slew) sınırı; **geri besleme yok** → konum = komut, "kestirim" olarak işaretlenir (step encoder'sız kuralı gibi); homing yerine bilinen başlangıç pozu; açılışta ani sıçramayı önlemek için rest açısına yavaş yaklaşma; ENABLE = PWM çıkışı aç/kapa; simülatöre servo modeli. Karışık (step + servo) robotta her eksen kendi türünde. Mevcut step davranışı ve testleri değişmez.
 - [ ] K7 **Servo güç ve güvenlik kuralları** (`HARDWARE.md`): servolar için ayrı 5 V besleme (akım payı: SG90 durma akımı datasheet'ten doğrulanır), ortak GND, brown-out önlemi; donanım acil durda servo gücü kesilir (NC hat röle/MOSFET üzerinden) ve **kol yerçekimiyle düşebilir**, bunun için mekanik/duruş notu; **tork denetimi:** profil doğrulayıcı URDF kütle ve kol uzunluğundan statik tork hesaplar, motor/servo tork sınırını aşıyorsa profili reddeder (SG90 tork değeri datasheet'ten doğrulanır, bu belgede varsayım yok).
-- [ ] K8 **İki robot profili** (Robot_2): `profile/` altında birden çok robot (şimdi tek dosya `six_axis_robot.yaml`). Önce **karma robot** (2 step + geri kalanı SG90, basit olan, malzemeler elde), sonra **tam step robot**. Profil seçimi, her profilin CI'da üretim=commit kontrolü, simülasyonda profile göre robot yükleme. Gerekli girdi (Ferhat): eksen sayısı, link uzunlukları ve kütleleri, hangi eksenler step/servo, step sürücü/motor modeli, encoder/limit anahtarı var mı.
+- [ ] K8 **İki robot profili** (Robot_2): `profile/` altında birden çok robot (şimdi tek dosya `six_axis_robot.yaml`). Önce **karma robot** (2 step + geri kalanı SG90, basit olan, malzemeler elde), sonra **tam step robot**. Profil seçimi, her profilin CI'da üretim=commit kontrolü, simülasyonda profile göre robot yükleme. Ferhat gerçek ölçüleri (eksen sayısı, link uzunlukları, kütle, hangi eksenler step/servo, motor/sürücü modeli, encoder/limit anahtarı) **sonra** verecek; o zamana kadar profil J5 kurallarıyla `placeholder`/`estimated` etiketli değerlerle simülasyonda çalışır, gerçek donanıma kapalıdır.
 - [ ] K5 Wi-Fi kanalı (HMAC + seq, OTA kapalı/imzalı), USB-seri sonrası
 
 ## L. Jog (elle kontrol, FANUC tarzı frame'ler)
@@ -164,6 +170,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] N5 Nightly workflow GitHub'da ilk koşu doğrulaması
 
 ## Değişiklik günlüğü
+- 2026-11-05: J5 (eksik bilgiyle çalışan, sonradan doldurulan profil: kalite etiketi + olgunluk seviyeleri + real kapısı) eklendi; K8 artık Ferhat'ın ölçülerini beklemez.
 - 2026-11-05: H4 genişletildi (izleme kamerası), H6 (hareketli kamerada algı), Q1–Q3 (takımlar), K6–K8 (SG90 servo + iki robot: karma ve tam step) eklendi; "Sıradaki işler" yeniden sıralandı; O1 sahibi Robot_3.
 - 2026-11-05: L7/L8 (küresel çerçeve), O1–O4 (nokta öğretme + algoritma sayfası), P1–P4 (tool kamerası + nişan, lazer güvenliği) eklendi (Ferhat isteği); H3 satırına "kol kamerası değil" notu.
 - 2026-11-05: İlk sürüm (Müdür). Kaynak: birleşen PR'lar #1–#41, açık #42.
