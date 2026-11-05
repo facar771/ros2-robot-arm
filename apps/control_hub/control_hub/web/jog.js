@@ -42,11 +42,26 @@ window.JogPanel = (() => {
   function mount() {
     if (J.mounted) return;
     api('/api/jog').then((st) => {
-      if (!st || !st.enabled) return;            // robotta jog kapalı: panel çizilmez
+      if (!st || !st.enabled) return unavailable('robot jog\'u kapalı bildirdi (enabled=false)');
+      const old = q('p-jog'); if (old) old.remove();
       J.st = st; J.mounted = true; build(); refreshFrames();
       if (window.FrameWizard) FrameWizard.mount();
       if (J.snap) onState(J.snap); else apply();   // ilk durum mount'tan önce gelmiş olabilir
-    }).catch(() => { /* jog yok (403/501/502): panel hiç görünmez */ });
+    }).catch((e) => {
+      // Panel sessizce kaybolmaz: neden yazılır (robot yığını eski olabilir, robot kapalı olabilir…)
+      const old = e && (e.status === 404 || e.status === 501);
+      unavailable(explain(e) + (old ? ' — robot yığını eski olabilir: WSL\'de `docker compose build` sonra yeniden başlat' : ''));
+    });
+  }
+
+  function unavailable(reason) {
+    const prev = q('p-jog'); if (prev) prev.remove();
+    const retry = el('button', { class: 'small', type: 'button', text: 'Yeniden dene' });
+    retry.addEventListener('click', () => { const c = q('p-jog'); if (c) c.remove(); mount(); });
+    q('panels').append(el('div', { class: 'card', id: 'p-jog' }, [
+      el('h2', { text: 'Jog (elle hareket)' }),
+      el('div', { class: 'say bad', id: 'jg-off', text: `Jog kullanılamıyor: ${reason}` }),
+      el('div', { class: 'row' }, [retry])]));
   }
 
   function build() {
