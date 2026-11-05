@@ -13,6 +13,8 @@
 # docker compose run --rm selftest-hw       -> hardware bridge node against the ESP32 simulator (hw_check, no Gazebo)
 # docker compose run --rm selftest-jog      -> jog over the Robot API on mock_components (jog_check)
 # docker compose run --rm selftest-jog-gazebo -> the same on Gazebo physics
+# docker compose run --rm selftest-waypoints -> waypoint API + goto_waypoint on mock_components (waypoint_check)
+# docker compose run --rm selftest-waypoints-gazebo -> the same on Gazebo physics
 # docker compose run --rm selftest-tracking -> camera platform + moving target: lock behaviour (tracking_check, ~5 min)
 # docker compose up demo                     -> interactive demo, browser view + buttons at http://localhost:8080
 #                                               (second terminal: ./docker/cli.sh)
@@ -184,6 +186,22 @@ services:
       target: ci
     image: ros2-robot-arm:ci
     command: ["run_selftest", "gazebo-jog"]
+
+  selftest-waypoints:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "waypoints"]
+
+  selftest-waypoints-gazebo:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: ci
+    image: ros2-robot-arm:ci
+    command: ["run_selftest", "gazebo-waypoints"]
 
   selftest-tracking:
     build:

@@ -55,6 +55,10 @@ from robot_core.jogapi import JogController, JogDenied, frames_document, replace
 from robot_core.perception import Intrinsics, Transform
 from robot_core.supervisor import API_VERSION, MOVING_SPEED, EStopped, Supervisor, max_speed
 from robot_core.viz import OverlayItem, box_to_pixels, depth_to_rgb, draw_overlay, encode_png
+from robot_core.waypointapi import (
+    MAX_BODY as MAX_WAYPOINT_BODY,
+)
+from robot_core.waypointapi import FrameInUse, WaypointApi, WaypointDenied, frames_guard
 from robot_core.webcmd import Busy, CommandError, CommandRunner, parse_command
 
 log = logging.getLogger('robot_core.webview')
@@ -228,7 +232,10 @@ RESET_PATH = '/api/reset'
 JOBS_PATH = '/api/jobs'
 JOG_PATH = '/api/jog'
 FRAMES_PATH = '/api/frames'
-POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH)
+WAYPOINTS_PATH = '/api/waypoints'
+RECORD_PATH = '/api/waypoints/record'
+POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH, RECORD_PATH)
+_WAYPOINT_PATH = re.compile(r'^/api/waypoints/([^/]{1,64})$')
 MAX_FRAMES_BODY = 8192
 _JOB_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})$')
 _CANCEL_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})/cancel$')
@@ -247,10 +254,13 @@ class WebView:
                  commands: Optional[CommandRunner] = None,
                  supervisor: Optional[Supervisor] = None, mode: str = 'gazebo',
                  jobs: Optional[JobManager] = None, jog: Optional[JogController] = None,
-                 frames: Optional[FrameStore] = None):
+                 frames: Optional[FrameStore] = None, waypoints: Optional[WaypointApi] = None,
+                 waypoints_error: Optional[str] = None):
         self.source = source
         self.jog = jog if jog is not None else (supervisor.jog if supervisor is not None else None)
         self.frames = frames
+        self.waypoints = waypoints
+        self.waypoints_error = waypoints_error     # why the waypoint store is unusable (or None)
         self.commands = commands
         self.supervisor = supervisor
         self.jobs = jobs or (JobManager(commands, estop=supervisor.estop if supervisor else None)
@@ -346,6 +356,12 @@ class _Handler(BaseHTTPRequestHandler):
         if path in (JOG_PATH, FRAMES_PATH):
             self._get_jog_or_frames(path, head_only)
             return
+        if path == RECORD_PATH:
+            self._not_allowed()               # POST only
+            return
+        if path == WAYPOINTS_PATH or _WAYPOINT_PATH.match(path):
+            self._get_waypoints(path, head_only)
+            return
         if _CANCEL_PATH.match(path):
             self._not_allowed()
             return
@@ -369,6 +385,32 @@ class _Handler(BaseHTTPRequestHandler):
                 return
             payload = frames_document(view.frames)
         self._send(200, 'application/json', json.dumps(payload).encode(), head_only)
+
+    def _waypoint_api(self) -> Optional[WaypointApi]:
+        """The waypoint API, or None after answering why it is not available."""
+        view = self.server.view
+        if view.waypoints_error:
+            self._json(503, {'error': f'nokta deposu kullanılamıyor: {view.waypoints_error}'})
+            return None
+        if view.waypoints is None:
+            self._json(403, {'error': 'nokta ucu kapalı'})
+            return None
+        return view.waypoints
+
+    def _get_waypoints(self, path: str, head_only: bool) -> None:
+        if not self._host_allowed():
+            self._json(403, {'error': 'host izinli degil'})
+            return
+        api = self._waypoint_api()
+        if api is None:
+            return
+        try:
+            match = _WAYPOINT_PATH.match(path)
+            payload = api.get(match.group(1)) if match else api.document()
+            status = 200
+        except WaypointDenied as exc:
+            status, payload = exc.status, {'error': exc.message}
+        self._send(status, 'application/json', json.dumps(payload).encode(), head_only)
 
     def _get_jobs(self, path: str, head_only: bool) -> None:
         jobs = self.server.view.jobs
@@ -407,11 +449,18 @@ class _Handler(BaseHTTPRequestHandler):
             allow, why = 'GET, HEAD, POST', 'GET (durum) ya da POST (jog komutu)'
         elif path == FRAMES_PATH:
             allow, why = 'GET, HEAD, PUT', 'GET (liste) ya da PUT (tüm listeyi değiştir)'
+        elif path == RECORD_PATH:
+            allow, why = 'POST', 'bu uç noktaya yalnızca POST yapılır'
+        elif path == WAYPOINTS_PATH:
+            allow, why = 'GET, HEAD', 'GET (liste); nokta eklemek için PUT /api/waypoints/<ad>'
+        elif _WAYPOINT_PATH.match(path):
+            allow = 'GET, HEAD, PUT, DELETE'
+            why = 'GET, PUT (oluştur/değiştir/yeniden adlandır) ya da DELETE'
         else:
             allow, why = 'GET, HEAD', 'salt okunur: yalnızca GET/HEAD'
         self._json(405, {'error': why}, close=True, extra={'Allow': allow})
 
-    do_DELETE = do_PATCH = do_OPTIONS = _not_allowed    # noqa: N815
+    do_PATCH = do_OPTIONS = _not_allowed    # noqa: N815
 
     def _cross_site_reason(self) -> Optional[str]:
         """Why this POST looks like it comes from another web page (None: it does not)."""
@@ -486,6 +535,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_job(runner)
         elif path == JOG_PATH:
             self._post_jog(runner)
+        elif path == RECORD_PATH:
+            self._post_record(runner)
         elif cancel:
             self._post_cancel(runner, cancel.group(1))
         else:
@@ -615,8 +666,57 @@ class _Handler(BaseHTTPRequestHandler):
         except JogDenied as exc:
             self._json(exc.status, {'ok': False, 'error': exc.message, **exc.extra})
 
+    def _post_record(self, runner: CommandRunner) -> None:
+        api = self._waypoint_api()
+        if api is None:
+            return
+        body = self._read_json_body(runner, MAX_WAYPOINT_BODY)
+        if body is _RESPONDED:
+            return
+        self._waypoint_call(lambda: api.record(body))
+
+    def _waypoint_call(self, call) -> None:
+        try:
+            status, payload = call()
+            self._json(status, payload)
+        except WaypointDenied as exc:
+            self._json(exc.status, {'error': exc.message})
+        except OSError as exc:
+            log.exception('nokta dosyası yazılamadı')
+            self._json(500, {'error': f'nokta dosyası yazılamadı ({type(exc).__name__})'})
+
+    def do_DELETE(self) -> None:    # noqa: N802
+        path = urlsplit(self.path).path
+        match = _WAYPOINT_PATH.match(path)
+        if not match or path == RECORD_PATH:
+            self._not_allowed()
+            return
+        if self._guard_post() is None:
+            return
+        api = self._waypoint_api()
+        if api is None:
+            return
+        if int(self.headers.get('Content-Length') or 0) > 0:
+            self._json(400, {'error': 'DELETE gövde almaz'}, close=True)
+            return
+        self._waypoint_call(lambda: (200, api.delete(match.group(1))))
+
     def do_PUT(self) -> None:    # noqa: N802
-        if urlsplit(self.path).path != FRAMES_PATH:
+        path = urlsplit(self.path).path
+        match = _WAYPOINT_PATH.match(path)
+        if match and path != RECORD_PATH:
+            runner = self._guard_post()
+            if runner is None:
+                return
+            api = self._waypoint_api()
+            if api is None:
+                return
+            body = self._read_json_body(runner, MAX_WAYPOINT_BODY)
+            if body is _RESPONDED:
+                return
+            self._waypoint_call(lambda: api.put(match.group(1), body))
+            return
+        if path != FRAMES_PATH:
             self._not_allowed()
             return
         runner = self._guard_post()
@@ -633,7 +733,9 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(409, {'error': 'jog etkinken çerçeve listesi değiştirilemez'})
             return
         try:
-            self._json(200, replace_frames(view.frames, body))
+            self._json(200, replace_frames(view.frames, body, frames_guard(view.waypoints)))
+        except FrameInUse as exc:
+            self._json(409, {'error': str(exc)})
         except FrameError as exc:
             self._json(400, {'error': str(exc)})
         except OSError as exc:

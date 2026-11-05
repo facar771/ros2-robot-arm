@@ -685,3 +685,35 @@ iş sürerken jog `409`; araya iş girerse jog bir sonraki tickte kapanır.
 artımlı mod varsayılan; basılı-tut (`twist`) `mode: real`'de ve loopback dışı istemcilerde (telefon) KAPALI
 (`jog_hold: auto|on|off`, `jog_hold_remote`). Her yeni setpoint ≤ 100 ms ufukludur: düğüm ölürse kol kendiliğinden durur.
 `frames.yaml` Robot API'nin veri dizinindedir (`data_dir` / `ROBOT_DATA_DIR`, Docker'da volume); Hub dosyaya yazmaz.
+
+## Nokta deposu (O2): `/api/waypoints`, `goto_waypoint` — Robot API v1'e EKLEMELİ
+
+Kayıtlı robot pozları (`robot_core.waypoints`, O1). Dosya `waypoints.yaml`, Robot API'nin veri dizininde
+(`data_dir` / `ROBOT_DATA_DIR`); Hub dosyaya yazmaz, yalnızca bu uçları kullanır. Uçlar `commands:=true` ister;
+yazan uçlar (PUT/DELETE/POST) diğer POST'larla aynı korumaya sahiptir (host, `Content-Type: application/json`,
+yabancı Origin / `Sec-Fetch-Site` reddi; gövde ≤ 1 KiB).
+
+| Uç | Gövde | Yanıt |
+|---|---|---|
+| `GET /api/waypoints` | – | `{waypoints_version, joint_names, max_waypoints, frames: ["World", …], waypoints: [{name, joints, tcp: {frame, position, quaternion_xyzw}, created}]}` |
+| `GET /api/waypoints/<ad>` | – | tek nokta; yoksa `404` |
+| `PUT /api/waypoints/<ad>` | `{"joints": [6 rad], "frame": "World"}` | oluşturur (`201`) ya da değiştirir (`200`, `replaced: true`) |
+| `PUT /api/waypoints/<ad>` | `{"rename_to": "yeni"}` | yeniden adlandırır; yeni ad varsa `409` |
+| `DELETE /api/waypoints/<ad>` | – | `{ok, deleted, count}` |
+| `POST /api/waypoints/record` | `{"name", "frame"?, "overwrite"?: false}` | **ölçülen** eklemleri kaydeder (`201`/`200`); ad varsa ve `overwrite` yoksa `409` |
+
+- **Kaydedilirken reddedilir (`400`, dosyaya yazılmaz):** eklem limiti dışı, TCP güvenli kutunun dışında,
+  sonlu olmayan/yanlış sayıda değer, geçersiz ad, bilinmeyen çerçeve. `record` ek olarak bir iş ya da jog
+  kiralaması sürerken `409` (ölçülen poz hareket halinde olabilir), eklem durumu yoksa `503` verir. `record` adı
+  ayrılmıştır. En çok `max_waypoints` nokta (`409`).
+- **Düzenleme hareket ettirmez:** PUT/DELETE/record acil dur kilitliyken de çalışır (`423` yalnızca hareket uçlarında).
+- **Çerçeve koruması:** bir noktanın dayandığı kullanıcı çerçevesini silen ya da değiştiren `PUT /api/frames`
+  `409` döner (aksi halde nokta dosyası açılışta yüklenemezdi). Önce noktaları silin ya da `World`'de yeniden kaydedin.
+- **Dosya bozuksa** Robot API yine açılır; nokta uçları `503` (neden metinde), `goto_waypoint` başarısız olur. Hiçbir şey
+  sessizce onarılmaz.
+- **Noktaya gidiş:** `POST /api/jobs {"command": "goto_waypoint <ad>"}` (komut beyaz listede; `GET /api/state`
+  `commands.allowed` listesine **eklendi**). Eklem hedefi **MoveIt'e** verilir: planlama ve çarpışma denetimi vardır,
+  denetimsiz eklem hedefi YOKTUR. Nokta, gidişten hemen önce eklem limitlerine ve güvenli kutuya karşı **yeniden**
+  denetlenir (kutu/profil sonradan daralmış olabilir). Acil dur `423`, iş/jog dışlaması `409` (`state: jogging`),
+  iptal ve zaman aşımı diğer işlerle aynıdır; MoveIt reddederse `failed` + neden, "Robot hareket etmedi.".
+- Durum belgesi (`/api/state`) değişmedi.

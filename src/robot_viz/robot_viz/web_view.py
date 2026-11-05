@@ -43,6 +43,8 @@ from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
 from robot_core.skills import Skills
 from robot_core.supervisor import CancelFlag, EStop, GuardedMotion, Supervisor
+from robot_core.waypointapi import WaypointApi
+from robot_core.waypoints import WaypointStore
 from robot_core.webcmd import CommandRunner
 from robot_core.webview import SceneObject, Snapshot, WebView
 from robot_perception.images import depth_array, rgb_array
@@ -111,6 +113,8 @@ class WebViewNode(Node):
         self.jobs = None
         self.jog = None
         self.frames = None
+        self.waypoints = None
+        self.waypoints_error = None
         if bool(self.get_parameter('commands').value):
             self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
             safety = load_safety_config()                    # missing/bad file: refuse to start
@@ -128,10 +132,35 @@ class WebViewNode(Node):
             self.jobs = JobManager(self.runner, cancel, estop)
             if bool(self.get_parameter('jog').value):
                 self._setup_jog(estop)
+            self._setup_waypoints(safety, guarded)
             self.supervisor = Supervisor(estop, self._joints, self._joint_names, stop_port=motion,
                                          runner=self.runner, mode=self.mode, events=self.events,
                                          safety=safety.as_dict(motion.velocity_scale),
                                          jog=self.jog)
+
+    def _setup_waypoints(self, safety, guarded) -> None:
+        """Waypoint store + API. A broken file does not stop the robot API: the waypoint doors
+        answer 503 with the reason and ``goto_waypoint`` fails (nothing is guessed or repaired)."""
+        try:
+            profile = load_profile(os.environ.get('ROBOT_PROFILE') or PROFILE_PATH)
+            data = Path(self.get_parameter('data_dir').value or os.environ.get('ROBOT_DATA_DIR')
+                        or Path.home() / '.ros2-robot-arm')
+            store = WaypointStore(data / 'waypoints.yaml', Chain(profile), safety.zone,
+                                  frames=self.frames)
+        except Exception as exc:    # noqa: BLE001
+            self.waypoints_error = f'{type(exc).__name__}: {exc}'
+            self.get_logger().error(f'nokta deposu kapalı: {self.waypoints_error}')
+            return
+
+        def busy() -> Optional[str]:
+            if self.jobs is not None and self.jobs.is_running:
+                return 'bir iş çalışıyor'
+            return 'jog etkin' if self.jog is not None and self.jog.active else None
+
+        self.waypoints = WaypointApi(store, self._joints, busy)
+        self.runner.waypoints = store
+        self.runner.joint_motion = guarded          # MoveIt plans it; e-stop and cancel apply
+        self.get_logger().info(f'nokta deposu hazır: {len(store)} nokta, {store.path}')
 
     def _setup_jog(self, estop: EStop) -> None:
         try:
@@ -242,7 +271,8 @@ def main(args=None):
     try:
         view = WebView(node, host=host, port=port, depth_range=node.depth_range,
                        commands=node.runner, supervisor=node.supervisor, mode=node.mode,
-                       jobs=node.jobs, jog=node.jog, frames=node.frames)
+                       jobs=node.jobs, jog=node.jog, frames=node.frames,
+                       waypoints=node.waypoints, waypoints_error=node.waypoints_error)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()

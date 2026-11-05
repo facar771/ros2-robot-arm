@@ -8,6 +8,7 @@ is running gets :class:`Busy`) and keeps a short log that ``/api/state`` shows l
     home                          robot to the named pose 'home'
     ready                         robot to the named pose 'ready' (inside the safe box, away from
                                   the wrist singularity: where jogging starts)
+    goto_waypoint <name>          planned, collision-checked joint goal to a saved waypoint
     objects                       list the objects the robot knows about
     above <red|green|blue> [m]    tool above that object, clearance in metres (default 0.10, 0-0.5)
     demo_scenario                 home -> above green -> above red -> home, every step measured
@@ -25,10 +26,14 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Deque, Dict, List, Optional
 
-from robot_core.ports import EventSink, NullEventSink, ToolPositionPort
+from robot_core.errors import hint_for
+from robot_core.models import JointTarget
+from robot_core.ports import EventSink, MotionPort, NullEventSink, ToolPositionPort
 from robot_core.scenario import run_demo_scenario
 from robot_core.skills import Skills
 from robot_core.supervisor import ESTOP_MESSAGE, EStop, EStopped
+from robot_core.waypointapi import verified_joint_goal
+from robot_core.waypoints import WaypointError, WaypointStore, check_name
 
 log = logging.getLogger('robot_core.webcmd')
 
@@ -36,7 +41,8 @@ COLORS = ('red', 'green', 'blue')
 ALIASES = {'kırmızı': 'red', 'kirmizi': 'red', 'yeşil': 'green', 'yesil': 'green', 'mavi': 'blue'}
 MAX_LINE = 64
 HEIGHT_MIN, HEIGHT_MAX, HEIGHT_DEFAULT = 0.0, 0.5, 0.10
-USAGE = ('home', 'ready', 'objects', 'above <red|green|blue> [height_m]', 'demo_scenario')
+USAGE = ('home', 'ready', 'goto_waypoint <name>', 'objects',
+         'above <red|green|blue> [height_m]', 'demo_scenario')
 _ALLOWED_CHARS = re.compile(r'[0-9A-Za-zçğıöşüÇĞİÖŞÜ.,_ ]+')
 _NUMBER = re.compile(r'[0-9]+(?:[.,][0-9]+)?')
 
@@ -85,6 +91,13 @@ def parse_command(text: Any) -> Command:
         if args:
             raise CommandError(f"'{verb}' argüman almaz, verilen: {' '.join(args)}")
         return Command(verb)
+    if verb == 'goto_waypoint':
+        if len(args) != 1:
+            raise CommandError('kullanım: goto_waypoint <nokta_adı>')
+        try:
+            return Command(verb, check_name(args[0]))
+        except WaypointError as exc:
+            raise CommandError(str(exc)) from exc
     if verb == 'above':
         if not 1 <= len(args) <= 2:
             raise CommandError('kullanım: above <red|green|blue> [yükseklik_m]')
@@ -120,8 +133,12 @@ class CommandRunner:
 
     def __init__(self, skills: Skills, tool: ToolPositionPort, events: Optional[EventSink] = None,
                  *, estop: Optional[EStop] = None, log_lines: int = 60, clock=time.monotonic,
-                 wall=time.time, scenario=run_demo_scenario):
+                 wall=time.time, scenario=run_demo_scenario,
+                 waypoints: Optional[WaypointStore] = None,
+                 joint_motion: Optional[MotionPort] = None):
         self._skills, self._tool, self._estop = skills, tool, estop
+        self.waypoints = waypoints          # set by the node after the frames exist (or None)
+        self.joint_motion = joint_motion    # the guarded MoveIt joint-goal port (e-stop applies)
         self._events = events or NullEventSink()
         self._clock, self._wall, self._scenario = clock, wall, scenario
         self._gate = threading.Lock()          # held while a command runs: single flight
@@ -218,6 +235,22 @@ class CommandRunner:
         if command.verb == 'ready':
             r = self._skills.go_to_named_pose('ready')
             return r.ok, r.message, dict(r.data)
+        if command.verb == 'goto_waypoint':
+            if self.waypoints is None:
+                return False, 'nokta deposu kapalı: nokta yok, robot hareket etmedi', {}
+            q, why = verified_joint_goal(self.waypoints, command.target)
+            if q is None:
+                return False, f'{why}; robot hareket etmedi', {'waypoint': command.target}
+            if self.joint_motion is None:
+                return False, 'hareket katmanı bağlı değil, robot hareket etmedi', {}
+            m = self.joint_motion.move_to(JointTarget(tuple(q), command.target))   # MoveIt plans
+            data = {'waypoint': command.target, 'code': m.code_name}
+            if m.ok:
+                return True, f'{command.target} noktasına ulaşıldı', data
+            hint = hint_for(m.code_name)
+            text = f'hareket başarısız ({m.code_name or m.message or "bilinmeyen neden"})'
+            text += f': {hint}' if hint else ''
+            return False, text + ' Robot hareket etmedi.', data
         if command.verb == 'objects':
             objs = self._skills.list_objects()
             listing = [{'name': o.name, 'label': o.label,
