@@ -40,12 +40,15 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - Her merge sonrası: WSL'de `cd ~/ros2-robot-arm && git checkout main && git pull` (+ kod/imaj değiştiyse `docker compose build`). Selftest: `docker compose run --rm selftest-<mod>`.
 
 ## Sıradaki işler (öncelik sırasıyla)
-1. 🟡 **L4** TCP profilde (#42): incele, birleştir.
-2. 🟡 **L3** Hub jog paneli (#44, Robot_4): incele. #44 kapsamında 3 nokta düzlem sihirbazı var mı kontrol et; yoksa L3 tamam sayılmaz, eksik kısım ayrı görev. Ardından **L6** düzleme paralel jog doğrulaması.
-3. **L7** Küresel çerçeve çekirdeği (Robot_2) ve **O1** nokta deposu çekirdeği (Robot_2/Robot_3): ikisi de L1/L2 üzerine kurulu, #42/#44 beklemeden **paralel başlayabilir**. Sonra **O2** API, **O3** Hub "Algoritmalar" sayfası, **L8** küresel çerçeve API+Hub.
-4. **H4** Kamera elle kontrolünü Robot API + Hub'a bağla (Robot_5 çekirdek, Robot_3 API, Robot_4 arayüz; L3'ten sonra).
-5. **J4** Hub'da robot profili görüntüleme, sonra düzenleme (eksen yönü/tipi, limit, link uzunluğu, motor yön/ofset).
-6. **R1–R4** Tool kamerası + nişan alma (L7/L8 sonrası). **K3** Firmware iskeleti ⏸ donanım gelince. **N** bölümü doğrulama borçları.
+1. 🟡 **L4** TCP profilde (#42) ve 🟡 **L3** Hub jog paneli (#44): incele, birleştir.
+2. **Hemen paralel başlayabilir** (#42/#44'ü beklemez, farklı dosyalar):
+   - **H6** hareketli kamerada algı doğruluğu (Robot_5)
+   - **H4 (API kısmı)** izleme kamerasını Robot API'ye bağla (Robot_3). Arayüz kısmı L3 sonrası (Robot_4).
+   - **L7** küresel çerçeve çekirdeği (Robot_2)
+   - **O1** nokta deposu çekirdeği (Robot_3, yeni dosya)
+3. L4 birleşince **Q1** takım (tool) tanımı. Sonra **O2** API, **O3** Hub "Algoritmalar" sayfası, **L8** küresel çerçeve API+Hub, **H4 arayüz**.
+4. **K6–K8** karma robot (2 step + SG90 servo) için aktüatör türü ve profil. Donanım malzemeleri elde, firmware (K3) buna bağlı.
+5. **P1–P4** tool kamerası + nişan (Q1, L7/L8, H6 sonrası). **J4** Hub'da robot profili. **N** bölümü doğrulama borçları.
 
 ---
 
@@ -89,7 +92,8 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [x] H1 Görüntü çekirdeği, takip, eklenti SDK'sı, tarama (V1–V4, #25 içinde)
 - [x] H2 Eklenti tek giriş noktası `run_plugin` (#26), şema NaN/inf reddi (#30)
 - [x] H3 Kamera platformu elle kontrol (pan/tilt/konum) (#32). **Not:** Bu, kolun ucundaki kamera DEĞİL; `tracking.sdf`'teki ayrı yaw/slide/pitch platformu. Yalnız ROS düğümü (`camera_manual`); Robot API ve Hub arayüzü yok (H4). Kol ucu kamerası için R1'e bak.
-- [ ] H4 Kamera elle kontrolü Robot API + Hub arayüzüne bağla (L3'ten sonra)
+- [ ] H4 **İzleme kamerasını hareket ettirilebilir yap**: robotu ve masadaki parçaları tam görmek için ROS/Gazebo'daki kamera platformunu (H3: pan/tilt/slide) Robot API'ye ve Hub'a bağla; Hub'da canlı görüntü + kamera tuşları. API kısmı hemen (Robot_3), arayüz L3'ten sonra (Robot_4). Kamera hareketi robot güvenliğini etkilemez, ACİL DUR kamera platformunu da durdurur.
+- [ ] H6 **Hareketli kamerada algı (Robot_5):** `INTERFACES.md` canlı kamera notu "kamera pozu workspace.sdf'ten sabit, hareketli platform için kare başına poz yok" diyor. Platform dönünce nesne konumları dünya çerçevesinde yanlış çıkabilir. Doğrula (ROS algısı TF `world←camera_optical_frame` kullanıyor mu?), kare başına poz kullan, testle kanıtla (kamera pan/tilt'ten sonra sabit nesnenin World konumu ≤ 1 cm kayar). Tool kamerası (P) için de önkoşul.
 - [ ] H5 Eklentiler Hub'da (`run_plugin` Hub'da şimdilik kapalı)
 
 ## I. Control Hub
@@ -107,8 +111,11 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 ## K. Donanım hattı (ESP32, step motor, encoder isteğe bağlı)
 - [x] K1 Protokol (`HARDWARE.md`, COBS+CRC+seq), codec, ESP32 simülatörü, Hub COM↔TCP köprüsü (#35)
 - [x] K2 `robot_hw_bridge` ROS düğümü, iki yönlü watchdog, `selftest-hw` (#39)
-- [ ] K3 Firmware iskeleti (PlatformIO, derleme CI) ⏸ donanım gelince; gerçek donanımda denenmediğini yaz
+- [ ] K3 Firmware iskeleti (PlatformIO, derleme CI) ⏸ K6'ya bağlı (malzemeler elde); gerçek donanımda denenmediğini yaz
 - [ ] K4 İlk bring-up prosedürü (motorlar yükten ayrık, düşük hız, homing, sınır anahtarı, NC acil dur)
+- [ ] K6 **Aktüatör türü `hobby_servo` (SG90) + iki robot** (Robot_2 `hardware.py`, Robot_4 `HARDWARE.md`/protokol/simülatör). Bugünkü donanım profili ve protokol yalnız step motor varsayıyor (`motor_type: 'step'`, MOVE hedefi adım, HOME/ENABLE durum makinesi). Servo için: eksen türü alanı `step | hobby_servo`; servo alanları: darbe µs ↔ açı, açı sınırı, yazılım hız (slew) sınırı; **geri besleme yok** → konum = komut, "kestirim" olarak işaretlenir (step encoder'sız kuralı gibi); homing yerine bilinen başlangıç pozu; açılışta ani sıçramayı önlemek için rest açısına yavaş yaklaşma; ENABLE = PWM çıkışı aç/kapa; simülatöre servo modeli. Karışık (step + servo) robotta her eksen kendi türünde. Mevcut step davranışı ve testleri değişmez.
+- [ ] K7 **Servo güç ve güvenlik kuralları** (`HARDWARE.md`): servolar için ayrı 5 V besleme (akım payı: SG90 durma akımı datasheet'ten doğrulanır), ortak GND, brown-out önlemi; donanım acil durda servo gücü kesilir (NC hat röle/MOSFET üzerinden) ve **kol yerçekimiyle düşebilir**, bunun için mekanik/duruş notu; **tork denetimi:** profil doğrulayıcı URDF kütle ve kol uzunluğundan statik tork hesaplar, motor/servo tork sınırını aşıyorsa profili reddeder (SG90 tork değeri datasheet'ten doğrulanır, bu belgede varsayım yok).
+- [ ] K8 **İki robot profili** (Robot_2): `profile/` altında birden çok robot (şimdi tek dosya `six_axis_robot.yaml`). Önce **karma robot** (2 step + geri kalanı SG90, basit olan, malzemeler elde), sonra **tam step robot**. Profil seçimi, her profilin CI'da üretim=commit kontrolü, simülasyonda profile göre robot yükleme. Gerekli girdi (Ferhat): eksen sayısı, link uzunlukları ve kütleleri, hangi eksenler step/servo, step sürücü/motor modeli, encoder/limit anahtarı var mı.
 - [ ] K5 Wi-Fi kanalı (HMAC + seq, OTA kapalı/imzalı), USB-seri sonrası
 
 ## L. Jog (elle kontrol, FANUC tarzı frame'ler)
@@ -126,15 +133,21 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 ## O. Nokta öğretme ve algoritma yönetimi (Hub "Algoritmalar" sayfası)
 > Hedef: robotu elle (jog) bir noktaya götür → "kaydet" → başka noktaya götür → "kaydet" → "A'dan B'ye git". Çekirdekte `go_to_named_pose`/`go_to_position`/senaryo yorumlayıcısı var, ama kullanıcı noktayı arayüzden öğretemiyor ve çalıştıramıyor.
-- [ ] O1 Nokta deposu çekirdeği (Robot_2, ROS'suz): `waypoints.yaml` (ad, eklem değerleri, TCP pozu ve hangi çerçevede, oluşturma zamanı). `frames.yaml` ile aynı kurallar: atomik yazma, şema, sürüm, yükte doğrulama. **Kaydederken** nokta eklem limitleri ve güvenli kutu içinde değilse reddedilir.
+- [ ] O1 Nokta deposu çekirdeği (Robot_3; `robot_core`'da yeni dosya `waypoints.py`, mevcut dosyalara dokunmaz; ROS'suz): `waypoints.yaml` (ad, eklem değerleri, TCP pozu ve hangi çerçevede, oluşturma zamanı). `frames.yaml` ile aynı kurallar: atomik yazma, şema, sürüm, yükte doğrulama. **Kaydederken** nokta eklem limitleri ve güvenli kutu içinde değilse reddedilir.
 - [ ] O2 Robot API: `GET/PUT/DELETE /api/waypoints`, `POST /api/waypoints/record` (şu anki eklem/TCP'yi kaydeder), `POST /api/jobs` komutu `goto_waypoint` (Robot_3). **Kural:** noktaya gidiş MoveIt planı ve çarpışma denetimiyle yapılır; adlandırılmış eklem pozlarındaki gibi denetimsiz eklem hedefi değil. Güvenli kutu, ACİL DUR, 423 aynen geçerli.
 - [ ] O3 Hub "Algoritmalar" sayfası (Robot_4; L3'ten sonra): noktaları listele/yeniden adlandır/sil, "şu anki konumu nokta olarak kaydet" (jog panelinin yanında), iki nokta seç → "git". Gösterilen her hareket ACİL DUR ile birlikte.
 - [ ] O4 Sıra (algoritma) editörü: kayıtlı noktalardan adım listesi (git, bekle, döngü, kamera/eklenti çalıştır), mevcut senaryo YAML biçimine derlenir; "öğret ve oynat" (kaydet → oynat); yürütme sırasında durdur/acil dur (Robot_4 + Robot_2)
 
+## Q. Takımlar (tool)
+> Farklı tool'lar tasarlanırken içlerine kamera da (ve lazer) eklenebilmeli. Takım = kolun ucuna takılan, geometrisi, TCP'si ve isteğe bağlı sensörleri olan parça.
+- [ ] Q1 **Takım tanımı** (Robot_2; L4/#42'den sonra): `robot.profile.yaml`'da `tools:` listesi. Her takım: ad, flanşa göre TCP ofseti, kütle/atalet, çarpışma geometrisi, isteğe bağlı **sensörler** (kamera: flanşa göre poz, çözünürlük, kamera_info/FOV; lazer: çıkış noktası ve ekseni). URDF/SDF buradan üretilir (elle düzenlenmez). Takım değişince TCP, jog, güvenli kutu ve çarpışma geometrisi birlikte güncellenir; tork denetimi (K7) takım kütlesini içerir.
+- [ ] Q2 İlk takım kütüphanesi (simülasyon): sivri uçlu pointer, kamera, kamera+lazer, tutucu (D2 için yer tutucu). Her takım için gidiş-dönüş ve FK testi.
+- [ ] Q3 Hub'da takım seç/ekle/düzenle (Robot_4; J4 ile aynı sayfa), Robot API'de aktif takım seçimi (Robot_3). Takım değişimi yalnız robot durgunken, ACİL DUR ve 423 kuralları aynen.
+
 ## P. Tool kamerası ve nişan alma (L7/L8'e bağlı)
 > Hedef: kol ucundaki kamera (ve lazer göstergesi) küresel çerçeve üzerinde, görüntü işlemeyle bulunan hedefi (örn. yüz/alın) görüntü merkezinde tutar.
-- [ ] P1 Simülasyonda kol ucuna kamera (+ lazer ışını göstergesi) ekle; profil/URDF'ten üretilir, elle düzenlenmez (Robot_2 profil, Robot_5 algı)
-- [ ] P2 El-göz kalibrasyonu: kamera↔tool dönüşümü, lazer↔kamera ofseti; kalibrasyon dosyası ve doğrulama ölçümü (Robot_5)
+- [ ] P1 Simülasyonda kol ucuna kamera (+ lazer ışını göstergesi): Q1'in "kamera+lazer" takımı olarak, Gazebo'da kamera konularıyla birlikte (Robot_2 profil, Robot_5 algı)
+- [ ] P2 (H6 sonrası) El-göz kalibrasyonu: kamera↔tool dönüşümü, lazer↔kamera ofseti; kalibrasyon dosyası ve doğrulama ölçümü (Robot_5)
 - [ ] P3 "Nişan al" eklentisi: hedef görüntü merkezinden saptıkça küresel çerçevede azimut/yükselme düzeltmesi; güvenli kutu ve TTL aynen geçerli, kaybolan hedefte robot durur (Robot_5 + Robot_3)
 - [ ] P4 **Lazer güvenliği (donanımdan önce zorunlu):** yalnız Sınıf 1/2 düşük güçlü lazer; açma/kapama yazılımdan bağımsız donanım kilidiyle (NC acil dur hattıyla birlikte kesilir); varsayılan kapalı, her oturumda elle açılır; yüz/göz bölgesine ışın **tutulmaz** (ilk denemeler kağıt/duvar hedefine); lazer açıkken hedef kaybı ya da ACİL DUR'da anında kapanır. Bu madde bitmeden gerçek lazer takılmaz.
 
@@ -151,6 +164,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] N5 Nightly workflow GitHub'da ilk koşu doğrulaması
 
 ## Değişiklik günlüğü
+- 2026-11-05: H4 genişletildi (izleme kamerası), H6 (hareketli kamerada algı), Q1–Q3 (takımlar), K6–K8 (SG90 servo + iki robot: karma ve tam step) eklendi; "Sıradaki işler" yeniden sıralandı; O1 sahibi Robot_3.
 - 2026-11-05: L7/L8 (küresel çerçeve), O1–O4 (nokta öğretme + algoritma sayfası), P1–P4 (tool kamerası + nişan, lazer güvenliği) eklendi (Ferhat isteği); H3 satırına "kol kamerası değil" notu.
 - 2026-11-05: İlk sürüm (Müdür). Kaynak: birleşen PR'lar #1–#41, açık #42.
 - 2026-11-05: Kural 6-7 ve "Müdür iş akışı" eklendi (PR başlığı ↔ ID eşlemesi: #42=L4, #44=L3); L3 🟡 #44 olarak işaretlendi.
