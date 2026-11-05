@@ -1,6 +1,6 @@
 # Yol Haritası (tek doğruluk kaynağı)
 
-Son güncelleme: 2026-11-05 · main cb27e06 (PR #43; #42 ve #44 birleşti) · Güncelleyen: Müdür
+Son güncelleme: 2026-11-05 · main 4af72ea (PR #46; #42, #44, #46 birleşti) · Güncelleyen: Müdür
 
 ## Kullanım kuralları (herkes için)
 1. **Her görev bu dosyadaki bir ID'ye bağlıdır** (örn. `L3`). PR başlığına/gövdesine "Yol haritası: L3" yaz. ID'si olmayan iş yapılmaz; yeni iş eklemek Ferhat ya da Müdür kararıdır.
@@ -40,7 +40,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - Her merge sonrası: WSL'de `cd ~/ros2-robot-arm && git checkout main && git pull` (+ kod/imaj değiştiyse `docker compose build`). Selftest: `docker compose run --rm selftest-<mod>`.
 
 ## Sıradaki işler (öncelik sırasıyla)
-1. **L3 kalanı** (Robot_4): 3 nokta öğretme sihirbazı. Jog paneli #44 ile birleşti ama sihirbaz yok, L3 bu yüzden `[x]` değil. L4 bitti (#42).
+1. L3 bitti (#44, #46). **Hemen başlayacaklar (üçü farklı sahip, dosya kesişimi yok):** L7 (Robot_2), O1 (Robot_3), H6 (Robot_5). Sonra Q1 (Robot_2), H4 API (Robot_3), L9 (Hub'da robot görünümü, mimari kararı Robot_1'den sonra).
 2. **Hemen paralel başlayabilir** (farklı dosyalar):
    - **H6** hareketli kamerada algı doğruluğu (Robot_5)
    - **H4 (API kısmı)** izleme kamerasını Robot API'ye bağla (Robot_3). Arayüz kısmı L3 sonrası (Robot_4).
@@ -130,11 +130,12 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 - [x] L1 Jog çekirdeği: SE3/W-P-R, 3 noktadan çerçeve, FK/Jacobian, DLS motoru (#40)
 - [x] L2 Robot API: /api/jog (kiralama+TTL), /api/frames, jogging durumu, selftest-jog (#41)
-- [ ] L3 **kısmen** (#44 birleşti): jog paneli, çerçeve seçici (`/api/frames`'ten), artımlı adım, basılı-tut (real/telefonda kapalı), "Hazır pozuna git", 409/423/403/502 metinleri var. **Eksik: 3 nokta öğretme sihirbazı** (Hub'da ve #44'te yok; yalnız `PUT /api/frames` üç nokta doğrulaması var). Gerçek Robot API ile uçtan uca denenmedi (L5). Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
+- [x] L3 Hub jog paneli + 3 nokta öğretme sihirbazı (#44, #46): çerçeve seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (real/telefonda kapalı), "Hazır pozuna git", 409/423/403/502 metinleri; sihirbaz: orijin, +X yönü (≥20 mm), XY düzlemi (+Y tarafı), "Şu anki TCP'yi kaydet", düzlem listeleme/seçme/silme (yeniden adlandırma yok). **Doğrulama durumu:** Ferhat arayüz akışını sahte robotla denedi ve kabul etti; sahte robot dönüş hesaplamaz (arayüzde uyarı çıkar). Gerçek Robot API, gerçek FK ve gerçek robotta TCP kaydı (kol durduktan sonra kaydedilmeli, Hub önbelleği ≤~200 ms bayat) denenmedi, bunlar L5'e ve L9'a kalır.
 - [x] L4 TCP profilde + `FrameStore.replace_all` + ready pozu (#42)
 - [ ] L6 **Düzleme paralel jog ("düzlem modu")**: seçili çerçevenin (World ya da 3 noktayla öğretilen User) XY düzleminde ileri-geri/sağ-sol hareket; Z ve takım yönelimi kilitli (Z ayrı tuş). Önce L1/L2'deki World/User jog'unun bunu zaten karşılayıp karşılamadığı Robot_2/Robot_3 tarafından doğrulanır, eksik varsa eklenir; hesap çok tekilliğe duyarlı olmalı (L1 DLS'i kullan). Arayüz tuşları L3'ün parçası olabilir, sahibi L6 ilk adımında belirlenir.
 - [ ] L7 **Küresel çerçeve (merkez noktalı, "kubbe kamera")** (Robot_2, `FrameStore` + `jog`): çerçeve türü `sphere`. Tanım: merkez noktası C (World'de, ya da taban orijinine göre ofset, örn. taban ekseninin 10 cm üstü) ve yarıçap r. Jog girdileri: **sağ-sol = azimut** (C'den geçen düşey eksen etrafında), **yukarı-aşağı = yükselme açısı** (TCP, C'ye sabit r uzaklıkta kalır), **içeri-dışarı = r** (ayrı tuş). Seçilen takım ekseni (varsayılan tool z) **her zaman C'ye bakar** (look-at). Hesap yeni çözücü değil: türdeki girdi, anlık Kartezyen twist'e çevrilir ve mevcut L1 DLS motoruna verilir (güvenli kutu, tekillik, TTL aynen geçerli). Bilinmesi gerekenler: C taban ekseni üzerindeyse azimut hareketi saf 1. eksen dönüşü olur (beklenen davranış, testle doğrulanır); zirvede (yükselme ±90°) azimut tanımsız, bu yüzden yükselme ≤85° ile sınırlanır; kolun erişemediği (kutu/limit/tekillik) bölgeye girilince jog durur ve nedeni söyler, çerçeve oluştururken (C, r) erişilebilir yükselme/azimut aralığı hesaplanıp kullanıcıya gösterilir. Çerçeve türleri envanteri (bu iş sonunda `docs/JOG.md`'de listelenir): Joint, World, Tool, User (3 nokta), Sphere (yeni). Silindirik vb. türler ihtiyaç doğarsa ayrı madde.
 - [ ] L8 Küresel çerçeve: Robot API (`/api/frames` türü `sphere`) + Hub çerçeve sihirbazı (C'yi sayıyla ya da "şu anki TCP'yi merkez al/10 cm yukarı" ile gir, r gir, erişim aralığını göster) (Robot_3, Robot_4; L3 ve L7'den sonra)
+- [ ] L9 **Hub'da robotun canlı görünümü** (Ferhat isteği; L3 sonrası): jog ve sihirbaz kullanılırken robotun hareketini Hub arayüzünde gözle görmek. Seçenekler: `robot_viz` web görünümünü Hub'a gömmek ya da Hub'a kendi 3B görünümünü eklemek. **Mimari karar yaşlı kurt'a (Robot_1) sorulur, karar verilmeden görev verilmez.** Sahip adayları: Robot_4 (Hub), Robot_3 (görünüm/API). Kabul ölçütü: jog tuşuna basınca Hub'da robotun hareketi görünür; salt-okunur, ACİL DUR'u ve güvenlik kurallarını etkilemez.
 - [ ] L5 Jog'u Gazebo'da elle dene (Ferhat); Windows↔WSL jitter ölç, gerekirse TTL 300 ms
 
 ## O. Nokta öğretme ve algoritma yönetimi (Hub "Algoritmalar" sayfası)
@@ -170,6 +171,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] N5 Nightly workflow GitHub'da ilk koşu doğrulaması
 
 ## Değişiklik günlüğü
+- 2026-11-05: #46 birleşti, L3 `[x]` (Ferhat arayüzü sahte robotla denedi ve kabul etti; gerçek robot doğrulaması L5/L9'a kaldı). L9 (Hub'da robot görünümü) eklendi, mimari kararı Robot_1'de.
 - 2026-11-05: #42 (L4) ve #44 (L3) birleşti. L4 `[x]`. L3 kısmen: 3 nokta öğretme sihirbazı yok, `[x]` yapılmadı. Main CI bu güncelleme sırasında tamamlanmamıştı (Lint + unit tests koşuyordu).
 - 2026-11-05: J5 (eksik bilgiyle çalışan, sonradan doldurulan profil: kalite etiketi + olgunluk seviyeleri + real kapısı) eklendi; K8 artık Ferhat'ın ölçülerini beklemez.
 - 2026-11-05: H4 genişletildi (izleme kamerası), H6 (hareketli kamerada algı), Q1–Q3 (takımlar), K6–K8 (SG90 servo + iki robot: karma ve tam step) eklendi; "Sıradaki işler" yeniden sıralandı; O1 sahibi Robot_3.
