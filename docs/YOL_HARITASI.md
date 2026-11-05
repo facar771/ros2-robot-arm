@@ -1,6 +1,6 @@
 # Yol Haritası (tek doğruluk kaynağı)
 
-Son güncelleme: 2026-11-05 · main 916204f (PR #41) · Güncelleyen: Müdür (Robot_6)
+Son güncelleme: 2026-11-05 · main 916204f (PR #41) · Güncelleyen: Müdür
 
 ## Kullanım kuralları (herkes için)
 1. **Her görev bu dosyadaki bir ID'ye bağlıdır** (örn. `L3`). PR başlığına/gövdesine "Yol haritası: L3" yaz. ID'si olmayan iş yapılmaz; yeni iş eklemek Ferhat ya da Müdür kararıdır.
@@ -8,6 +8,15 @@ Son güncelleme: 2026-11-05 · main 916204f (PR #41) · Güncelleyen: Müdür (R
 3. Göreve başlamadan önce: ilgili bölümü, bağımlılıkları ve "Değişmez ilkeler"i oku. Bağımlılığı bitmemiş maddeye başlama, dur ve Ferhat'a söyle.
 4. Kapsamın dışına çıkma. Bulduğun ek iş/risk varsa PR gövdesinde "Yol haritasına öneri" başlığıyla yaz, yapma.
 5. Her PR'da "Denenmeyenler" bölümü zorunlu. Doğrulayamadığını "çalışıyor" yazma.
+6. **PR başlığı yol haritası ID'siyle başlar:** `L3: Hub jog paneli`. Eski adlandırma karışıklığı: #42 (başlıkta "J4") = **L4**, #44 (başlıkta "J3") = **L3**. Bu dosyadaki J3/J4 profil işleridir (J3 bitti, J4 Hub'da profil görüntüleme). Karışırsa bu dosyadaki ID geçerlidir.
+7. Bu dosya Ferhat ve Müdür içindir. Çalışan yalnızca kendi görevini okur, değiştirmez.
+
+## Müdür iş akışı
+1. Göreve başlamadan önce `main` ve açık PR'ları kontrol et, bu dosyayı oku. Önerilen iş dosyada yoksa uydurma görev yazma; Ferhat'a sor.
+2. Görev verirken çalışana: ID, sahiplik alanı, bağımlılıklar, kabul ölçütü, "Denenmeyenler" zorunluluğu, yasak alanlar (başkasının dosyaları).
+3. PR birleşince: ilgili satırı `[x]` yap, PR numarasını yaz, "Sıradaki işler"i ve "Son güncelleme"yi (tarih + main SHA) düzelt, değişiklik günlüğüne bir satır ekle. Hepsini tek küçük docs PR'ında topla.
+4. Bir madde yarım kalırsa `[x]` yapma. Kısmi bitişi satıra yaz ("kısmen: ...").
+5. Ferhat'ın söylediği yeni iş: önce buraya madde olarak eklenir, sonra çalışana verilir. Ferhat'a her güncellemede kısa durum ver: bitenler, açık PR'lar, sıradaki iş, onun yapacakları.
 
 Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekliyor (neden yazılı)
 
@@ -32,7 +41,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 ## Sıradaki işler (öncelik sırasıyla)
 1. 🟡 **L4** TCP profilde (#42): incele, birleştir.
-2. **L3** Hub jog paneli + 3 nokta düzlem sihirbazı (Robot_4), main CI yeşil olunca. Ardından **L6** düzleme paralel jog doğrulaması.
+2. 🟡 **L3** Hub jog paneli (#44, Robot_4): incele. #44 kapsamında 3 nokta düzlem sihirbazı var mı kontrol et; yoksa L3 tamam sayılmaz, eksik kısım ayrı görev. Ardından **L6** düzleme paralel jog doğrulaması.
 3. **H4** Kamera elle kontrolünü Robot API + Hub'a bağla (Robot_5 çekirdek, Robot_3 API, Robot_4 arayüz; L3'ten sonra).
 4. **J4** Hub'da robot profili görüntüleme, sonra düzenleme (eksen yönü/tipi, limit, link uzunluğu, motor yön/ofset).
 5. **K3** Firmware iskeleti ⏸ donanım gelince. **N** bölümü doğrulama borçları.
@@ -107,7 +116,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 - [x] L1 Jog çekirdeği: SE3/W-P-R, 3 noktadan çerçeve, FK/Jacobian, DLS motoru (#40)
 - [x] L2 Robot API: /api/jog (kiralama+TTL), /api/frames, jogging durumu, selftest-jog (#41)
-- [ ] L3 Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
+- [ ] L3 🟡 (#44) Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
 - [ ] L4 🟡 TCP profilde + ready pozu (#42)
 - [ ] L6 **Düzleme paralel jog ("düzlem modu")**: seçili çerçevenin (World ya da 3 noktayla öğretilen User) XY düzleminde ileri-geri/sağ-sol hareket; Z ve takım yönelimi kilitli (Z ayrı tuş). Önce L1/L2'deki World/User jog'unun bunu zaten karşılayıp karşılamadığı Robot_2/Robot_3 tarafından doğrulanır, eksik varsa eklenir; hesap çok tekilliğe duyarlı olmalı (L1 DLS'i kullan). Arayüz tuşları L3'ün parçası olabilir, sahibi L6 ilk adımında belirlenir.
 - [ ] L5 Jog'u Gazebo'da elle dene (Ferhat); Windows↔WSL jitter ölç, gerekirse TTL 300 ms
@@ -126,4 +135,5 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 ## Değişiklik günlüğü
 - 2026-11-05: İlk sürüm (Müdür). Kaynak: birleşen PR'lar #1–#41, açık #42.
+- 2026-11-05: Kural 6-7 ve "Müdür iş akışı" eklendi (PR başlığı ↔ ID eşlemesi: #42=L4, #44=L3); L3 🟡 #44 olarak işaretlendi.
 - 2026-11-05: L3 genişletildi (düzlem seçimi + 3 nokta sihirbazı), L6 eklendi (düzleme paralel jog), terimler notu (Ferhat'ın düzlem tarifi).
