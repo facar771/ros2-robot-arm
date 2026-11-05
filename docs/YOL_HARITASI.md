@@ -32,7 +32,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 ## Sıradaki işler (öncelik sırasıyla)
 1. 🟡 **L4** TCP profilde (#42): incele, birleştir.
-2. **L3** Hub jog paneli (Robot_4), main CI yeşil olunca.
+2. **L3** Hub jog paneli + 3 nokta düzlem sihirbazı (Robot_4), main CI yeşil olunca. Ardından **L6** düzleme paralel jog doğrulaması.
 3. **H4** Kamera elle kontrolünü Robot API + Hub'a bağla (Robot_5 çekirdek, Robot_3 API, Robot_4 arayüz; L3'ten sonra).
 4. **J4** Hub'da robot profili görüntüleme, sonra düzenleme (eksen yönü/tipi, limit, link uzunluğu, motor yön/ofset).
 5. **K3** Firmware iskeleti ⏸ donanım gelince. **N** bölümü doğrulama borçları.
@@ -102,10 +102,14 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] K5 Wi-Fi kanalı (HMAC + seq, OTA kapalı/imzalı), USB-seri sonrası
 
 ## L. Jog (elle kontrol, FANUC tarzı frame'ler)
+
+> **Terimler:** "Düzlem" (plane) = 3 noktayla öğretilen User frame'in XY düzlemi (ya da World, yani robot tabanına göre zemin). "Yere/düzleme paralel ileri-geri" = o düzlemde jog. Joint = tek eksen, World = tabana sabit, Tool = takım ucunun kendi eksenleri, User = öğretilen düzlem.
+
 - [x] L1 Jog çekirdeği: SE3/W-P-R, 3 noktadan çerçeve, FK/Jacobian, DLS motoru (#40)
 - [x] L2 Robot API: /api/jog (kiralama+TTL), /api/frames, jogging durumu, selftest-jog (#41)
-- [ ] L3 Hub jog paneli: çerçeve seçici, artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), 3 nokta öğretme sihirbazı (Robot_4)
+- [ ] L3 Hub jog paneli (Robot_4): çerçeve/düzlem seçici (Joint, World, Tool, User), artımlı adım, basılı-tut (varsayılan kapalı real/telefonda), **3 nokta öğretme sihirbazı** (orijin, X yönü, XY düzlemi; noktalar robotu jog ile götürüp TCP konumu olarak kaydedilir), kayıtlı düzlemleri listeleme/seçme
 - [ ] L4 🟡 TCP profilde + ready pozu (#42)
+- [ ] L6 **Düzleme paralel jog ("düzlem modu")**: seçili çerçevenin (World ya da 3 noktayla öğretilen User) XY düzleminde ileri-geri/sağ-sol hareket; Z ve takım yönelimi kilitli (Z ayrı tuş). Önce L1/L2'deki World/User jog'unun bunu zaten karşılayıp karşılamadığı Robot_2/Robot_3 tarafından doğrulanır, eksik varsa eklenir; hesap çok tekilliğe duyarlı olmalı (L1 DLS'i kullan). Arayüz tuşları L3'ün parçası olabilir, sahibi L6 ilk adımında belirlenir.
 - [ ] L5 Jog'u Gazebo'da elle dene (Ferhat); Windows↔WSL jitter ölç, gerekirse TTL 300 ms
 
 ## M. RL araştırma
@@ -122,3 +126,4 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 
 ## Değişiklik günlüğü
 - 2026-11-05: İlk sürüm (Müdür). Kaynak: birleşen PR'lar #1–#41, açık #42.
+- 2026-11-05: L3 genişletildi (düzlem seçimi + 3 nokta sihirbazı), L6 eklendi (düzleme paralel jog), terimler notu (Ferhat'ın düzlem tarifi).
