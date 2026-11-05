@@ -1,5 +1,5 @@
 # Robot senaryoları = arayüzdeki butonlar. Yeni senaryo eklemek bu dosyaya bir blok eklemektir.
-# Adım türleri:  robot: <komut>   (home | objects | above <red|green|blue> [yükseklik_m])
+# Adım türleri:  robot: <komut>   (home | ready | objects | above <red|green|blue> [yükseklik_m])
 #                wait: <saniye>   (0-60)
 # Her adımda isteğe bağlı  say:  (adım başında arayüzde gösterilen anlatım).
 scenarios:
@@ -11,6 +11,15 @@ scenarios:
     steps:
       - say: "Robotu home pozuna götürüyorum."
         robot: home
+
+  - id: ready
+    label: Hazır poz
+    icon: "🎯"
+    color: "#d29922"
+    description: Robotu 'ready' pozuna götürür (jog için güvenli başlangıç).
+    steps:
+      - say: "Robotu hazır pozuna götürüyorum."
+        robot: ready
 
   - id: above_green
     label: Yeşil nesne

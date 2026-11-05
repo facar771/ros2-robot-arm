@@ -137,6 +137,7 @@ function buildUi() {
   const c = $('btn-cancel'); if (c) c.addEventListener('click', onCancel);
   S.events = [];
   if (window.AgentPanel) AgentPanel.mount();
+  if (window.JogPanel) JogPanel.mount();
   api('/api/events').then((r) => { S.events = r.events; renderLog(); }).catch(() => {});
 }
 
@@ -178,6 +179,7 @@ const hhmmss = (ts) => new Date(ts * 1000).toLocaleTimeString('tr-TR', { hour12:
 function render() {
   const s = S.snap; if (!s || !S.ui) return;
   if (window.AgentPanel) AgentPanel.onState(s);
+  if (window.JogPanel) JogPanel.onState(s);
   const canControl = s.me.can_control && !s.estop.latched;
   const run = s.runner;
   const readOnly = s.access.mode === 'locked';

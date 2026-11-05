@@ -1,7 +1,7 @@
 """Robotun tarayıcı-komut beyaz listesinin Hub tarafındaki aynası.
 
 Robot tarafı (``docs/INTERFACES.md``, ``POST /api/command``) yalnızca şunları kabul eder:
-``home``, ``objects``, ``above <red|green|blue> [yükseklik_m]``. Hub aynı kuralı **yapılandırma
+``home``, ``ready``, ``objects``, ``above <red|green|blue> [yükseklik_m]``. Hub aynı kuralı **yapılandırma
 yüklenirken** uygular: scenarios.yaml'daki hatalı bir komut Hub açılırken yakalanır, robota
 gidince ``400`` olarak değil. ROS'a bağımlılık yoktur (Windows .exe'ye ROS girmez), bu yüzden kural
 burada kopyalanmıştır; iki tarafı aynı tutan şey testlerdir.
@@ -27,7 +27,7 @@ class CommandError(ValueError):
 
 @dataclass(frozen=True)
 class RobotCommand:
-    name: str                                # home | objects | above
+    name: str                                # home | ready | objects | above
     color: Optional[str] = None              # above
     clearance_m: Optional[float] = None      # above (None -> robotun varsayılanı)
 
@@ -52,7 +52,7 @@ def parse_robot_command(text: str) -> RobotCommand:
                            'virgül ve alt çizgi dışında karakter olmaz')
     tokens = raw.split()
     head, args = tokens[0], tokens[1:]
-    if head in ('home', 'objects'):
+    if head in ('home', 'ready', 'objects'):
         if args:
             raise CommandError(f"'{head}' argüman almaz")
         return RobotCommand(head)
@@ -71,4 +71,4 @@ def parse_robot_command(text: str) -> RobotCommand:
             if not 0.0 <= clearance <= MAX_CLEARANCE_M:    # NaN da burada elenir
                 raise CommandError(f'yükseklik 0-{MAX_CLEARANCE_M} m aralığında olmalı')
         return RobotCommand('above', color, clearance)
-    raise CommandError(f"izin verilmeyen komut '{head}' (home, objects, above)")
+    raise CommandError(f"izin verilmeyen komut '{head}' (home, ready, objects, above)")
