@@ -30,12 +30,19 @@ Every number in ``JogConfig`` is a SUGGESTION to tune in simulation, not a final
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Optional, Protocol, Sequence, Tuple
 
 import numpy as np
 
+from robot_core.frames import (
+    SPHERE_MAX_ELEVATION_DEG,
+    SPHERE_MAX_RADIUS,
+    SPHERE_MIN_RADIUS,
+    SphereFrame,
+)
 from robot_core.kinematics import Chain
 from robot_core.safezone import SafetyConfig, effective_velocity_scale
 from robot_core.se3 import Matrix, is_rotation, make_transform, matrix_from_rotvec, pose_error
@@ -314,3 +321,308 @@ class DlsJogEngine:
         if abs(inc['remaining']) <= self.config.increment_tolerance:
             return True, 0.0, False
         return False, inc['remaining'], False
+
+
+# ==== sphere frame (L7) ==========================================================================
+# Not a new solver: azimuth / elevation / r rates become ONE Cartesian twist (World axes, about the
+# TCP) that goes through the same DlsJogEngine.step (safe box, singularity, joint limits, velocity
+# ceiling, TTL owner unchanged). With dome direction rho(az, el) and e_theta = (-sin az, cos az, 0):
+#   v = r' rho + r el' e_phi + r cos(el) az' e_theta        w = az' z - el' e_theta
+# so the tool axis (= -rho) keeps looking at C and the horizon stays level.
+@dataclass(frozen=True)
+class SphereJogConfig:
+    """SUGGESTED numbers; defaults lean narrow."""
+    max_elevation_deg: float = SPHERE_MAX_ELEVATION_DEG   # may be lowered, never above 85
+    position_tolerance: float = 0.01      # m: |dist(TCP, C) - r| allowed before "off the sphere"
+    angle_tolerance: float = 0.1          # rad: tool axis vs. direction to C
+    align_gain: float = 5.0               # 1/s, pull back onto the sphere / look-at
+    align_done_position: float = 1e-4     # m
+    align_done_angle: float = 1e-3        # rad
+
+    def __post_init__(self) -> None:
+        if not (0 < self.max_elevation_deg <= SPHERE_MAX_ELEVATION_DEG
+                and self.position_tolerance > 0 and self.angle_tolerance > 0
+                and self.align_gain >= 0 and self.align_done_position > 0
+                and self.align_done_angle > 0):
+            raise JogError('SphereJogConfig: 0 < max_elevation_deg <= 85 ve eşikler pozitif olmalı')
+
+
+_STOPS = (JogStatus.SINGULARITY, JogStatus.JOINT_LIMIT, JogStatus.BOX_STOP, JogStatus.TRACKING)
+
+
+class SphereJog:
+    """Sphere-frame jog on top of a ``DlsJogEngine`` (which it takes over: it sets the World frame).
+
+    ``step(q, (az_rate, el_rate, r_rate), dt)``: rad/s, rad/s, m/s. If the whole vector is above
+    the speed ceiling it is scaled down TOGETHER (the path stays on the sphere). ``radius``
+    follows the measured TCP when r is jogged; otherwise the TCP is held on ``radius``.
+    ``align=True`` ignores the rates and only moves the TCP onto the sphere / looking at C.
+    """
+
+    def __init__(self, engine: DlsJogEngine, frame: SphereFrame,
+                 config: Optional[SphereJogConfig] = None) -> None:
+        self.engine, self.frame = engine, frame
+        self.config = config or SphereJogConfig()
+        self.radius = frame.radius
+        self._armed = False
+
+    def reset(self) -> None:
+        self.engine.reset()
+        self._armed = False
+
+    def angles(self, q: Sequence[float]) -> Tuple[float, float, float]:
+        """(azimuth, elevation, r) of the TCP at ``q`` (radians, metres)."""
+        return self.frame.angles(self.engine.chain.fk(q)[:3, 3])
+
+    def step(self, q: Sequence[float], rates: Sequence[float], dt: float,
+             align: bool = False) -> JogStep:
+        eng, cfg, fr = self.engine, self.config, self.frame
+        rates = np.asarray(rates, float)
+        if rates.shape != (3,) or not np.all(np.isfinite(rates)):
+            raise JogError(f'3 sonlu sayı bekleniyordu (azimut, yükselme, r), bulunan: '
+                           f'{rates.tolist()}')
+        if not (math.isfinite(dt) and 0 < dt <= eng.config.max_dt):
+            raise JogError(f'dt (0, {eng.config.max_dt:g}] s aralığında olmalı, bulunan: {dt!r}')
+        try:
+            q = eng.chain._check(q)
+        except ValueError as exc:
+            raise JogError(str(exc)) from exc
+        pose, jac = eng.chain.fk_and_jacobian(q)
+        p, rot = pose[:3, 3], pose[:3, :3]
+        tcp = (float(p[0]), float(p[1]), float(p[2]))
+        sigma = float(np.linalg.svd(jac, compute_uv=False)[-1])
+        try:
+            az, el, dist = fr.angles(p)
+        except ValueError as exc:
+            return self._refuse(q, tcp, f'küresel çerçeve {fr.name}: {exc}', sigma=sigma)
+        rho = fr.direction(az, el)
+        look = rot @ fr.tool_axis_vector
+        angle_err = math.acos(max(-1.0, min(1.0, float(look @ -rho))))
+        sin = float(np.linalg.norm(np.cross(look, -rho)))
+        rot_err = np.cross(look, -rho) * (angle_err / sin) if sin > 1e-9 else np.zeros(3)
+        pos_err = self.radius - dist
+        where = f'azimut {math.degrees(az):.1f}°, yükselme {math.degrees(el):.1f}°, r {dist:.3f} m'
+        if not align and (abs(pos_err) > cfg.position_tolerance
+                          or angle_err > cfg.angle_tolerance):
+            return self._refuse(q, tcp, (
+                f'küresel çerçeve {fr.name}: TCP küre üzerinde değil ({where}; r hatası '
+                f'{pos_err * 1000:+.1f} mm, bakış hatası {math.degrees(angle_err):.1f}°); '
+                'önce hizalayın'), sigma=sigma)
+
+        messages = []
+        if align:
+            rates = np.zeros(3)
+            if abs(pos_err) <= cfg.align_done_position and angle_err <= cfg.align_done_angle:
+                return self._refuse(q, tcp, f'küresel çerçeve {fr.name}: hizalı ({where})',
+                                    JogStatus.IDLE, sigma)
+        az_rate, el_rate, r_rate = (float(v) for v in rates)
+        lim = math.radians(cfg.max_elevation_deg) - 1e-4        # stop a hair before the ceiling
+        if el_rate > 0 and el >= lim or el_rate < 0 and el <= -lim:
+            el_rate = 0.0
+            messages.append(f'yükselme sınırı ±{cfg.max_elevation_deg:g}° (zirvede azimut '
+                            'tanımsız): yükselme hareketi durdu')
+        elif el_rate:
+            room = (lim - el) / dt if el_rate > 0 else (-lim - el) / dt
+            if abs(el_rate) > abs(room):
+                el_rate = room
+                messages.append(f'yükselme ±{cfg.max_elevation_deg:g}° sınırına yaklaştı')
+        if r_rate < 0 and dist <= SPHERE_MIN_RADIUS or r_rate > 0 and dist >= SPHERE_MAX_RADIUS:
+            r_rate = 0.0
+            messages.append('r sınırı: içeri/dışarı hareketi durdu')
+        if not align and not (az_rate or el_rate or r_rate):     # no command: nothing moves
+            return self._refuse(q, tcp, '; '.join(messages), JogStatus.IDLE, sigma)
+
+        # one factor for the WHOLE vector (the path must stay on the sphere): speed ceiling
+        ecfg = eng.config
+        scale = effective_velocity_scale(ecfg.speed_scale, eng.safety.max_velocity_scale)
+        lin = math.sqrt(r_rate ** 2 + (dist * el_rate) ** 2 + (dist * math.cos(el) * az_rate) ** 2)
+        ang = math.hypot(az_rate, el_rate)
+        factor = min(1.0, ecfg.max_linear_speed * scale / max(lin, 1e-12),
+                     ecfg.max_angular_speed * scale / max(ang, 1e-12))
+        az_rate, el_rate, r_rate = az_rate * factor, el_rate * factor, r_rate * factor
+        # evaluate the direction at the MIDDLE of the tick: no outward drift on the arc
+        az_m, el_m = az + az_rate * dt / 2, el + el_rate * dt / 2
+        rho_m, dist_m = fr.direction(az_m, el_m), dist + r_rate * dt / 2
+        e_theta = np.array([-math.sin(az_m), math.cos(az_m), 0.0])
+        e_phi = np.array([-math.sin(el_m) * math.cos(az_m), -math.sin(el_m) * math.sin(az_m),
+                          math.cos(el_m)])
+        v = r_rate * rho_m + dist_m * (el_rate * e_phi + math.cos(el_m) * az_rate * e_theta)
+        w = az_rate * np.array([0.0, 0.0, 1.0]) - el_rate * e_theta
+        if r_rate == 0.0:                                # hold / pull back onto the sphere
+            v = v + cfg.align_gain * pos_err * rho
+        w = w + cfg.align_gain * rot_err
+        twist = np.concatenate([v, w])
+        f2 = min(1.0, ecfg.max_linear_speed * scale / max(float(np.linalg.norm(v)), 1e-12),
+                 ecfg.max_angular_speed * scale / max(float(np.linalg.norm(w)), 1e-12))
+        twist = twist * f2
+        if factor * f2 < 1.0:
+            messages.append(f'küresel hız tavanı: tüm girdi %{factor * f2 * 100:.0f} ölçeklendi')
+        if not np.any(twist):
+            return self._refuse(q, tcp, '', JogStatus.IDLE, sigma)
+        # the sphere path must not touch a safe-box wall (the engine would slide OFF the sphere)
+        nxt = p + twist[:3] * dt
+        if any(eng._outward(p, nxt, eng.safety.zone.lower, eng.safety.zone.upper,
+                            ecfg.box_margin)):
+            messages.append(f'küresel çerçeve {fr.name}: erişilemeyen bölge ({where}) — güvenli '
+                            'kutu duvarına varıldı; jog durdu')
+            return self._refuse(q, tcp, '; '.join(messages), JogStatus.BOX_STOP, sigma)
+        if not self._armed:
+            eng.set_frame(np.eye(3))
+            self._armed = True
+        step = eng.step(q, twist, dt)
+        if step.status in _STOPS:
+            messages.append(f'küresel çerçeve {fr.name}: erişilemeyen bölge ({where}) — jog durdu')
+        if messages or step.messages:
+            step = replace(step, messages=tuple(messages) + step.messages)
+        if r_rate != 0.0 and step.moved:                 # the sphere follows the jogged r
+            self.radius = float(np.linalg.norm(eng.chain.fk(step.q_next)[:3, 3] - fr.center_array))
+        return step
+
+    def _refuse(self, q: np.ndarray, tcp: Tuple[float, float, float], message: str,
+                status: JogStatus = JogStatus.TRACKING,
+                sigma: float = float('nan')) -> JogStep:
+        self.engine.reset()
+        self._armed = False
+        return JogStep(dq=np.zeros(self.engine.chain.dof), q_next=q.copy(), status=status,
+                       messages=(message,) if message else (), sigma_min=sigma, tcp=tcp)
+
+
+# ---- reachable range of a sphere (C, r) ------------------------------------------------------
+def solve_sphere_pose(chain: Chain, frame: SphereFrame, az: float, el: float,
+                      q_seed: Sequence[float], radius: Optional[float] = None,
+                      roll: float = 0.0, margin: float = 0.02,
+                      iterations: int = 80) -> Optional[np.ndarray]:
+    """Joint vector that puts the TCP at (az, el, r) looking at C (6D DLS IK from ``q_seed``,
+    joints kept ``margin`` rad inside their limits), or ``None`` when it does not converge."""
+    target = make_transform(frame.rotation(az, el, roll), frame.position(az, el, radius))
+    lo, hi = chain.lower + margin, chain.upper - margin
+    q = np.clip(np.asarray(q_seed, float), lo, hi)
+    for _ in range(iterations):
+        pose, jac = chain.fk_and_jacobian(q)
+        err = pose_error(target, pose)
+        size = float(np.linalg.norm(err))
+        if np.linalg.norm(err[:3]) < 1e-6 and np.linalg.norm(err[3:]) < 1e-6:
+            return q
+        lam = min(0.05, max(1e-3, size))             # small damping near the goal: fast finish
+        dq = jac.T @ np.linalg.solve(jac @ jac.T + lam ** 2 * np.eye(6), err)
+        big = float(np.max(np.abs(dq)))
+        q = np.clip(q + (dq * 0.3 / big if big > 0.3 else dq), lo, hi)
+    return None
+
+
+@dataclass(frozen=True, eq=False)
+class SphereReach:
+    """Connected reachable set (from the seed pose) over an (elevation x azimuth) grid, degrees."""
+    elevations: np.ndarray           # deg, ascending
+    azimuths: np.ndarray             # deg, [-180, 180)
+    grid: np.ndarray                 # bool [elevation, azimuth]
+    radius: float
+
+    @property
+    def reachable(self) -> bool:
+        return bool(self.grid.any())
+
+    @property
+    def elevation_range(self) -> Optional[Tuple[float, float]]:
+        rows = np.flatnonzero(self.grid.any(axis=1))
+        return (float(self.elevations[rows[0]]), float(self.elevations[rows[-1]])) if len(rows) \
+            else None
+
+    def _row(self, el_deg: float) -> np.ndarray:
+        return self.grid[int(np.argmin(np.abs(self.elevations - el_deg)))]
+
+    def contains(self, az_deg: float, el_deg: float) -> bool:
+        """Nearest grid cell is reachable (resolution = grid step)."""
+        col = int(np.argmin(np.abs(((self.azimuths - az_deg + 180) % 360) - 180)))
+        return bool(self._row(el_deg)[col])
+
+    def azimuth_intervals(self, el_deg: float) -> list:
+        """[(start, end)] degrees at the nearest elevation row; ``end`` > 180 means it wraps."""
+        row, n = self._row(el_deg), len(self.azimuths)
+        if row.all():
+            return [(-180.0, 180.0)]
+        if not row.any():
+            return []
+        step = 360.0 / n
+        start0 = int(np.flatnonzero(~row)[0])        # rotate so index 0 is a gap: no run wraps
+        order = [(start0 + i) % n for i in range(n)]
+        out, i = [], 0
+        while i < n:
+            if row[order[i]]:
+                j = i
+                while j + 1 < n and row[order[j + 1]]:
+                    j += 1
+                out.append((float(self.azimuths[order[i]]),
+                            float(self.azimuths[order[i]] + (j - i) * step)))
+                i = j + 1
+            else:
+                i += 1
+        return out
+
+    def summary(self, el_deg: Optional[float] = None) -> str:
+        if not self.reachable:
+            return f'r={self.radius:.3f} m: erişilebilir bölge yok (başlangıç pozundan bağlantılı)'
+        lo, hi = self.elevation_range
+        if el_deg is None:
+            el_deg = float(self.elevations[np.argmax(self.grid.sum(axis=1))])
+        spans = ', '.join(f'[{a:.0f}°, {b:.0f}°]' for a, b in self.azimuth_intervals(el_deg))
+        return (f'r={self.radius:.3f} m: yükselme {lo:.0f}°…{hi:.0f}°; yükselme {el_deg:.0f}° '
+                f'için azimut {spans}; erişilebilir hücre %{100 * self.grid.mean():.0f}')
+
+
+def reachable_region(engine: DlsJogEngine, frame: SphereFrame, q_seed: Sequence[float],
+                     radius: Optional[float] = None, az_step_deg: float = 10.0,
+                     el_step_deg: float = 5.0, max_elevation_deg: float = SPHERE_MAX_ELEVATION_DEG
+                     ) -> SphereReach:
+    """Which (azimuth, elevation) cells of the sphere (C, r) the jog can actually reach.
+
+    Flood fill from the seed pose (``q_seed`` = current joints; its roll about the tool axis is
+    kept). A cell counts only if 6D IK converges, the TCP is inside the safe box (``box_margin``),
+    joints are ``joint_limit_margin`` inside their limits and sigma_min >= ``sigma_slow``
+    (full-speed jog), i.e. the same conditions the jog stops on, with the narrow side taken. IK
+    uses no collision model: this is the jog's reach, not a collision-free guarantee."""
+    chain, cfg, zone = engine.chain, engine.config, engine.safety.zone
+    radius = frame.radius if radius is None else float(radius)
+    if not (0 < az_step_deg <= 90 and 0 < el_step_deg <= 45
+            and 0 < max_elevation_deg <= SPHERE_MAX_ELEVATION_DEG):
+        raise JogError('adım 0-90° (azimut) / 0-45° (yükselme) ve en çok 85° yükselme olmalı')
+    n_el = int(math.floor(max_elevation_deg / el_step_deg))
+    els = np.arange(-n_el, n_el + 1) * el_step_deg
+    azs = -180.0 + az_step_deg * np.arange(int(round(360.0 / az_step_deg)))
+    grid = np.zeros((len(els), len(azs)), bool)
+    q_seed = chain._check(q_seed)
+    pose = chain.fk(q_seed)
+    az0, el0, _ = frame.angles(pose[:3, 3])
+    roll = frame.roll_of(pose[:3, :3], az0, el0)
+    lo = np.array(zone.lower) + cfg.box_margin
+    hi = np.array(zone.upper) - cfg.box_margin
+
+    def try_cell(i: int, j: int, q0: np.ndarray) -> Optional[np.ndarray]:
+        az, el = math.radians(azs[j]), math.radians(els[i])
+        pos = frame.position(az, el, radius)
+        if np.any(pos < lo) or np.any(pos > hi):
+            return None
+        q = solve_sphere_pose(chain, frame, az, el, q0, radius, roll, cfg.joint_limit_margin)
+        if q is None:
+            return None
+        sigma = float(np.linalg.svd(chain.jacobian(q), compute_uv=False)[-1])
+        return q if sigma >= cfg.sigma_slow else None
+
+    i0 = int(np.argmin(np.abs(els - math.degrees(el0))))
+    j0 = int(np.argmin(np.abs(((azs - math.degrees(az0) + 180) % 360) - 180)))
+    q_start = try_cell(i0, j0, q_seed)
+    if q_start is None:
+        return SphereReach(els, azs, grid, radius)
+    grid[i0, j0] = True
+    seen, queue = {(i0, j0)}, deque([(i0, j0, q_start)])
+    while queue:
+        i, j, q = queue.popleft()
+        for ni, nj in ((i + 1, j), (i - 1, j), (i, (j + 1) % len(azs)), (i, (j - 1) % len(azs))):
+            if not 0 <= ni < len(els) or (ni, nj) in seen:
+                continue
+            seen.add((ni, nj))
+            q_new = try_cell(ni, nj, q)
+            if q_new is not None:
+                grid[ni, nj] = True
+                queue.append((ni, nj, q_new))
+    return SphereReach(els, azs, grid, radius)

@@ -6,8 +6,8 @@ komutu önerisi**. Hiçbir şeyi kendisi hareket ettirmez; öneriyi Robot API/co
 çalıştırılmadı** (bkz. "Denenmeyenler").
 
 Modüller (`src/robot_core/robot_core/`): `se3.py` (dönüşler + W-P-R), `kinematics.py` (FK/Jacobian, robot
-profilinden), `frames.py` (3 noktadan çerçeve + `FrameStore`), `jog.py` (`JogEngine` arayüzü + `DlsJogEngine`).
-Testler: `tests/test_se3.py`, `test_frames.py`, `test_jog.py`.
+profilinden), `frames.py` (3 noktadan çerçeve + `FrameStore`), `jog.py` (`JogEngine` arayüzü + `DlsJogEngine` + `SphereJog`, L7).
+Testler: `tests/test_se3.py`, `test_frames.py`, `test_jog.py`, `test_sphere.py`.
 
 ## 1. Yönelim sözleşmesi (tek dönüştürücü: `se3.py`)
 İçeride kuaterniyon (**xyzw**, `w ≥ 0` kanonik) ve matris; API'de SI (m, rad). Ekranda **FANUC W-P-R**, derece:
@@ -42,6 +42,17 @@ hesaplanır** ve kayıtlıyla uyuşmalı (elle bozulmuş dosya reddedilir); sür
 fazla çerçeve de reddedilir. `replace_all([(ad, orijin, x, xy), …])` tüm listeyi değiştirir (önce hepsi doğrulanır, sonra atomik yazılır; hata olursa dosya ve bellek aynen kalır; `[]` listeyi boşaltır). Hata mesajı dosya adını söyler. `resolve_rotation(ad, store)` jog çerçevesinin
 dönüşünü verir (`Tool` için `None` = her tick TCP'den).
 
+### Çerçeve türleri envanteri
+| Tür | Girdi | Tanım / nerede |
+|---|---|---|
+| Joint | eklem hızı/artımı | Kartezyen değil; eklem jog'u (Robot API) |
+| World | X Y Z W P R | URDF `world` (= taban çerçevesi) |
+| Tool | X Y Z W P R | TCP çerçevesi, her tick TCP'yi izler |
+| User (3 nokta) | X Y Z W P R | `FrameStore`'da, 3 noktadan öğretilir |
+| **Sphere (L7)** | **azimut / yükselme / r** | `SphereFrame` (`frames.py`), jog'u `SphereJog` (`jog.py`); aşağıda §3b |
+
+Silindirik vb. yeni türler ihtiyaç doğarsa ayrı yol haritası maddesidir.
+
 ## 3. Jog motoru (`jog.py`)
 `JogEngine` arayüzü: `set_frame(R | None)`, `reset()`, `begin_increment(q, index, miktar)`, `step(q, twist, dt) →
 JogStep`. `twist = [vx vy vz wx wy wz]` seçili çerçeve eksenlerinde (m/s, rad/s). Çağıran her tick **ölçülen q**'yu
@@ -65,6 +76,30 @@ Her tick (`DlsJogEngine`):
 **Artımlı mod** (`begin_increment`): X/Y/Z (m) ya da W/P/R eksenleri **etrafında** dönme (rad), **aynı `step`** üzerinden;
 son tick hedefe tam oturur, bitince `done`, ilerlenemezse (duvar, tekillik, limit) `aborted`/ilgili durum ve mesajla biter.
 `Tool` çerçevesinde eksenler artım başında sabitlenir (düz çizgi). UI 0.1/1/10 mm ve °'yi SI'ya çevirip verir.
+
+## 3b. Küresel çerçeve (L7, "kubbe kamera")
+`sphere_frame(ad, merkez C, yarıçap r, takım_ekseni='z')` → `SphereFrame` (doğrulanır: ad kuralı, |C| ≤ 5 m, 0.05 ≤ r ≤ 2 m,
+eksen `±x/±y/±z`). C **World**'dedir (= taban çerçevesi; "taban eksenin 10 cm üstü" = `(0, 0, 0.10)`). Azimut 0 = C'nin +X tarafı,
+yükselme C'den geçen yatay düzlemden yukarı ölçülür. `as_dict()/sphere_from_dict()` L8'in kullanacağı sıkı serileştirmedir;
+**`FrameStore` dosyası/şeması bu PR'da değişmedi** (kalıcılık ve API L8).
+
+`SphereJog(DlsJogEngine, SphereFrame).step(q, (azimut_hızı rad/s, yükselme_hızı rad/s, r_hızı m/s), dt)`:
+`ρ(az, el)` C'den TCP'ye birim vektör, `e_θ = (−sin az, cos az, 0)`, `e_φ = ∂ρ/∂el` olmak üzere TCP'nin anlık twist'i (World eksenleri, TCP etrafında)
+`v = ṙ ρ + r(el̇ e_φ + cos(el)·aż e_θ)`, `ω = aż ẑ − el̇ e_θ`. Bu `ρ̇ = ω × ρ` verir: **takım ekseni (= −ρ) C'ye bakar, ufuk düz kalır**.
+Twist, **mevcut `DlsJogEngine.step`'e** gider: hız tavanı, tekillik, eklem limiti, TCP/ölçüm geri beslemesi ve güvenli kutu aynen; yeni çözücü yoktur.
+Sürücü TTL'i (dead-man) Robot API'dedir (J2/L8), bu katman her tick bir adım üretir.
+- **Tek ölçek:** hız tavanı aşılırsa üç girdi **birlikte** küçültülür (yol küre üzerinde kalır). Yön, tick ortasında hesaplanır (yay üzerinde dışa kayma yok).
+- **Yükselme ≤ 85°** (`SphereJogConfig.max_elevation_deg`, daha dar yapılabilir, 85'in üstü reddedilir): tavana varınca yükselme hareketi durur ve mesaj söyler (zirvede azimut tanımsız). Tavandan ~0.006° önce durur.
+- **r:** `r` girdisi verilince küre yarıçapı ölçülen TCP'yi izler (`SphereJog.radius`); yoksa TCP `radius` üzerinde tutulur. r ∈ [0.05, 2] m.
+- **Küre üzerinde değilse** (|r hatası| > 10 mm ya da bakış hatası > 0.1 rad) jog **reddedilir** (`tracking`, mesaj: önce hizalayın). `align=True` girdileri yok sayıp TCP'yi küreye/C'ye çevirir (hız tavanıyla) ve bitince "hizalı" der. Komut yokken hiçbir şey hareket etmez.
+- **Erişilemeyen bölge:** motor `singularity / joint_limit / box_stop / tracking` ile durursa ya da küre yolu kutu duvarına varacaksa (kaymak yerine) jog durur ve mesaj `küresel çerçeve <ad>: erişilemeyen bölge (azimut, yükselme, r) — jog durdu` + motorun kendi nedeni olur. Kutu duvarı boyunca **kayma yoktur** (kayarsa küreden çıkardı).
+- **C taban ekseni üzerindeyse** azimut = saf 1. eksen dönüşü (`test_azimuth_with_c_on_the_base_axis_is_pure_joint_1`: J2..J6 değişmez).
+
+**Erişilebilir aralık** `reachable_region(engine, frame, q_başlangıç, radius=None, az_step_deg=10, el_step_deg=5)` → `SphereReach`:
+başlangıç pozundan **bağlantılı** hücreleri dolaşır; hücre sayılması için 6B IK (`solve_sphere_pose`) yakınsamalı, TCP kutu içinde (`box_margin`), eklemler limitten `joint_limit_margin` içeride,
+`σ_min ≥ sigma_slow` olmalı (jog'un durma koşullarının dar tarafı). Çıktı: `elevation_range`, `azimuth_intervals(yükselme)` (`end > 180` = sarar), `contains(az, el)`, `summary()` (kullanıcıya gösterilecek metin).
+Takım ekseni etrafındaki dönüş (roll) başlangıç pozundan alınır ve korunur. Çarpışma modeli yoktur: bu, jog'un erişimidir.
+Bu robotta takım +z ekseni tabandan **uzağa** baktığından taban eksenindeki bir C için `tool_axis='-z'` kullanılır (testler `C=(0,0,0.2)`, `r=0.7`).
 
 ### Ayarlanacak sayılar — hepsi ÖNERİ, sabit değil
 Simülasyonda ayarlanmak üzere yapılandırma değeridir (`JogConfig`, `FrameLimits`, `se3.GIMBAL_WARN_DEG`); varsayılanlar dar tarafta.
@@ -98,3 +133,4 @@ değişmez. Bu modülün çalışma zamanı self-collision denetimi **yoktur** (
 - Robot API, controller, Hub, UI entegrasyonu ve `FrameStore`'un çok süreçli (iki yazar) kullanımı yok; kilit yalnız süreç içidir.
 - `FrameStore` yalnız POSIX/Linux'ta denendi; Windows'ta `os.replace` aynı dizinde atomiktir ama burada çalıştırılmadı.
 - Self-collision, hız/ivme üst sınırı dışındaki dinamik etkiler (tork), kutu dışındaki başlangıçtan çıkış stratejileri kapsam dışı.
+- **L7 küresel çerçeve:** Gazebo/MoveIt/gerçek robotta denenmedi; yalnız mükemmel oturucu ile kapalı döngü testleri. Kalıcılık (`FrameStore`), Robot API (`/api/frames` türü `sphere`), Hub sihirbazı ve kullanıcıya erişim aralığı gösterimi L8'dedir. Erişim aralığı IK + kutu + limit + σ ile hesaplanır, çarpışma/self-collision yoktur; ızgara kabadır (varsayılan 10°/5°), ızgaradan ince engeller görülmez. Zirve (85°'ye yakın) ve çok küçük r (<~0.1 m) bölgesi bu robotta erişilebilir bulunmadığından jog olarak denenmedi. Tekillik yakınında küresel yolun doğruluğu (DLS sönümü yolu bozar) ve kutu duvarına yakın uzun koşular ölçülmedi.
