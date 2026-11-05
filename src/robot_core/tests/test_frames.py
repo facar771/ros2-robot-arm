@@ -228,3 +228,51 @@ def test_frames_module_is_ros_free():
             'sys.exit(1 if bad else 0)')
     env = {**os.environ, 'PYTHONPATH': str(SRC / 'robot_core')}
     assert subprocess.run([sys.executable, '-c', code], env=env).returncode == 0
+
+
+# ---- replace_all (public API; behaviour of PUT /api/frames) ------------------------------------
+def entry(name, pv=(0.40, 0.12, 0.30)):
+    return (name, O, PX, pv)
+
+
+def test_replace_all_replaces_the_whole_list_atomically(store):
+    store.teach('old', O, PX, (0.40, 0.12, 0.30))
+    out = store.replace_all([entry('a'), entry('b', (0.40, 0.2, 0.3))])
+    assert [f.name for f in out] == ['a', 'b'] and store.names() == ['a', 'b']
+    assert FrameStore(store.path).names() == ['a', 'b']                 # written to disk
+    assert store.replace_all([]) == [] and FrameStore(store.path).names() == []
+
+
+def test_replace_all_validates_everything_before_touching_anything(store):
+    store.teach('keep', O, PX, (0.40, 0.12, 0.30))
+    before = store.path.read_bytes()
+    for entries, match in (
+            ([entry('a'), entry('A')], 'tekrar'),                       # case-insensitive duplicate
+            ([entry('a'), entry('b', (0.7, 0.0, 0.3))], 'aynı doğru'),   # degenerate third point
+            ([entry('a'), entry('World')], 'ayrılmış'),
+            ([entry(f'f{i}') for i in range(11)], 'en çok 10'),
+            ([('a', O, PX)], r'frames\[0\]')):                          # malformed entry
+        with pytest.raises(FrameError, match=match):
+            store.replace_all(entries)
+        assert store.path.read_bytes() == before and store.names() == ['keep']
+
+
+def test_replace_all_failed_write_keeps_the_old_list(store, monkeypatch):
+    store.teach('keep', O, PX, (0.40, 0.12, 0.30))
+
+    def boom(src, dst):
+        raise OSError('disk gitti')
+    monkeypatch.setattr(os, 'replace', boom)
+    with pytest.raises(OSError):
+        store.replace_all([entry('new')])
+    monkeypatch.undo()
+    assert store.names() == ['keep'] and FrameStore(store.path).names() == ['keep']
+    assert sorted(p.name for p in store.path.parent.iterdir()) == ['frames.yaml']
+
+
+def test_replace_all_gives_the_same_result_as_teaching_one_by_one(tmp_path):
+    a, b = FrameStore(tmp_path / 'a.yaml'), FrameStore(tmp_path / 'b.yaml')
+    a.replace_all([entry('x'), entry('y', (0.40, 0.2, 0.3))])
+    b.teach(*entry('x'))
+    b.teach(*entry('y', (0.40, 0.2, 0.3)))
+    assert a.path.read_text(encoding='utf-8') == b.path.read_text(encoding='utf-8')

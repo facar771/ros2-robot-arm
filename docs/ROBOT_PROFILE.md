@@ -24,6 +24,7 @@ kırılır; CI `core` işi bunu zaten koşar.
 | `joints` | `robot_moveit_config/config/six_axis_robot.ros2_control.xacro`, `joint_limits.yaml`, `ros2_controllers.yaml`, `moveit_controllers.yaml` |
 | `moveit` (+ `joints`, `mount`) | `six_axis_robot.srdf` (grup, pozlar, sanal eklem, çarpışma çiftleri), `initial_positions.yaml` |
 | `safety` | `safe_zone.yaml` |
+| `tcp` | hiçbir dosya: yalnız jog zinciri (`robot_core.kinematics.Chain`) okur; URDF/MoveIt'e girmez |
 | `hardware.profile.yaml` (**ayrı dosya**) | `robot_description/profile/generated/robot_limits.h` (firmware C başlığı); URDF/MoveIt'e **girmez** |
 
 **Elle kalanlar:** xacro sarmalayıcı (`six_axis_robot.urdf.xacro`: `world`, `masa`, Gazebo eklentisi),
@@ -38,7 +39,16 @@ kırılır; CI `core` işi bunu zaten koşar.
   isteğe bağlı `velocity`/`acceleration`/`effort`, isteğe bağlı `offset: [dx, dy, dz]`. Eklem
   `(0, 0, üst linkin length'i) + offset` konumundadır.
 - **`moveit`**: grup, adlandırılmış pozlar, başlangıç pozu, hız/ivme ölçeği, `collision.allow_extra`.
+  Pozlar: `home`, `cnc`, `pc`, `dik` ve **`ready`** `[0, −0.1, 1.65, 0, 1.2, 0]` (jog için başlangıç: güvenli kutunun içinde,
+  σ_min ≈ 0.23, her eklem limitinden ≥ 0.35 rad uzakta; testle denetlenir). SRDF'e `group_state` olarak üretilir.
 - **`safety`**: `box` (omuz merkezli erişim küresinin içinde olmalı), `max_velocity_scale`.
+- **`tcp`** (isteğe bağlı): `offset: [x, y, z]` (m) ve `wpr: [W, P, R]` (rad, `R = Rz(R)·Ry(P)·Rx(W)`, FANUC W-P-R,
+  `robot_core.se3`), **araç linkinin (son link, flanş) çerçevesine göre**. Yazılmazsa TCP = flanşın kendisi
+  (en kısa/dar seçim). Doğrulama: sonlu sayı, |offset| ≤ 1 m (mm yazılmış mı?), |açı| ≤ 4π (derece yazılmış mı?),
+  bilinmeyen anahtar → hata. Etkisi: `Chain` (jog FK/Jacobian, güvenli kutu denetimi, `Tool` çerçevesi) TCP'yi kullanır.
+  **Türetilmiş güvenli kutu TCP'den etkilenmez** (varsayılan hep dar); açıkça yazılan kutu doğrulanırken erişim,
+  araç linkinden uzun çıkan ofset kadar genişler. **MoveIt/poz hedefleri hâlâ link_6 (flanş) çerçevesine gider, TCP'ye değil**;
+  URDF'e TCP linki eklenmedi.
 - Motor/sürücü/encoder **bu dosyada yok** (v3): `hardware.profile.yaml` (aşağıda, "Donanım profili").
 
 ## Doğrulayıcının denetledikleri (`robot_core/profile.py`; hata mesajı YAML'daki yeri söyler)

@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 import yaml
 
 from robot_core.safezone import AXES, SafetyConfig, SafetyConfigError, parse_safety
+from robot_core.se3 import make_transform, matrix_from_wpr
 
 PROFILE_VERSION = 3
 Vec = Tuple[float, float, float]
@@ -44,6 +45,7 @@ MAX_LENGTH = 5.0                 # m: more means millimetres
 MIN_LENGTH = 0.001               # m: less means a typo (or metres typed as km)
 MAX_MASS = 1000.0                # kg
 MAX_EFFORT = 10000.0             # N*m
+MAX_TCP_OFFSET = 1.0             # m: a longer tool offset is a unit mistake (mm?) or a new robot
 
 DEFAULT_VELOCITY = 0.5
 DEFAULT_ACCELERATION = 0.5
@@ -87,6 +89,17 @@ class Joint:
 
 
 @dataclass(frozen=True)
+class Tcp:
+    """Tool centre point relative to the tool-link (flange) frame; default = the flange."""
+    offset: Vec = (0.0, 0.0, 0.0)           # m, in the tool-link frame
+    wpr: Vec = (0.0, 0.0, 0.0)              # rad: R = Rz(R) Ry(P) Rx(W) (FANUC W-P-R)
+
+    @property
+    def transform(self):
+        return make_transform(matrix_from_wpr(*self.wpr), self.offset)
+
+
+@dataclass(frozen=True)
 class Profile:
     robot: str
     materials: Mapping[str, Tuple[float, float, float, float]]
@@ -100,6 +113,7 @@ class Profile:
     named_poses: Mapping[str, Tuple[float, ...]]
     allow_extra: Tuple[Tuple[str, str, str], ...]
     safety: SafetyConfig
+    tcp: Tcp
     reach_center: Vec                                # shoulder: where joint_2's frame sits at zero
     reach_radius: float                              # straight-arm reach from the shoulder
     box_derived: bool
@@ -294,8 +308,8 @@ def _parse_joint(name: str, data: Any, parent_link: Link) -> Joint:
 
 def parse_profile(data: Any) -> Profile:
     top = ('profile_version', 'robot', 'materials', 'mount', 'links', 'joints', 'moveit',
-           'safety')
-    d = _mapping(data, 'profil', top, tuple(k for k in top if k != 'safety'))
+           'safety', 'tcp')
+    d = _mapping(data, 'profil', top, tuple(k for k in top if k not in ('safety', 'tcp')))
     if d['profile_version'] != PROFILE_VERSION:
         raise _fail('profile_version',
                     f"{PROFILE_VERSION} olmalı, bulunan: {d['profile_version']!r}")
@@ -389,6 +403,16 @@ def parse_profile(data: Any) -> Profile:
     if safety.zone.lower[2] < 0:
         raise _fail('safety.box.z',
                     f'kutu zemin altına iniyor (alt sınır {safety.zone.lower[2]:g})')
+    tcp_in = _mapping(d.get('tcp') or {}, 'tcp', ('offset', 'wpr'))
+    offset = _vector(tcp_in.get('offset', (0.0, 0.0, 0.0)), 3, 'tcp.offset')
+    wpr = _vector(tcp_in.get('wpr', (0.0, 0.0, 0.0)), 3, 'tcp.wpr')
+    tcp = Tcp(
+        offset=tuple(_number(v, f'tcp.offset[{i}]', lo=-MAX_TCP_OFFSET, hi=MAX_TCP_OFFSET)
+                     for i, v in enumerate(offset)),
+        wpr=tuple(_number(v, f'tcp.wpr[{i}]', lo=-MAX_ANGLE, hi=MAX_ANGLE)
+                  for i, v in enumerate(wpr)))
+    # a tool sticking out farther than the tool link extends the reach that vets an explicit box
+    reach = reach + max(0.0, _norm(tcp.offset) - links[-1].length)
     if not derived:
         lo, hi = safety.zone.lower, safety.zone.upper
         far = max(math.dist(shoulder, (x, y, z)) for x in (lo[0], hi[0])
@@ -406,7 +430,7 @@ def parse_profile(data: Any) -> Profile:
                                              'moveit.default_acceleration_scaling', positive=True,
                                              hi=1.0),
         initial_positions=initial, named_poses=poses, allow_extra=tuple(extra), safety=safety,
-        reach_center=shoulder, reach_radius=reach, box_derived=derived)
+        tcp=tcp, reach_center=shoulder, reach_radius=reach, box_derived=derived)
 
 
 def load_profile(path: Union[str, Path]) -> Profile:

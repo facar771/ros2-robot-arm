@@ -127,10 +127,19 @@ moveit:
     cnc:  [0.5, -0.4, 0.4, 0.0, 0.5, 0.0]
     pc:   [-0.5, -0.3, 0.3, -0.2, 0.5, 0.0]
     dik:  [0.0, -1.57, 1.57, 0.0, 0.0, 0.0]
+    ready: [0.0, -0.1, 1.65, 0.0, 1.2, 0.0]   # inside the safe box, sigma_min ~0.23, >= 0.35 rad from every joint limit
   collision:
     # Parent-child pairs always overlap at the joint and are always disabled. Anything else is
     # checked unless listed here with a reason: [link1, link2, reason]. Today: nothing extra.
     allow_extra: []
+
+# ---- tool centre point ------------------------------------------------------------------------
+# Used by the Cartesian jog (robot_core.kinematics.Chain). Relative to the tool link's (link_6) frame:
+# `offset` metres, `wpr` radians (R = Rz(R) Ry(P) Rx(W), FANUC W-P-R). Omitted = the flange itself
+# (the shortest, narrowest choice). MoveIt pose goals still address the link_6 frame, NOT the TCP.
+tcp:
+  offset: [0.0, 0.0, 0.0]
+  wpr: [0.0, 0.0, 0.0]
 
 # ---- safety -----------------------------------------------------------------------------------
 safety:

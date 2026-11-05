@@ -16,6 +16,7 @@ from tests.conftest import CONFIG_DIR, SRC
 from tests.robot_snapshot import snapshot
 
 GOLDEN = Path(__file__).parent / 'golden' / 'today_robot.json'
+ADDED_POSES = ('ready',)
 
 
 @pytest.fixture(scope='module')
@@ -74,7 +75,11 @@ def test_generated_robot_equals_the_original_hand_written_robot():
     now = snapshot(SRC / 'robot_description' / 'urdf' / 'robot.urdf',
                    CONFIG_DIR / 'six_axis_robot.srdf', CONFIG_DIR)
     golden = json.loads(GOLDEN.read_text(encoding='utf-8'))
+    # poses ADDED later (J4: `ready`) are not part of the original robot: the golden file stays
+    # the untouched hand-written snapshot, so they are set aside here and tested on their own
+    added = {name: now['srdf']['poses'].pop(name) for name in ADDED_POSES}
     fk_now, fk_gold = now.pop('fk'), golden.pop('fk')
+    fk_now = [e for e in fk_now if e['q'] not in list(added.values())]
     assert now == golden                       # exact: same limits, offsets, ACM, scalings...
     assert len(fk_now) == len(fk_gold) == 11
     for a, b in zip(fk_now, fk_gold):
@@ -89,7 +94,7 @@ def test_robot_config_reads_the_generated_files_like_before():
     assert cfg.joint_names == tuple(f'joint_{i}' for i in range(1, 7))
     assert (cfg.base_frame, cfg.tip_link, cfg.planning_group) == ('base_link', 'link_6',
                                                                  'robot_arm')
-    assert set(cfg.poses) == {'home', 'cnc', 'pc', 'dik'}
+    assert set(cfg.poses) == {'home', 'cnc', 'pc', 'dik', 'ready'}
     assert cfg.limits['joint_3'].lower == -2.0 and cfg.limits['joint_3'].velocity == 1.0
 
 

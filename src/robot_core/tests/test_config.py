@@ -17,7 +17,7 @@ def test_limits_come_from_urdf(config):
 
 
 def test_named_poses_come_from_srdf(config):
-    assert set(config.poses) == {'home', 'cnc', 'pc', 'dik'}
+    assert set(config.poses) == {'home', 'cnc', 'pc', 'dik', 'ready'}
     assert config.poses['cnc'] == (0.5, -0.4, 0.4, 0.0, 0.5, 0.0)
 
 
