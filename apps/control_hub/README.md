@@ -295,6 +295,24 @@ tests/
 
 Hata gövdesi: `{"ok": false, "error": "<kod>", "message": "<Türkçe>"}`.
 
+### Jog paneli (J3)
+
+Robot API'sinin `POST /api/jog` + `GET/PUT /api/frames` uçlarını (J2) Hub **geçirir**; kurallar robottadır
+(kiralama, TTL ≤ 500 ms, 409/423). Hub `frames.yaml`'a **yazmaz** (`PUT` robota gider, dosyayı robot yazar).
+
+| Uç nokta | Yetki | Anlam |
+|---|---|---|
+| `POST /api/jog` | kontrol | komut = heartbeat (`ttl_ms` 50-500, varsayılan 250; `0` bırakır). `423` Hub'da robota sormadan; `twist` (basılı-tut) loopback dışı istemciye `403`; ağ hatası `502` |
+| `GET /api/jog` | görüntüleme | robot jog durumu + `hold_allowed`/`hold_reason` (Hub'ın eklediği: neden kapalı) |
+| `GET /api/frames`, `PUT /api/frames` | görüntüleme / kontrol | çerçeve listesi; yazma robota gider (jog etkinken `409`) |
+
+Panel: **artımlı varsayılan** (0.1 / 1 / 10 mm ya da °). Basılı-tut yalnızca `hold_allowed` ise açılır ve
+kullanıcı kutuyu işaretlerse çalışır; kapalıysa nedeni panelde yazar (gerçek mod, `jog_hold` kapalı, telefon,
+Docker NAT'ta robotun reddi: `403`). `409` = başka istemci/iş, `423` = ACİL DUR kilidi, `502` = robota ulaşılamıyor.
+Tuş bırakılınca, sekme gizlenince, pencere odağı kaybolunca ve sayfa kapanınca kiralama bırakılır; bunlar
+yalnızca kibarlıktır, **asıl dead-man robot tarafındaki TTL'dir**. Yazılım dead-man donanım acil durdurmanın
+yerine geçmez. `--fake` robotunda jog kartezyen toplamadır (kinematik/güvenli kutu yok).
+
 ## Testler
 
 ```bash
@@ -321,7 +339,7 @@ Ayrıca CI'daki `hub` işi Docker imajını derleyip `/health`'i ve PIN korumas�
 
 ## Bilinen sınırlar
 
-* `--fake` robotunda eklem değerleri yalnızca görsel; gerçek kinematik yok.
+* `--fake` robotunda eklem değerleri yalnızca görsel; gerçek kinematik yok (jog dahil).
 * Canlı durum 5 Hz yoklanır (200 ms'den kısa olaylar arayüzde görünmeyebilir).
 * Hub'ın senaryoları adım adım iş gönderir; robotun kendi `demo_scenario` komutundaki **TF ile uç konum
   doğrulaması** (≤ 1,5 cm) Hub senaryolarında yoktur. Doğrulama gerekirse `demo_scenario` adım türü sonra.

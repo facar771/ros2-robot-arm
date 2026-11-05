@@ -12,10 +12,12 @@ from typing import Any, Dict, List, Tuple
 
 from control_hub.hub_core.backend import BackendResult, ResetResult, StopReport
 from control_hub.hub_core.commands import CommandError, parse_robot_command
+from control_hub.hub_core.fake_jog import FakeJog
 
 Vec = Tuple[float, float, float]
 JOINTS = ('joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6')
 HOME_TOOL: Vec = (0.0, 0.0, 0.62)
+READY_TOOL: Vec = (0.51, 0.0, 0.43)          # gerçek 'ready' pozunun yaklaşık uç konumu (J2 notu)
 # workspace.sdf'teki nesneler (name -> merkez, boyut)
 OBJECTS: Dict[str, Tuple[Vec, Vec]] = {
     'red#0': ((0.35, 0.15, 0.03), (0.06, 0.06, 0.06)),
@@ -48,6 +50,8 @@ class FakeBackend:
         self._halt = threading.Event()
         self._failures: List[Tuple[str, str]] = []
         self.history: List[str] = []
+        self.jog = FakeJog(get_tool=lambda: self._tool, set_tool=self._set_tool,
+                           is_halted=self._halt.is_set, is_busy=lambda: self._moving)
 
     # --- test/geliştirme kancaları -------------------------------------------------------------
     def inject_failure(self, substring: str, message: str = 'hedefe ulaşılamadı') -> None:
@@ -67,10 +71,14 @@ class FakeBackend:
         for sub, msg in self._failures:
             if sub in text:
                 return BackendResult(False, msg)
+        if self.jog.active():
+            return BackendResult(False, 'jog sürüyor: jog ve işler birbirini dışlar', {'busy': True})
         if cmd.name == 'objects':
             return BackendResult(True, f'{len(self.objects)} nesne', {'objects': self._objects_list()})
         if cmd.name == 'home':
             return self._move_to(HOME_TOOL, cancel, 'home pozuna gidildi')
+        if cmd.name == 'ready':
+            return self._move_to(READY_TOOL, cancel, 'ready pozuna gidildi')
         key = next((n for n in self.objects if n.startswith(cmd.color + '#')), None)
         if key is None:
             return BackendResult(False, f'{cmd.color} renkte nesne yok')
@@ -79,6 +87,24 @@ class FakeBackend:
         target = (ox, oy, oz + clearance)
         res = self._move_to(target, cancel, f'{key} nesnesinin {clearance * 100:.0f} cm üstüne gidildi')
         return BackendResult(res.ok, res.message, {**res.data, 'target': list(target)})
+
+    def _set_tool(self, pos: Vec) -> None:
+        with self._lock:
+            self._tool = pos
+            self._joints = _fake_joints(pos)
+
+    # --- jog / çerçeveler (Hub bunları robot API'sine geçirir; sahte robot kendi başına yanıtlar) ----
+    def jog_command(self, body: Any, *, remote: bool = False):
+        return self.jog.command(body, remote=remote)
+
+    def jog_status(self):
+        return 200, {**self.jog.status(), 'tcp': self.jog.tcp()}
+
+    def frames_get(self):
+        return 200, self.jog.frames_doc()
+
+    def frames_put(self, body: Any):
+        return self.jog.frames_put(body)
 
     def emergency_stop(self) -> StopReport:
         self._halt.set()
@@ -90,6 +116,8 @@ class FakeBackend:
         return ResetResult(True, 'sıfırlandı')
 
     def snapshot(self) -> Dict[str, Any]:
+        tcp = self.jog.tcp()                       # önce ilerlet (basılı-tut), sonra uç konumu oku
+        jog = self.jog.status() if self.jog.active() else None
         with self._lock:
             joints = list(self._joints)
             tool = list(self._tool)
@@ -99,6 +127,7 @@ class FakeBackend:
             'mode': 'fake', 'moving': moving,
             'estop': {'tripped': self._halt.is_set(), 'reason': None, 'since': None},
             'tool': [round(v, 4) for v in tool],
+            'tcp': tcp, 'jog': jog,
             'joints': [{'name': n, 'rad': round(v, 4), 'deg': round(math.degrees(v), 1)}
                        for n, v in zip(JOINTS, joints)],
             'objects': self._objects_list(),

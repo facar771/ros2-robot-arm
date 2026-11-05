@@ -121,7 +121,7 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
         if not host_allowed(host, extra):
             return JSONResponse({'ok': False, 'error': 'bad_host', 'message': 'Host reddedildi'},
                                 status_code=403)
-        if request.url.path.startswith('/api/') and request.method not in ('GET', 'HEAD'):
+        if request.url.path.startswith('/api/') and request.method not in ('GET', 'HEAD'):   # POST/PUT
             if not _origin_ok(request.headers.get('origin'), host) or \
                     request.headers.get('sec-fetch-site') == 'cross-site':
                 return JSONResponse({'ok': False, 'error': 'cross_origin',
@@ -235,6 +235,8 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
             raise ApiError(409, 'reset_refused', f'Robot kilidi açmayı reddetti: {exc}') from None
         return {'ok': True, 'estop': False}
 
+    from control_hub.server.jog_routes import install_jog_routes
+    install_jog_routes(app, hub, need_view=need_view, need_control=need_control)
     from control_hub.server.agent_routes import install_agent_routes
     install_agent_routes(app, hub, token_of=token_of, need_view=need_view, need_control=need_control)
 

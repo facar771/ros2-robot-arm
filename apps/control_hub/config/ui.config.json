@@ -17,7 +17,7 @@
     "estop": { "position": "bottom" },
     "button_height": "92px",
     "sections": [
-      { "title": "Hareket", "columns": 2, "scenarios": ["home", "above_green", "above_red", "above_blue"] },
+      { "title": "Hareket", "columns": 2, "scenarios": ["home", "ready", "above_green", "above_red", "above_blue"] },
       { "title": "Senaryolar", "columns": 1, "scenarios": ["demo_tour"] }
     ],
     "panels": ["status", "robot", "log"]

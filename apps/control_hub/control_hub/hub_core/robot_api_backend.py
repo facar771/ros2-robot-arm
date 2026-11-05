@@ -150,6 +150,7 @@ class RobotApiBackend:
             'current_job': robot.get('current_job'), 'last_error': robot.get('last_error'),
             'safety': robot.get('safety'),
             'tool': (st.get('tool') or {}).get('position'),
+            'tcp': st.get('tcp'), 'jog': robot.get('jog'),
             'joints': st.get('joints') or [],
             'objects': [{'name': o.get('name'), 'label': o.get('label'), 'position': o.get('position'),
                          'size': o.get('size')} for o in st.get('objects') or []],
@@ -217,6 +218,25 @@ class RobotApiBackend:
         if job.get('timed_out'):
             data['timed_out'] = True
         return BackendResult(False, msg, data)
+
+    # --- jog / çerçeveler (J2): Hub yalnızca geçirir; kurallar (TTL, kiralama, 409/423) robotta ----
+    def _passthrough(self, method: str, path: str, payload: Optional[dict] = None,
+                     timeout: float = 2.0) -> Tuple[int, Dict[str, Any]]:
+        """(HTTP kodu, gövde). Jog kısa zaman aşımı kullanır: yavaş yanıt, bayat bir komut demektir.
+        Ağ hatası ``RobotApiError`` fırlatır; robot TTL'i dolunca kendiliğinden durur."""
+        return self._request(method, path, payload, timeout=timeout)
+
+    def jog_command(self, body: Any, *, remote: bool = False) -> Tuple[int, Dict[str, Any]]:
+        return self._passthrough('POST', '/api/jog', body)
+
+    def jog_status(self) -> Tuple[int, Dict[str, Any]]:
+        return self._passthrough('GET', '/api/jog')
+
+    def frames_get(self) -> Tuple[int, Dict[str, Any]]:
+        return self._passthrough('GET', '/api/frames')
+
+    def frames_put(self, body: Any) -> Tuple[int, Dict[str, Any]]:
+        return self._passthrough('PUT', '/api/frames', body, timeout=5.0)
 
     # --- ACİL DUR ------------------------------------------------------------------------------
     def emergency_stop(self) -> StopReport:
