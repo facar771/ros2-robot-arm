@@ -22,6 +22,7 @@ setup(
             'tracking_node = robot_vision_ros.tracking_node:main',
             'tracking_check = robot_vision_ros.tracking_check:main',
             'camera_manual = robot_vision_ros.manual_node:main',
+            'perception_check = robot_vision_ros.perception_check:main',
         ],
     },
 )

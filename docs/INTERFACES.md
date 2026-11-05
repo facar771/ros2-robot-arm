@@ -503,8 +503,17 @@ pikseller; böylece `measure()` zemini değil nesneyi ölçer. Etiketsiz sınıf
 
 **Canlı kamera:** `PluginManager(..., frames='ros')` / `python3 -m robot_plugins --frames ros ...`
 (`robot_vision_ros.RosFrameSource`; ROS 2 ortamı gerekir, `/camera/{image,depth_image,camera_info}` abone olunur,
-kamera pozu `workspace.sdf`'ten alınan **sabit** kameradır; hareketli kamera platformu için kare başına poz hesabı yok).
-Gerçek Gazebo karesiyle `find_object`: kutu/silindir/küre merkezleri dünya dosyasına ≤ 0.15 cm.
+kamera pozu `camera=` ile seçilir: `fixed` = `workspace.sdf`'teki sabit kamera; `platform` = hareketli kamera platformu
+(`tracking.sdf`), her karenin pozu **kendi damgasındaki** `/platform/joint_states` (doğrusal ara değer) ve platform ileri
+kinematiğinden hesaplanır (`robot_vision.moving_camera`; `tracking_node` ile aynı kinematik). `auto` (varsayılan, `--frames
+ros`): `/platform/joint_states` yayımlanıyorsa `platform`, yoksa `fixed`; ilk saniye karar bekler ki ilk kare yanlış pozla
+yerleşmesin. `--frames ros:fixed` / `ros:platform` açıkça seçer. Kare, damgasından yeni eklem durumu gelene kadar bekler
+(poz **tahmin edilmez/ekstrapole edilmez**); eklem durumunda 0.25 s'den büyük boşluk varsa ya da hiç eklem durumu gelmezse
+kare atılır. Eski davranış (platform hareket edince de sabit poz) nesne konumunu metrelerce kaydırıyordu (H6).
+Gerçek Gazebo karesiyle `find_object` (sabit kamera): kutu/silindir/küre merkezleri dünya dosyasına ≤ 0.15 cm.
+Hareketli platformda doğrulama: `ros2 run robot_vision_ros perception_check` (`tracking.launch.py manual:=true` çalışırken;
+kırmızı top sabit, platform 6 pozda; dünya konumu hatası ve pozlar arası kayma ≤ 1 cm ister, karşılaştırma için sabit-poz
+hatasını da yazar; CI selftest'i DEĞİL, elle çalıştırılır).
 
 ### LLM araç katmanıyla (Robot sohbetinin Aşama 7'si) birleşme noktası
 Araçların **tek kaynağı** paket manifestleridir: `PluginManager.manifest(ad).describe()['tools']` listesi (`name`,

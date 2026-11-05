@@ -73,8 +73,9 @@ class NoFrames(FrameSource):
 
 def make_frame_source(spec: str) -> FrameSource:
     """``none`` | ``synthetic`` | ``npz:<path>`` | ``delayed:<seconds>`` (synthetic after a delay,
-    a test aid) | ``ros`` (live ``/camera/*``, needs ROS 2 and the ``robot_vision_ros`` package;
-    fixed workspace camera only)."""
+    a test aid) | ``ros`` / ``ros:fixed`` / ``ros:platform`` (live ``/camera/*``, needs ROS 2
+    and the ``robot_vision_ros`` package; ``ros`` picks the camera pose automatically: the moving
+    platform if ``/platform/joint_states`` exists, else the fixed workspace camera)."""
     if spec in ('', 'none'):
         return NoFrames()
     if spec == 'synthetic':
@@ -83,11 +84,13 @@ def make_frame_source(spec: str) -> FrameSource:
         return DelayedFrames(float(spec[8:]))
     if spec.startswith('npz:'):
         return NpzFrameSource(spec[4:])
-    if spec == 'ros':
+    if spec == 'ros' or spec.startswith('ros:'):
+        camera = spec[4:] or 'auto'
         try:
             from robot_vision_ros.ros_frame_source import RosFrameSource
         except ImportError as exc:
             raise ImportError("frames='ros' için ROS 2 ortamı ve robot_vision_ros gerekli "
                               '(source install/setup.bash)') from exc
-        return RosFrameSource()
-    raise ValueError(f'bilinmeyen kare kaynağı {spec!r}; none | synthetic | npz:<yol> | ros')
+        return RosFrameSource(camera=camera)
+    raise ValueError(f'bilinmeyen kare kaynağı {spec!r}; '
+                     'none | synthetic | npz:<yol> | ros[:fixed|:platform]')
