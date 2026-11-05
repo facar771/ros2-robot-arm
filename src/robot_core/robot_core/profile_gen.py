@@ -13,11 +13,13 @@ Not generated (stay hand-written): the xacro wrapper (``world``/mount joint, Gaz
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 from typing import Dict, Optional, Sequence
 
-from robot_core.profile import Joint, Link, Profile, load_profile
+from robot_core.profile import Joint, Link, Profile, Tool, ToolShape, load_profile
+from robot_core.se3 import matrix_from_wpr
 
 SRC = Path(__file__).resolve().parents[2]            # .../src
 PROFILE_PATH = SRC / 'robot_description' / 'profile' / 'six_axis_robot.yaml'
@@ -92,6 +94,41 @@ def _joint_xml(joint: Joint) -> str:
             f'  </joint>\n')
 
 
+def _shape_xml(sh: ToolShape) -> str:
+    if sh.kind == 'sphere':
+        geometry = f'<sphere radius="{f(sh.dims[0])}"/>'
+    elif sh.kind == 'cylinder':
+        geometry = f'<cylinder radius="{f(sh.dims[0])}" length="{f(sh.dims[1])}"/>'
+    else:
+        geometry = f'<box size="{vec(sh.dims)}"/>'
+    rpy = rpy_from_matrix(matrix_from_wpr(*sh.wpr))
+    return f'<origin xyz="{vec(sh.origin)}" rpy="{vec(rpy)}"/><geometry>{geometry}</geometry>'
+
+
+def rpy_from_matrix(rot) -> tuple:
+    """URDF rpy (R = Rz(yaw) Ry(pitch) Rx(roll), the same convention as W-P-R)."""
+    pitch = math.asin(max(-1.0, min(1.0, -rot[2][0])))
+    if abs(rot[2][0]) > 1 - 1e-12:
+        return (math.atan2(-rot[1][2], rot[1][1]), pitch, 0.0)
+    return (math.atan2(rot[2][1], rot[2][2]), pitch, math.atan2(rot[1][0], rot[0][0]))
+
+
+def _tool_xml(p: Profile, tool: Tool) -> str:
+    visual = ''.join(f'    <visual>{_shape_xml(sh)}<material name="{tool.material}"/></visual>\n'
+                     for sh in tool.shapes)
+    collision = ''.join(f'    <collision>{_shape_xml(sh)}</collision>\n' for sh in tool.shapes)
+    ixx, iyy, izz = tool.inertia
+    return (f'\n  <!-- tool "{tool.name}" (profile: tools.{tool.name}, active_tool): its frame IS '
+            f'the flange frame; the TCP offset is NOT a link. -->\n'
+            f'  <link name="{tool.link_name}">\n{visual}{collision}'
+            f'    <inertial><origin xyz="{vec(tool.com)}"/><mass value="{f(tool.mass)}"/>'
+            f'<inertia ixx="{f(ixx)}" ixy="0" ixz="0" iyy="{f(iyy)}" iyz="0" izz="{f(izz)}"/>'
+            f'</inertial>\n  </link>\n'
+            f'  <joint name="{tool.link_name}_mount" type="fixed">\n'
+            f'    <parent link="{p.tip_link}"/><child link="{tool.link_name}"/>'
+            f'<origin xyz="0.0 0.0 0.0"/>\n  </joint>\n')
+
+
 def gen_urdf(p: Profile) -> str:
     parts = ['<?xml version="1.0"?>\n', _xml_header() + '\n', f'<robot name="{p.robot}">\n']
     for name, rgba in p.materials.items():
@@ -105,6 +142,8 @@ def gen_urdf(p: Profile) -> str:
         parts.append('\n' + _link_xml(link))
         if i < len(p.joints):
             parts.append(_joint_xml(p.joints[i]))
+    if p.tool:
+        parts.append(_tool_xml(p, p.tool))
     parts.append('</robot>\n')
     return ''.join(parts)
 
