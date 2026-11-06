@@ -717,3 +717,26 @@ yabancı Origin / `Sec-Fetch-Site` reddi; gövde ≤ 1 KiB).
   denetlenir (kutu/profil sonradan daralmış olabilir). Acil dur `423`, iş/jog dışlaması `409` (`state: jogging`),
   iptal ve zaman aşımı diğer işlerle aynıdır; MoveIt reddederse `failed` + neden, "Robot hareket etmedi.".
 - Durum belgesi (`/api/state`) değişmedi.
+
+## Kamera platformu Robot API'de (H4): `/api/camera` — Robot API v1'e EKLEMELİ
+
+Elle kamera kontrolü (H3 `camera_manual`) tarayıcı API'sinden. **Yalnız `commands:=true`** ile açık; kapalıyken `403`.
+Mevcut hiçbir uç/alan değişmedi. Hub arayüzü bu PR'ın kapsamı DEĞİL.
+
+- **`GET /api/camera`** → `{available, estop, limits{pan,tilt,slide,rate_caps,source}, state (idle|goto|jog), q{pan,tilt,slide}, last, tracking_busy, status_age_s, tilt_note}`.
+  `available:false` = `camera_manual` çalışmıyor ya da durumu 2 s'den eski. **Tilt: artı = kamera AŞAĞI bakar.**
+- **`POST /api/camera`** (gövde ≤ 512 bayt, `application/json`, aynı Host/Origin korumaları):
+  - `{"op":"goto","pan":..,"tilt":..,"slide":..,"speed":0..1}` mutlak hedef (eksenler isteğe bağlı, en az biri),
+  - `{"op":"step","pan":Δ,...}` göreli: ölçülen poz + Δ (taze poz yoksa `503`),
+  - `{"op":"jog","pan_rate":..,"tilt_rate":..,"slide_rate":..,"ttl_ms":250}` ölü adam: `ttl_ms` 50–500'e KIRPILIR, komut
+    tazelenmezse platform kendiliğinden durur,
+  - `{"op":"stop"}` HER ZAMAN kabul edilir (acil dur kilitliyken de).
+  Bilinmeyen anahtar, sonlu olmayan/bool/metin sayı → `400`. Sınır dışı hedef ve hız tavanı aşımı **kırpılmaz, reddedilir** (`400`,
+  düğümün `code`'u yanıtta). Düğüm meşgul (`409`), poz yok (`503`), yanıt yok (`504`).
+- **Acil dur:** kilitliyken hareket uçları `423` (komut düğüme hiç gönderilmez); `POST /api/stop` robot durdurulduktan SONRA
+  kamera platformunu da durdurur (kamera hatası robotun durmasını engellemez). Durum okuması, kilitliyken hareket sürüyorsa stop'u yeniden yayınlar.
+  Kamera hareketi robot güvenliğini etkilemez; kendi hız tavanları (elle %50) düğümdedir.
+- **Sınırlar profilden değil, `robot_vision.manual.ManualConfig`'ten** (profilde platform bölümü yok; `robot_core/profile` bu PR'da dokunulmaz).
+- **Kare yolları değişmedi:** `GET /frame/rgb.png`, `GET /frame/depth.png`. Sorgu dizesi ve kimlik başlıkları yok sayılır, yanıta
+  yansıtılmaz, erişim günlüğünde sorgu `?…` ile silinir. Hub yalnız bu iki yolu, GET, sorgusuz, PIN oturumu sunucuda tutarak vekiller.
+- Selftest: `run_selftest gazebo-camera-api` (CI + nightly), `docker compose run --rm selftest-camera-api`.

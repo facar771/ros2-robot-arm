@@ -33,6 +33,7 @@ from robot_controller.adapters import (
     TfToolPosition,
 )
 from robot_controller.config_loader import load_robot_config, load_safety_config
+from robot_core.cameraapi import CameraApi, CameraStop
 from robot_core.frames import FrameStore
 from robot_core.jobs import JobManager
 from robot_core.jog import DlsJogEngine, JogConfig
@@ -53,6 +54,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 from visualization_msgs.msg import Marker, MarkerArray
 
 from robot_data import close_sink, event_sink_from_env
+from robot_viz.camera_ros import RosCameraPort
 from robot_viz.jog_ros import RosSetpointSink
 
 TOPIC_OBJECTS = '/perception/objects'
@@ -113,6 +115,7 @@ class WebViewNode(Node):
         self.jobs = None
         self.jog = None
         self.frames = None
+        self.camera = None
         self.waypoints = None
         self.waypoints_error = None
         if bool(self.get_parameter('commands').value):
@@ -133,7 +136,10 @@ class WebViewNode(Node):
             if bool(self.get_parameter('jog').value):
                 self._setup_jog(estop)
             self._setup_waypoints(safety, guarded)
-            self.supervisor = Supervisor(estop, self._joints, self._joint_names, stop_port=motion,
+            camera_port = RosCameraPort(self)        # pan/tilt/slide platform (H4); e-stop stops it
+            self.camera = CameraApi(camera_port, estop)
+            self.supervisor = Supervisor(estop, self._joints, self._joint_names,
+                                         stop_port=CameraStop(motion, camera_port),
                                          runner=self.runner, mode=self.mode, events=self.events,
                                          safety=safety.as_dict(motion.velocity_scale),
                                          jog=self.jog)
@@ -272,7 +278,8 @@ def main(args=None):
         view = WebView(node, host=host, port=port, depth_range=node.depth_range,
                        commands=node.runner, supervisor=node.supervisor, mode=node.mode,
                        jobs=node.jobs, jog=node.jog, frames=node.frames,
-                       waypoints=node.waypoints, waypoints_error=node.waypoints_error)
+                       waypoints=node.waypoints, waypoints_error=node.waypoints_error,
+                       camera=node.camera)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()
