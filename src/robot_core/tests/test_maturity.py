@@ -61,8 +61,13 @@ def test_existing_profile_is_sim_ready_and_all_placeholder(robot, hw):
     assert load_maturity(PROFILE_PATH, HARDWARE_PATH, QUALITY_PATH).level == SIM_READY
 
 
-def test_shipped_quality_file_parses_and_changes_nothing(robot):
-    assert load_quality(QUALITY_PATH, robot) == Quality()
+def test_shipped_quality_file_marks_everything_and_claims_nothing_measured(robot, hw):
+    q = load_quality(QUALITY_PATH, robot)
+    assert q.tags and set(q.tags.values()) == {'placeholder', 'estimated'}   # never measured
+    assert all(q.tag(p) != 'measured' for p in known_paths(robot))
+    assert q.tag('links.link_2.mass') == 'placeholder' and q.tag('axes.joint_1.gear_ratio') == \
+        'placeholder' and q.tag('links.link_2.length') == 'estimated'
+    assert maturity(robot, hw, q).level == SIM_READY
     assert load_quality(None, robot) == Quality()
     assert load_quality(QUALITY_PATH.with_name('yok.yaml'), robot) == Quality()
 
