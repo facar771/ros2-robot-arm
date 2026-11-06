@@ -1,6 +1,6 @@
 # Yol Haritası (tek doğruluk kaynağı)
 
-Son güncelleme: 2026-11-05 (gece) · main 0a5811d (PR #53; #47–#53 birleşti) · Güncelleyen: Müdür
+Son güncelleme: 2026-11-06 · main e75536a (PR #55; #54 ve #55 birleşti) · Güncelleyen: Müdür
 
 ## Kullanım kuralları (herkes için)
 1. **Her görev bu dosyadaki bir ID'ye bağlıdır** (örn. `L3`). PR başlığına/gövdesine "Yol haritası: L3" yaz. ID'si olmayan iş yapılmaz; yeni iş eklemek Ferhat ya da Müdür kararıdır.
@@ -40,7 +40,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - Her merge sonrası: WSL'de `cd ~/ros2-robot-arm && git checkout main && git pull` (+ kod/imaj değiştiyse `docker compose build`). Selftest: `docker compose run --rm selftest-<mod>`.
 
 ## Sıradaki işler (öncelik sırasıyla)
-1. L3, O1, H6, Q1 bitti; L7 kısmen (#44, #46, #50–#53). **Ferhat önceliği: robotu Hub'da görmek: L9a (Robot_2) → L9b (Robot_3) → L9c (Robot_4); henüz PR yok.** Sonra: O2 (Robot_3), L8 (Robot_3 API + Robot_4 Hub), O3, H4.
+1. L3, O1, H6, Q1, O2 bitti; L7 kısmen. **Ferhat önceliği: robotu Hub'da görmek: L9a (Robot_2) → L9b (Robot_3) → L9c (Robot_4); L9 için henüz PR yok.** Robot_3 L9a şeması gelene kadar H4 API'ye başlayabilir; Robot_4 L9c'den sonra O3. L8 `frames_version` kararına (Robot_1) bağlı.
 2. **Hemen paralel başlayabilir** (farklı dosyalar):
    - **H6** hareketli kamerada algı doğruluğu (Robot_5)
    - **H4 (API kısmı)** izleme kamerasını Robot API'ye bağla (Robot_3). Arayüz kısmı L3 sonrası (Robot_4).
@@ -144,7 +144,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 ## O. Nokta öğretme ve algoritma yönetimi (Hub "Algoritmalar" sayfası)
 > Hedef: robotu elle (jog) bir noktaya götür → "kaydet" → başka noktaya götür → "kaydet" → "A'dan B'ye git". Çekirdekte `go_to_named_pose`/`go_to_position`/senaryo yorumlayıcısı var, ama kullanıcı noktayı arayüzden öğretemiyor ve çalıştıramıyor.
 - [x] O1 (#51) Nokta deposu çekirdeği (Robot_3; `robot_core`'da yeni dosya `waypoints.py`, mevcut dosyalara dokunmaz; ROS'suz): `waypoints.yaml` (ad, eklem değerleri, TCP pozu ve hangi çerçevede, oluşturma zamanı). `frames.yaml` ile aynı kurallar: atomik yazma, şema, sürüm, yükte doğrulama. **Kaydederken** nokta eklem limitleri ve güvenli kutu içinde değilse reddedilir. **Doğrulama durumu:** ROS'suz birim testi; Windows/WSL bind-mount üzerinde `os.replace` atomikliği ve süreçler arası eşzamanlı yazma denenmedi; kayıt anındaki FK gerçek TCP ile karşılaştırılmadı.
-- [ ] O2 Robot API: `GET/PUT/DELETE /api/waypoints`, `POST /api/waypoints/record` (şu anki eklem/TCP'yi kaydeder), `POST /api/jobs` komutu `goto_waypoint` (Robot_3). **Kural:** noktaya gidiş MoveIt planı ve çarpışma denetimiyle yapılır; adlandırılmış eklem pozlarındaki gibi denetimsiz eklem hedefi değil. Güvenli kutu, ACİL DUR, 423 aynen geçerli.
+- [x] O2 (#55) Robot API: `GET/PUT/DELETE /api/waypoints`, `POST /api/waypoints/record` (şu anki eklem/TCP'yi kaydeder), `POST /api/jobs` komutu `goto_waypoint` (Robot_3). **Kural:** noktaya gidiş MoveIt planı ve çarpışma denetimiyle yapılır; adlandırılmış eklem pozlarındaki gibi denetimsiz eklem hedefi değil. Güvenli kutu, ACİL DUR, 423 aynen geçerli. **Doğrulama durumu:** CI'da Gazebo selftest (`waypoint` modu) yeşil, toleranslar kum havuzunda ayarlı (eklem 0,03 rad, TCP 1,5 cm). **Güvenli kutu yalnız hedef noktada denetleniyor**, eklem uzayı yolunda iki kutu-içi nokta arasında kutudan çıkılabilir (mevcut `go_to_position` ile aynı; Robot_1'e soruldu). Gerçek donanım, B2 köprüsü üzerinden `goto_waypoint`, homing sorunu (`record` homed bilmez) ve Windows↔WSL elle denenmedi.
 - [ ] O3 Hub "Algoritmalar" sayfası (Robot_4; L3'ten sonra): noktaları listele/yeniden adlandır/sil, "şu anki konumu nokta olarak kaydet" (jog panelinin yanında), iki nokta seç → "git". Gösterilen her hareket ACİL DUR ile birlikte.
 - [ ] O4 Sıra (algoritma) editörü: kayıtlı noktalardan adım listesi (git, bekle, döngü, kamera/eklenti çalıştır), mevcut senaryo YAML biçimine derlenir; "öğret ve oynat" (kaydet → oynat); yürütme sırasında durdur/acil dur (Robot_4 + Robot_2)
 
@@ -174,6 +174,7 @@ Durum: `[x]` bitti ve main'de · `[ ]` yapılmadı · 🟡 PR açık · ⏸ bekl
 - [ ] N5 Nightly workflow GitHub'da ilk koşu doğrulaması
 
 ## Değişiklik günlüğü
+- 2026-11-06: #54, #55 birleşti. O2 `[x]` (kutu yalnız hedefte denetleniyor, açık güvenlik sorusu Robot_1'de). Robot_2 Q1'i, Robot_3 O2'yi L9'dan önce yaptı; L9a/b/c hâlâ yok.
 - 2026-11-05 gece: #47–#53 birleşti. O1, H6, Q1 `[x]` (doğrulama sınırları satırlarda); L7 kısmen (çekirdek var, hiç simülasyonda denenmedi). #49 (Uno hedefi, K3/K6/K7) başka bir sohbetten geldi, Ferhat birleştirdi; K7'nin servo besleme kesme maddesi güvenlik içerir, K7 başlamadan Robot_1 gözden geçirmeli. L9a/b/c henüz başlamadı.
 - 2026-11-05: L9 Robot_1 kararıyla (b) hafif sürüm olarak L9a/L9b/L9c'ye bölündü (robot_viz gömme reddedildi); H4'e kamera karesi notu eklendi.
 - 2026-11-05: #46 birleşti, L3 `[x]` (Ferhat arayüzü sahte robotla denedi ve kabul etti; gerçek robot doğrulaması L5/L9'a kaldı). L9 (Hub'da robot görünümü) eklendi, mimari kararı Robot_1'de.
