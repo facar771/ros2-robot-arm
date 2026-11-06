@@ -138,6 +138,7 @@ function buildUi() {
   S.events = [];
   if (window.AgentPanel) AgentPanel.mount();
   if (window.JogPanel) JogPanel.mount();
+  if (window.RobotView) RobotView.mount();
   api('/api/events').then((r) => { S.events = r.events; renderLog(); }).catch(() => {});
 }
 
@@ -180,6 +181,7 @@ function render() {
   const s = S.snap; if (!s || !S.ui) return;
   if (window.AgentPanel) AgentPanel.onState(s);
   if (window.JogPanel) JogPanel.onState(s);
+  if (window.RobotView) RobotView.onState(s);
   const canControl = s.me.can_control && !s.estop.latched;
   const run = s.runner;
   const readOnly = s.access.mode === 'locked';
@@ -275,6 +277,7 @@ function connectWs() {
   ws.onopen = () => { S.wsOk = true; S.retry = 0; stopPoll(); setConn('live'); };
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
+    if (window.RobotView) RobotView.onLive();      // durum da, tick de: canlılık işareti
     if (d.type === 'state') { S.snap = d.state; render(); }
     else if (d.type === 'events') { S.events.push(...d.events); S.events = S.events.slice(-200); renderLog(); }
   };

@@ -84,6 +84,12 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
                               'Basılı-tut yalnızca bu bilgisayardan açılır; telefonda yalnızca artımlı jog')
         return JSONResponse(doc)
 
+    @app.get('/api/model')
+    async def model(request: Request):
+        """Robot modeli (L9b) olduğu gibi; 503 gövdesi nedeni taşır. Salt-okunur (komut yolu değil)."""
+        need_view(request)
+        return await call('model')
+
     @app.get('/api/frames')
     async def frames_get(request: Request):
         need_view(request)

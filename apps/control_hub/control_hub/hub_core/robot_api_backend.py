@@ -232,6 +232,9 @@ class RobotApiBackend:
     def jog_status(self) -> Tuple[int, Dict[str, Any]]:
         return self._passthrough('GET', '/api/jog')
 
+    def model(self) -> Tuple[int, Dict[str, Any]]:
+        return self._passthrough('GET', '/api/model', timeout=3.0)
+
     def frames_get(self) -> Tuple[int, Dict[str, Any]]:
         return self._passthrough('GET', '/api/frames')
 
