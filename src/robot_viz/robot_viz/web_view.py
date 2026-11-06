@@ -45,6 +45,7 @@ from robot_core.perception import Intrinsics, Transform
 from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
 from robot_core.skills import Skills
+from robot_core.spheres import SphereStore
 from robot_core.supervisor import CancelFlag, EStop, GuardedMotion, Supervisor
 from robot_core.waypointapi import WaypointApi
 from robot_core.waypoints import WaypointStore
@@ -120,6 +121,8 @@ class WebViewNode(Node):
         self.camera = None
         self.waypoints = None
         self.waypoints_error = None
+        self.spheres = None
+        self.spheres_error = None
         self.model = self._load_model()           # L9b: always (read-only, no commands needed)
         if bool(self.get_parameter('commands').value):
             self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
@@ -192,6 +195,11 @@ class WebViewNode(Node):
             data = Path(self.get_parameter('data_dir').value or os.environ.get('ROBOT_DATA_DIR')
                         or Path.home() / '.ros2-robot-arm')
             self.frames = FrameStore(data / 'frames.yaml')
+            try:     # sphere frames (L8): a corrupt file switches only them off, not the jog
+                self.spheres = SphereStore(data / 'spheres.yaml')
+            except Exception as exc:    # noqa: BLE001
+                self.spheres_error = f'{type(exc).__name__}: {exc}'
+                self.get_logger().error(f'küre çerçeveleri kapalı: {self.spheres_error}')
         except Exception as exc:    # noqa: BLE001 - jog stays off; the rest of the API works
             self.get_logger().error(f'jog kapalı: {type(exc).__name__}: {exc}')
             return
@@ -205,6 +213,7 @@ class WebViewNode(Node):
         engine = DlsJogEngine(Chain(profile), profile.safety, jog_config)
         self.jog = JogController(
             engine, Chain(profile), self._joints, RosSetpointSink(self), estop, self.frames,
+            spheres=self.spheres,
             config=JogApiConfig(hold_enabled=hold_on,
                                 hold_remote_enabled=bool(self.get_parameter('jog_hold_remote').value)),
             jog_config=jog_config, busy=lambda: bool(self.jobs and self.jobs.is_running),
@@ -297,7 +306,8 @@ def main(args=None):
                        commands=node.runner, supervisor=node.supervisor, mode=node.mode,
                        jobs=node.jobs, jog=node.jog, frames=node.frames,
                        waypoints=node.waypoints, waypoints_error=node.waypoints_error,
-                       camera=node.camera, model=node.model)
+                       camera=node.camera, model=node.model, spheres=node.spheres,
+                       spheres_error=node.spheres_error)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()
