@@ -89,6 +89,23 @@ karşılaştırır: eklemler/limitler/ofsetler/eksenler, link geometrisi + atale
 kinematik** (URDF'ten bağımsız hesaplanır), **çarpışma matrisi**, pozlar, güvenli kutu, hız/ivme,
 başlangıç pozu, kontrolcü eklem listeleri. Bu golden dosyayı yalnızca robotu bilerek değiştirirken güncelle.
 
+## `view_model.json` (L9a): robotun salt-okunur görünüm modeli
+`robot_description/profile/generated/view_model.json`, aynı üreticiyle profilden üretilir (`python3 -m robot_core.profile_gen`); **elle düzenlenmez**,
+`test_generated_files_are_up_to_date` (CI'daki pytest) üretim = commit'i denetler. Hub'daki 3B/2B görünümün (L9b `GET /api/model`, L9c Canvas) tek kaynağıdır;
+yalnız **çizmek** için gerekenleri taşır, komut/kimlik/yol içermez, mesh yoktur.
+
+Şema (`view_model_version: 1`; sonraki sürümlerde yalnız alan eklenir): birimler m ve rad.
+- `_generated` (metin), `view_model_version`, `robot`, `units {length, angle}`, `frames` (kural metni), `root` (taban linki; `world == base_link`, ofsetsiz sabit montaj).
+- `joints[]` zincir sırasında: `name`, `parent`, `child`, `origin [x,y,z]` (üst link çerçevesinde), `axis [x,y,z]` (birim), `limit {lower, upper, velocity}`.
+  FK: çocuk çerçeve = üst çerçeve · Öteleme(`origin`) · Dönme(`axis`, q); sıfır konfigürasyonda tüm çerçeveler hizalı. İstemci FK'si çekirdek FK'sıyla testle eşleşir.
+- `links[]`: `name`, `joint` (onu hareket ettiren eklem; taban için `null`), `shape` = `{type: cylinder, radius, length}` ya da `{type: box, size: [x,y,z]}` (silindir ekseni ve kutu z'si link z'si boyunca),
+  `origin` (şekil merkezi, link çerçevesinde), `material`, `color [r,g,b,a]`.
+- `tcp {offset, wpr, frame}`: aktif TCP (W-P-R, `R = Rz(R)·Ry(P)·Rx(W)`) `frame` (flanş linki) çerçevesine göre.
+- `tool`: `null` (takım yok = flanş) ya da `{name, link, parent, material, color, shapes[]}`; `shapes[]` = `link` ile aynı `shape` biçimi (+ `sphere {radius}`) ve `origin`, `wpr` (flanş çerçevesinde).
+- `safe_box {frame: "world", x: [lo, hi], y, z}`: **etkin** kutu (aktif takımda payla daralmış).
+- `named_poses {ad: [6 eklem değeri]}` (ör. `ready`).
+Sensörler, kütle/atalet ve çarpışma matrisi bilerek yok.
+
 ## Donanım profili (`hardware.profile.yaml`, `robot_core/hardware.py`)
 Gerçek robotun motor/sürücü/encoder/homing bilgisi **ayrı dosyada**; yalnızca köprü ve firmware kullanır.
 URDF'e ve MoveIt dosyalarına **girmez**: bir motorun yönünü ters çevirmek simülasyonu değiştiremez
