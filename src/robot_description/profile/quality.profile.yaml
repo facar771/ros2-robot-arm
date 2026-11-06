@@ -1,0 +1,18 @@
+# Quality tags of the physical values (design: docs/ROBOT_PROFILE.md, "Eksik bilgiyle çalışan profil").
+# Read by robot_core.maturity ONLY; it never enters the URDF, the MoveIt files or the firmware header,
+# so editing it changes no generated file.
+#
+#   <field path>: measured | estimated | placeholder | null
+#   <field path>: {tag: measured, value: 0.35}     # pins the value: if the profile number changes
+#                                                  # later the tag is 'stale' and does NOT count
+#
+# A field that is not listed is `placeholder` (the narrow choice). `null` = no value known at all.
+# Hardware readiness needs every critical field `measured` AND the static torque check passed:
+#   links.<link>.length / .mass          joints.<joint>.limits.position / .effort
+#   axes.<joint>.motor.type / .motor.steps_per_rev / .driver.microstep / .gear_ratio
+#   axes.<joint>.limits.position / .homing.position           (hobby_servo: axes.<joint>.servo.pulse_range)
+#
+# Everything below is a stand-in for the SIMULATED robot: nothing here was measured.
+quality_version: 1
+robot: six_axis_robot
+fields: {}
