@@ -24,5 +24,8 @@ if(BUILD_TESTING)
 endif()
 
 install(DIRECTORY urdf launch DESTINATION share/${PROJECT_NAME})
+# L9b: the Robot API serves this read-only view model (GET /api/model)
+install(FILES profile/generated/view_model.json
+        DESTINATION share/${PROJECT_NAME}/profile/generated)
 
 ament_package()

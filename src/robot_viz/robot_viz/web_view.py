@@ -21,6 +21,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.duration import Duration
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -39,6 +40,7 @@ from robot_core.jobs import JobManager
 from robot_core.jog import DlsJogEngine, JogConfig
 from robot_core.jogapi import READY_NAME, READY_POSE, JogApiConfig, JogController
 from robot_core.kinematics import Chain
+from robot_core.modelapi import ModelApi
 from robot_core.perception import Intrinsics, Transform
 from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
@@ -118,6 +120,7 @@ class WebViewNode(Node):
         self.camera = None
         self.waypoints = None
         self.waypoints_error = None
+        self.model = self._load_model()           # L9b: always (read-only, no commands needed)
         if bool(self.get_parameter('commands').value):
             self.events = event_sink_from_env('web_view')    # ROBOT_DB_URL yoksa: kayıt yok
             safety = load_safety_config()                    # missing/bad file: refuse to start
@@ -143,6 +146,21 @@ class WebViewNode(Node):
                                          runner=self.runner, mode=self.mode, events=self.events,
                                          safety=safety.as_dict(motion.velocity_scale),
                                          jog=self.jog)
+
+    def _load_model(self) -> ModelApi:
+        """view_model.json (made by the profile generator). A missing/corrupt file or one whose
+        joint names differ from the robot's does not stop the Robot API: /api/model says 503."""
+        try:
+            path = Path(os.environ.get('ROBOT_VIEW_MODEL') or (
+                Path(get_package_share_directory('robot_description')) / 'profile' / 'generated'
+                / 'view_model.json'))
+        except Exception as exc:    # noqa: BLE001 - package not found: the door explains
+            api = ModelApi(error=f'model dosyası bulunamadı ({type(exc).__name__})')
+        else:
+            api = ModelApi.from_file(path, self._joint_names)
+        if api.error:
+            self.get_logger().error(f'robot modeli kapalı (GET /api/model 503): {api.error}')
+        return api
 
     def _setup_waypoints(self, safety, guarded) -> None:
         """Waypoint store + API. A broken file does not stop the robot API: the waypoint doors
@@ -279,7 +297,7 @@ def main(args=None):
                        commands=node.runner, supervisor=node.supervisor, mode=node.mode,
                        jobs=node.jobs, jog=node.jog, frames=node.frames,
                        waypoints=node.waypoints, waypoints_error=node.waypoints_error,
-                       camera=node.camera)
+                       camera=node.camera, model=node.model)
     except OSError as exc:
         node.get_logger().error(f'{host}:{port} dinlenemiyor: {exc} (port meşgul mü?)')
         node.destroy_node()

@@ -45,6 +45,7 @@ jobs:
           - waypoints
           - gazebo-waypoints
           - gazebo-camera-api
+          - model
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

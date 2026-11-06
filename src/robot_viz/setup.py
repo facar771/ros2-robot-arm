@@ -29,6 +29,7 @@ setup(
             'jog_check = robot_viz.jog_check:main',
             'waypoint_check = robot_viz.waypoint_check:main',
             'camera_api_check = robot_viz.camera_api_check:main',
+            'model_check = robot_viz.model_check:main',
             'hw_check = robot_viz.hw_check:main',
         ],
     },
