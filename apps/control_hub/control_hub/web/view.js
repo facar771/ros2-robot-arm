@@ -245,7 +245,7 @@ window.RobotView = (() => {
       el('div', { class: 'rv-band', id: 'rv-band', role: 'alert', hidden: true }),
       el('div', { id: 'rv-body' }, [cv, el('div', { class: 'row' }, presets),
         el('div', { class: 'say', id: 'rv-note' }),
-        el('div', { class: 'say', text: 'Sürükle: döndür · tekerlek/iki parmak: yakınlaştır · turuncu kesikli kutu: robotun etkin güvenli kutusu (model verisi) · beyaz nokta: çizilen zincirin ucu · yeşil halka: robotun bildirdiği TCP. Salt-okunur görünüm; ölçüm değildir.' })])]));
+        el('div', { class: 'say', text: 'Sürükle: döndür · tekerlek: yakınlaştır · turuncu kesikli kutu: robotun etkin güvenli kutusu (model verisi) · beyaz nokta: çizilen zincirin ucu · yeşil halka: robotun bildirdiği TCP. Salt-okunur görünüm; ölçüm değildir.' })])]));
     cv.addEventListener('pointerdown', (ev) => { cv.setPointerCapture(ev.pointerId); V.drag = { x: ev.clientX, y: ev.clientY, yaw: V.yaw, pitch: V.pitch }; });
     cv.addEventListener('pointermove', (ev) => { if (!V.drag) return;
       V.yaw = V.drag.yaw + (ev.clientX - V.drag.x) * 0.01;
