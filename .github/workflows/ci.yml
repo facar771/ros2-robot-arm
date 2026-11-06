@@ -138,6 +138,10 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest jog
       - name: "Selftest - jog over the Robot API, Gazebo physics"
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-jog
+      - name: "Selftest - waypoints over the Robot API, mock (record, refusals, goto planned by MoveIt, collision, e-stop, job/jog exclusion)"
+        run: docker run --rm ros2-robot-arm:ci run_selftest waypoints
+      - name: "Selftest - waypoints over the Robot API, Gazebo physics"
+        run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-waypoints
       - name: Selftest - camera platform tracks a moving target (4 scenarios, lock criteria)
         # Not verified in Docker when it was written (the sandbox has no Docker Hub access); the
         # world needs the bullet-featherstone physics plugin. Does not block the other jobs.

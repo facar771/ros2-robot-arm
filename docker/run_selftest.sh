@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Starts the simulation headless, waits until it is really ready, runs the selftest, cleans up.
-#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw|jog|gazebo-jog]
+#   run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw|jog|gazebo-jog|waypoints|gazebo-waypoints]
 #   (default: mock; or set SIM_MODE)
 # mock          = ros2_control mock_components (fast, no physics)
 # gazebo        = Gazebo physics server (gz_ros2_control), no GUI/GPU
@@ -42,6 +42,10 @@
 #                 lease/TTL dead-man, incremental + hold-to-run, e-stop mid-jog, dropped connection, box
 #                 ceiling, wrist singularity, taught frames (frames.yaml in a temp ROBOT_DATA_DIR)
 # gazebo-jog    = same checks on Gazebo physics (gazebo.launch.py + the browser)
+# waypoints     = mock_components + the browser with commands; runs only waypoint_check (O2): /api/waypoints,
+#                 record of the measured pose, refusals (box/limits), goto_waypoint planned by MoveIt and
+#                 collision-checked, e-stop mid-goto, job<->jog exclusion
+# gazebo-waypoints = same checks on Gazebo physics
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -73,9 +77,13 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
     gazebo-jog) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=gazebo); CTRL_TIMEOUT=120 ;;
+    waypoints) LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
+    gazebo-waypoints) LAUNCH=(ros2 launch robot_moveit_config gazebo.launch.py)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=gazebo); CTRL_TIMEOUT=120 ;;
     hw) LAUNCH=(ros2 launch robot_hw_bridge hw_stack.launch.py bridge_host:=127.0.0.1 bridge_port:=8771 loop_stall_ms:=300 robot_api_url:=http://127.0.0.1:8080)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=real use_sim_time:=false); CTRL_TIMEOUT=60 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw|jog|gazebo-jog]"; exit 64 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw|jog|gazebo-jog|waypoints|gazebo-waypoints]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
@@ -83,7 +91,7 @@ source "/opt/ros/${ROS_DISTRO}/setup.bash"
 source /workspace/install/setup.bash
 
 # jog modes keep the taught frames in a throw-away data directory (never in the repo)
-case "$MODE" in jog|gazebo-jog) export ROBOT_DATA_DIR=$(mktemp -d /tmp/jog_data.XXXXXX) ;; esac
+case "$MODE" in jog|gazebo-jog|waypoints|gazebo-waypoints) export ROBOT_DATA_DIR=$(mktemp -d /tmp/jog_data.XXXXXX) ;; esac
 
 LOG=/tmp/sim_launch.log
 CHECK_LOG=/tmp/selftest_check.log      # what the check printed (the annotation reads this)
@@ -192,6 +200,8 @@ elif [ "$MODE" = "gazebo-integration" ]; then
 elif [ "$MODE" = "jog" ] || [ "$MODE" = "gazebo-jog" ]; then
     PLANT=mock; [ "$MODE" = "gazebo-jog" ] && PLANT=gazebo
     timeout 900 ros2 run robot_viz jog_check --plant "$PLANT" 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+elif [ "$MODE" = "waypoints" ] || [ "$MODE" = "gazebo-waypoints" ]; then
+    timeout 900 ros2 run robot_viz waypoint_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "hw" ]; then
     timeout 600 ros2 run robot_viz hw_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "gazebo-tracking" ]; then

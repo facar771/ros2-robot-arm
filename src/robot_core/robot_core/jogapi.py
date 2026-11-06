@@ -481,7 +481,9 @@ def frames_document(store: FrameStore) -> Dict[str, Any]:
     return {'builtin': ['World', 'Tool'], 'max_frames': store.limits.max_frames, 'frames': out}
 
 
-def replace_frames(store: FrameStore, body: Any) -> Dict[str, Any]:
+def replace_frames(
+    store: FrameStore, body: Any, guard: Optional[Callable[[Dict[str, Any]], None]] = None
+) -> Dict[str, Any]:
     """``PUT /api/frames``: replace the WHOLE user-frame list (validated first, written atomically).
     Raises :class:`FrameError` (400) with the reason; the file is untouched on any error."""
     from robot_core.frames import check_name, frame_from_three_points
@@ -511,6 +513,8 @@ def replace_frames(store: FrameStore, body: Any) -> Dict[str, Any]:
         p = entry['points']
         new[name] = frame_from_three_points(name, p['origin'], p['x'], p['xy'], store.limits)
     with store._lock:  # J1's FrameStore has no replace-all (Robot_2'den istek)
+        if guard is not None:
+            guard(new)  # e.g. waypoints expressed in a frame that would vanish (O2)
         store._save(new)
         store._frames = new
     return frames_document(store)
