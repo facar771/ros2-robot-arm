@@ -163,8 +163,44 @@ Bugünkü `hardware.profile.yaml` simüle edilen robot içindir: 200 adım/devir
 eklem limitleri, marj 0, encoder yok, homing konumu 0 rad. **Gerçek bir robot için gerçek sürücü verisi, marj ve
 home anahtarı konumları yazılmadan kullanılmamalıdır.** Gerçek donanımda hiçbir şey denenmedi.
 
+## Eksik bilgiyle çalışan profil: kalite etiketi ve olgunluk (J5, `robot_core/maturity.py`)
+Robot, gerçek ölçüler olmadan yer tutucu sayılarla tanımlanıp simülasyonda çalışır; sayılar sonradan ölçülüp
+doldurulur. Profil **ne kadarının gerçek olduğunu** söyler. Etiketler robot/donanım YAML'ına değil, yanındaki
+**`quality.profile.yaml`** dosyasına yazılır (bu yüzden o iki dosya ve **üretilen her şey** bayt bayt aynı kalır).
+
+**Etiket:** `measured` (ölçüldü) · `estimated` (tahmin) · `placeholder` (yer tutucu). Dosyada olmayan alan
+`placeholder` sayılır (geriye uyumlu, dar seçim). `null` = hiçbir değer bilinmiyor (`unknown`, yer tutucudan
+kötü). `{tag: measured, value: 0.35}` değeri mühürler: profildeki sayı sonradan değişirse etiket `stale` olur ve
+`measured` sayılmaz. Bilinmeyen alan yolu ya da yanlış yazılmış etiket hatadır (sessiz yok sayılmaz).
+
+**Olgunluk** (her çağrıda etiketlerden yeniden hesaplanır, bu yüzden `measured → estimated` düşürmek seviyeyi geri düşürür):
+
+| Seviye | Koşul |
+|---|---|
+| 1 taslak | şema geçerli (profil okundu) ama poz/limit tutarsız ya da `home` pozu yok |
+| 2 simülasyona hazır | poz ve limitler tutarlı; donanım bilgisi eksik olabilir |
+| 3 donanıma hazır | kritik alanların **hepsi `measured`** ve statik tork denetimi geçti |
+
+Kritik alanlar: `links.<link>.length` ve `.mass` (kütle tork denetiminin girdisi), `joints.<eklem>.limits.position`
+ve `.limits.effort` (tork değeri), `axes.<eklem>.motor.type`, `motor.steps_per_rev`, `driver.microstep`,
+`gear_ratio`, `limits.position` (motor), `homing.position` (home/limit anahtarı); `hobby_servo` ekseninde adım/dişli/homing
+yerine `servo.pulse_range` (K6; donanım profilinde henüz saklanmıyor, o zamana kadar "eksik" görünür).
+**Tork denetimi:** her eklem için, o eklemden sonraki tüm kütleler geometrinin izin verdiği en uzak noktada
+(kol yatay, tam açık, eksen yönü ne olursa olsun) × g; `effort`'u aşarsa donanıma hazır değildir. Bilerek
+fazla tahmin eder, eksik tahmin edemez.
+
+```python
+from robot_core.maturity import load_maturity, gate
+m = load_maturity(PROFILE_PATH, HARDWARE_PATH, QUALITY_PATH)   # m.name, m.missing_fields, m.gaps
+gate('sim', m).open      # simülasyona hazırsa True (eksik donanım bilgisi engellemez)
+gate('real', m)          # .open, .reasons ("donanıma hazır değil" + eksik alanlar), .missing
+```
+**Gerçek kapı:** seviye 3 **ve** yürütmede yol boyunca kutu denetimi (F4b) şart. F4b bitene kadar kapı hiçbir
+profille açılmaz (`maturity.F4B_DONE = False`; onu `True` yapmak F4b'yi bitiren PR'ın işidir). Kapıyı Robot API'ye /
+`mode: real`'e bağlamak ve Hub sihirbazı bu PR'da **yoktur**.
+
 ## Bu aşamada olmayanlar
 Takım kütüphanesi (Q2), Hub/Robot API'de takım seçimi ve çalışma zamanı değişimi (Q3), sensörlerin URDF/SDF/Gazebo'ya yazılması (P1), takım kütlesinin tork denetimine girmesi (K7);
 Paralel/kapalı çevrim, mimic, prizmatik eklem; IK çözücü seçimi; launch/RViz üretimi; firmware kaynak kodu ve
 ROS köprü düğümü (B2/B3), dönüşümün çalışma zamanında köprüye bağlanması; profilin çalışma zamanında okunması (`profile/` CMake ile kurulmuyor, ilk tüketici gelince);
-UI'dan düzenleme.
+UI'dan düzenleme; kapının API/`mode: real`'e bağlanması ve Hub profil sihirbazı, değişiklik günlüğü (J5 sonraki PR'lar).
