@@ -13,6 +13,7 @@ Not generated (stay hand-written): the xacro wrapper (``world``/mount joint, Gaz
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -39,6 +40,7 @@ def output_paths(robot: str) -> Dict[str, str]:
         'initial_positions': f'{cfg}/initial_positions.yaml',
         'ros2_controllers': f'{cfg}/ros2_controllers.yaml',
         'moveit_controllers': f'{cfg}/moveit_controllers.yaml',
+        'view_model': 'robot_description/profile/generated/view_model.json',
     }
 
 
@@ -247,6 +249,69 @@ def gen_moveit_controllers(p: Profile) -> str:
             '    action_ns: follow_joint_trajectory\n    default: true\n')
 
 
+# ---- view model (L9a) -------------------------------------------------------------------------
+VIEW_MODEL_VERSION = 1
+
+
+def _n(value: float) -> float:
+    return 0.0 if value == 0 else float(value)           # never "-0.0"
+
+
+def _nums(values: Sequence[float]) -> list:
+    return [_n(v) for v in values]
+
+
+def _shape_json(kind: str, dims: Sequence[float]) -> Dict[str, object]:
+    if kind == 'cylinder':
+        return {'type': 'cylinder', 'radius': _n(dims[0]), 'length': _n(dims[1])}
+    if kind == 'box':
+        return {'type': 'box', 'size': _nums(dims)}
+    return {'type': 'sphere', 'radius': _n(dims[0])}
+
+
+def gen_view_model(p: Profile) -> str:
+    """Read-only robot model for a viewer (Hub Canvas 2D, L9c). Only what is needed to DRAW the
+    robot: joints, link primitives (box/cylinder/sphere, no meshes), TCP, tool, safe box, poses.
+    Single source = the profile; documented in docs/ROBOT_PROFILE.md."""
+    joint_of = {j.child: j.name for j in p.joints}
+    tool = p.tool
+    model = {
+        '_generated': HEADER.format(profile=PROFILE_REL),
+        'view_model_version': VIEW_MODEL_VERSION,
+        'robot': p.robot,
+        'units': {'length': 'm', 'angle': 'rad'},
+        'frames': ('world == base_link (fixed mount, no offset); serial chain; in the zero '
+                   'configuration every frame is aligned with the base. Child frame = parent '
+                   'frame * Translate(joint.origin) * Rotate(joint.axis, q). Link geometry sits '
+                   'in its own link frame at `origin`; cylinders and the box z axis run along '
+                   'the link z axis.'),
+        'root': p.links[0].name,
+        'joints': [{
+            'name': j.name, 'parent': j.parent, 'child': j.child,
+            'origin': _nums(j.origin), 'axis': _nums(j.axis),
+            'limit': {'lower': _n(j.lower), 'upper': _n(j.upper), 'velocity': _n(j.velocity)},
+        } for j in p.joints],
+        'links': [{
+            'name': link.name, 'joint': joint_of.get(link.name),
+            'shape': _shape_json(link.shape, link.dims), 'origin': _nums(link.origin),
+            'material': link.material, 'color': _nums(p.materials[link.material]),
+        } for link in p.links],
+        'tcp': {'offset': _nums(p.tcp.offset), 'wpr': _nums(p.tcp.wpr),
+                'frame': p.tip_link},
+        'tool': None if tool is None else {
+            'name': tool.name, 'link': tool.link_name, 'parent': p.tip_link,
+            'material': tool.material, 'color': _nums(p.materials[tool.material]),
+            'shapes': [dict(_shape_json(sh.kind, sh.dims), origin=_nums(sh.origin),
+                            wpr=_nums(sh.wpr)) for sh in tool.shapes],
+        },
+        'safe_box': {'frame': p.safety.zone.frame,
+                     **{a: _nums((lo, hi)) for a, lo, hi in zip(
+                         'xyz', p.safety.zone.lower, p.safety.zone.upper)}},
+        'named_poses': {name: _nums(values) for name, values in p.named_poses.items()},
+    }
+    return json.dumps(model, indent=2, ensure_ascii=False) + '\n'
+
+
 # ---- SRDF -------------------------------------------------------------------------------------
 def gen_srdf(p: Profile) -> str:
     group = p.planning_group
@@ -282,7 +347,7 @@ GENERATORS = {
     'urdf': gen_urdf, 'ros2_control_xacro': gen_ros2_control_xacro,
     'joint_limits': gen_joint_limits, 'srdf': gen_srdf, 'safe_zone': gen_safe_zone,
     'initial_positions': gen_initial_positions, 'ros2_controllers': gen_ros2_controllers,
-    'moveit_controllers': gen_moveit_controllers,
+    'moveit_controllers': gen_moveit_controllers, 'view_model': gen_view_model,
 }
 
 
