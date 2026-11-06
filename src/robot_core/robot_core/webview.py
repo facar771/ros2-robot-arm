@@ -54,6 +54,7 @@ from robot_core.cameraapi import CameraApi, CameraDenied
 from robot_core.frames import FrameError, FrameStore
 from robot_core.jobs import BadTimeout, JobBusy, JobManager, JobNotFound, check_timeout
 from robot_core.jogapi import JogController, JogDenied, frames_document, replace_frames
+from robot_core.modelapi import ModelApi, ModelUnavailable
 from robot_core.perception import Intrinsics, Transform
 from robot_core.supervisor import API_VERSION, MOVING_SPEED, EStopped, Supervisor, max_speed
 from robot_core.viz import OverlayItem, box_to_pixels, depth_to_rgb, draw_overlay, encode_png
@@ -236,6 +237,7 @@ JOG_PATH = '/api/jog'
 FRAMES_PATH = '/api/frames'
 WAYPOINTS_PATH = '/api/waypoints'
 CAMERA_PATH = '/api/camera'
+MODEL_PATH = '/api/model'
 RECORD_PATH = '/api/waypoints/record'
 POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH, RECORD_PATH,
               CAMERA_PATH)
@@ -259,11 +261,13 @@ class WebView:
                  supervisor: Optional[Supervisor] = None, mode: str = 'gazebo',
                  jobs: Optional[JobManager] = None, jog: Optional[JogController] = None,
                  frames: Optional[FrameStore] = None, waypoints: Optional[WaypointApi] = None,
-                 waypoints_error: Optional[str] = None, camera: Optional[CameraApi] = None):
+                 waypoints_error: Optional[str] = None, camera: Optional[CameraApi] = None,
+                 model: Optional[ModelApi] = None):
         self.source = source
         self.jog = jog if jog is not None else (supervisor.jog if supervisor is not None else None)
         self.frames = frames
         self.camera = camera                       # the camera platform API (H4), or None
+        self.model = model                         # read-only view model (L9b), or None
         self.waypoints = waypoints
         self.waypoints_error = waypoints_error     # why the waypoint store is unusable (or None)
         self.commands = commands
@@ -364,6 +368,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path == CAMERA_PATH:
             self._get_camera(head_only)
             return
+        if path == MODEL_PATH:
+            self._get_model(head_only)
+            return
         if path == RECORD_PATH:
             self._not_allowed()               # POST only
             return
@@ -404,6 +411,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(403, {'error': 'nokta ucu kapalı'})
             return None
         return view.waypoints
+
+    def _get_model(self, head_only: bool) -> None:
+        model = self.server.view.model
+        if model is None:
+            self._json(403, {'error': 'model ucu kapalı'})
+            return
+        try:
+            body = model.body()
+        except ModelUnavailable as exc:
+            self._send(503, 'application/json',
+                       json.dumps({'error': f'robot modeli kullanılamıyor: {exc}'}).encode(),
+                       head_only)
+            return
+        self._send(200, 'application/json', body, head_only)
 
     def _get_camera(self, head_only: bool) -> None:
         camera = self.server.view.camera

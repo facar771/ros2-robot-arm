@@ -741,3 +741,19 @@ Mevcut hiçbir uç/alan değişmedi. Hub arayüzü bu PR'ın kapsamı DEĞİL.
 - **Kare yolları değişmedi:** `GET /frame/rgb.png`, `GET /frame/depth.png`. Sorgu dizesi ve kimlik başlıkları yok sayılır, yanıta
   yansıtılmaz, erişim günlüğünde sorgu `?…` ile silinir. Hub yalnız bu iki yolu, GET, sorgusuz, PIN oturumu sunucuda tutarak vekiller.
 - Selftest: `run_selftest gazebo-camera-api` (CI + nightly), `docker compose run --rm selftest-camera-api`.
+
+## Robot modeli: `GET /api/model` (L9b) — Robot API v1'e EKLEMELİ
+
+Hub'daki (L9c) salt-okunur robot görünümü için. `commands:=true` GEREKMEZ (görmek komut vermek değildir); POST/PUT/DELETE `405`.
+Mevcut hiçbir uç/alan değişmedi.
+
+- **Yanıt:** `robot_description/profile/generated/view_model.json` (L9a, şema: `docs/ROBOT_PROFILE.md`) olduğu gibi, yalnız `_` ile başlayan
+  notlar (`_generated`; depo yolu içerir) ÇIKARILMIŞ. Birimler m/rad; `view_model_version` şimdilik `1` (sonraki sürümlerde yalnız alan eklenir).
+  `no-store`; sorgu dizesi ve kimlik başlıkları yok sayılır.
+- **Eklem adları:** `joints[].name`, `/api/state` `joints[].name` ile (robotun URDF/SRDF adları) AYNI sırada eşleşmek zorundadır. Açılışta denetlenir;
+  eşleşmezse uç `503` verir (üretilmiş dosya profille uyumsuz demektir, istemci yanlış eklemi çizerdi).
+- **Dosya** açılışta bir kez okunur (`ROBOT_VIEW_MODEL` ile yol değiştirilebilir; değişiklik için yeniden başlatma). Yok/okunamaz/geçersiz JSON/eksik alan/
+  desteklenmeyen sürüm/ad uyumsuzluğu → `503 {"error": "robot modeli kullanılamıyor: <neden>"}`. Neden metni dosya yolu İÇERMEZ. Robot API yine açılır, başka hiçbir uç etkilenmez.
+- **Acil dur / 423:** bu uç komut yolu değildir; acil dur kilitliyken de `200` döner (donmuş görünümü uyarmak istemcinin işidir, L9c). Hareket uçları `423` vermeye devam eder.
+- Kuruluma girer: `robot_description/CMakeLists.txt` artık `profile/generated/view_model.json` dosyasını `share/robot_description/profile/generated/` altına kurar.
+- Selftest: `run_selftest model` (CI + nightly), `docker compose run --rm selftest-model`.

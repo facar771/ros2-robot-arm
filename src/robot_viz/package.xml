@@ -11,6 +11,7 @@
   <depend>robot_core</depend>
   <depend>robot_controller</depend>
   <depend>robot_data</depend>
+  <depend>robot_description</depend>
   <depend>robot_perception</depend>
   <depend>robot_vision</depend>
   <depend>std_msgs</depend>
