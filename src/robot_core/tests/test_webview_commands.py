@@ -293,7 +293,7 @@ def test_demo_scenario_over_http():
 
         def tool_position(self):
             for call in reversed(self.skills.calls):
-                if call[0] == 'go_to_named_pose':
+                if call[0] in ('go_to_named_pose', 'return_home'):
                     return (0.0, 0.0, 1.24)
                 obj = next(o for o in self.skills.objects if o.label == call[1])
                 return (obj.position[0], obj.position[1], obj.top_z + call[2])

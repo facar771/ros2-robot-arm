@@ -230,7 +230,10 @@ class CommandRunner:
 
     def _dispatch(self, command: Command):
         if command.verb == 'home':
-            r = self._skills.return_home()          # "Eve dön": ready first, then the park move
+            # "Eve dön": ready first, then the park move; a skills object without it (the Hub's
+            # simulator) keeps the plain named pose
+            home = getattr(self._skills, 'return_home', None)
+            r = home() if home else self._skills.go_to_named_pose('home')
             return r.ok, r.message, dict(r.data)
         if command.verb == 'ready':
             r = self._skills.go_to_named_pose('ready')

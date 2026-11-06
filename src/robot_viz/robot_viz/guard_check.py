@@ -51,7 +51,7 @@ SPEED_CAP = 0.3            # park speed, fraction of the 1.0 rad/s joint maximum
 SPEED_SLACK = 1.3          # own measurement over 0.1 s windows may read a bit above the cap
 POSE_TOLERANCE = 0.02      # rad
 STOP_DEADLINE_S = 2.0
-MIN_CHECKS = 17
+MIN_CHECKS = 20
 
 
 def tool_xyz(buffer, tip):
@@ -182,6 +182,22 @@ def run(base: str, node: Node, config, state: JointStateCache, buffer: Buffer,
     tcp = tool_xyz(buffer, config.tip_link)
     record('C home konumu ölçüldü (TF): TCP (0, 0, 1.24)', tcp is not None and abs(tcp[2] - 1.24)
            < 0.02 and abs(tcp[0]) < 0.02, f'TCP {None if tcp is None else np.round(tcp, 3)}')
+
+    # ---- F. the demo scenario's way: from home straight to a Cartesian target inside the box
+    from robot_core.skills import Skills
+    from robot_core.supervisor import EStop, GuardedMotion
+    skills = Skills(cfg, GuardedMotion(motion, EStop(), None, guard), GuardedMotion(
+        motion, EStop(), None, guard), None, zone=load_safety_config().zone)
+    out = skills.return_home()
+    record('F "Eve dön" zaten home\'dayken sorunsuz (hareketsiz başarı)', out.ok and near(home),
+           out.message)
+    out = skills.go_to_position(0.40, -0.10, 0.35)
+    print(f'       home -> go_to_position(0.40, -0.10, 0.35): ok={out.ok} {out.message[:240]}',
+          flush=True)
+    record('F home\'dan kutu içi kartezyen hedefe yaklaşma kuralıyla gidildi', out.ok,
+           out.message[:200])
+    out = skills.return_home()
+    record('F kartezyen hedeften "Eve dön" geçti', out.ok and near(home), out.message[:200])
 
     # ---- D. ready -> home passes
     job, _, _ = run_job('ready')

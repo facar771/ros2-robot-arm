@@ -171,8 +171,8 @@ def test_demo_scenario_command_runs_and_narrates(config, monkeypatch):
     sink = RecordingSink()
     cli, skills, out = _scenario_cli(config, tool, sink)
     cli.execute('demo_scenario')
-    assert [c[0] for c in skills.calls] == ['go_to_named_pose', 'go_above', 'go_above',
-                                            'go_to_named_pose']
+    assert [c[0] for c in skills.calls] == ['return_home', 'go_above', 'go_above',
+                                            'return_home']
     assert any(line.startswith('[1/4]') for line in out) and out[-1].startswith('[+] senaryo')
     assert sink.events[-1][0] == 'scenario_result' and sink.events[-1][1]['ok']
 
