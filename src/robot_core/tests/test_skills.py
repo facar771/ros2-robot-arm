@@ -132,7 +132,8 @@ def test_every_call_emits_a_skill_result_event(parts):
 
 def test_catalog_lists_the_skills_with_documentation():
     catalog = {c['name']: c for c in Skills.catalog()}
-    assert set(catalog) == {'list_objects', 'go_to_named_pose', 'go_to_position', 'go_above'}
+    assert set(catalog) == {'list_objects', 'go_to_named_pose', 'return_home', 'go_to_position',
+                            'go_above'}
     assert all(len(c['description']) > 40 for c in catalog.values())
     assert 'height' in catalog['go_above']['signature']
 

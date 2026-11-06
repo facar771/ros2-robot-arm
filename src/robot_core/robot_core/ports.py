@@ -4,9 +4,16 @@
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Protocol, Tuple
+from typing import Any, Dict, Mapping, Optional, Protocol, Sequence, Tuple
 
-from robot_core.models import BoxObstacle, JointTarget, MotionResult, ObjectInfo, PoseTarget
+from robot_core.models import (
+    BoxObstacle,
+    JointTarget,
+    MotionResult,
+    ObjectInfo,
+    PlanResult,
+    PoseTarget,
+)
 
 
 class MotionPort(Protocol):
@@ -16,6 +23,26 @@ class MotionPort(Protocol):
 class PosePort(Protocol):
     def move_to_pose(self, target: PoseTarget) -> MotionResult:
         """Plan + execute a Cartesian goal for the tool link (inverse kinematics inside MoveIt)."""
+
+
+class PlanningPort(Protocol):
+    """Plan and execute as two separate steps (F4b), so the planned path can be checked against
+    the safe box BEFORE anything moves."""
+
+    def plan_joint(self, target: JointTarget) -> PlanResult: ...
+
+    def plan_pose(self, target: PoseTarget) -> PlanResult: ...
+
+    def execute_plan(self, plan: PlanResult) -> MotionResult:
+        """Execute exactly the trajectory that ``plan_*`` returned (no replanning)."""
+
+    def execute_timed(self, times: Sequence[float], positions: Sequence[Sequence[float]],
+                      velocities: Sequence[Sequence[float]]) -> MotionResult:
+        """Execute a time-parameterised joint trajectory (chain order) as given (park transit)."""
+
+    def states_valid(self, states: Sequence[Sequence[float]]) -> Optional[str]:
+        """Collision check of joint states against the current planning scene: None when all are
+        valid, otherwise why not. Must fail closed (an unreachable service is an answer too)."""
 
 
 class ObjectsPort(Protocol):

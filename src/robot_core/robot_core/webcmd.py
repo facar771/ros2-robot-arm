@@ -30,7 +30,7 @@ from robot_core.errors import hint_for
 from robot_core.models import JointTarget
 from robot_core.ports import EventSink, MotionPort, NullEventSink, ToolPositionPort
 from robot_core.scenario import run_demo_scenario
-from robot_core.skills import Skills
+from robot_core.skills import OWN_CODES, Skills
 from robot_core.supervisor import ESTOP_MESSAGE, EStop, EStopped
 from robot_core.waypointapi import verified_joint_goal
 from robot_core.waypoints import WaypointError, WaypointStore, check_name
@@ -230,7 +230,7 @@ class CommandRunner:
 
     def _dispatch(self, command: Command):
         if command.verb == 'home':
-            r = self._skills.go_to_named_pose('home')
+            r = self._skills.return_home()          # "Eve dön": ready first, then the park move
             return r.ok, r.message, dict(r.data)
         if command.verb == 'ready':
             r = self._skills.go_to_named_pose('ready')
@@ -243,10 +243,12 @@ class CommandRunner:
                 return False, f'{why}; robot hareket etmedi', {'waypoint': command.target}
             if self.joint_motion is None:
                 return False, 'hareket katmanı bağlı değil, robot hareket etmedi', {}
-            m = self.joint_motion.move_to(JointTarget(tuple(q), command.target))   # MoveIt plans
+            m = self.joint_motion.move_to(JointTarget(tuple(q), command.target))  # check, run
             data = {'waypoint': command.target, 'code': m.code_name}
             if m.ok:
                 return True, f'{command.target} noktasına ulaşıldı', data
+            if m.code_name in OWN_CODES:
+                return False, m.message, data
             hint = hint_for(m.code_name)
             text = f'hareket başarısız ({m.code_name or m.message or "bilinmeyen neden"})'
             text += f': {hint}' if hint else ''

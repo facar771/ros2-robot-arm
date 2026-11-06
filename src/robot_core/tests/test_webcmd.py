@@ -87,7 +87,7 @@ def test_home_objects_and_above_use_the_skills():
         'obj_red_1', 'obj_green_1']
     above = runner.run(parse_command('above green 0.25'))
     assert above.ok and above.data['target'] == pytest.approx([0.40, -0.10, 0.05 + 0.05 + 0.25])
-    assert skills.calls == [('go_to_named_pose', 'home'), ('list_objects',),
+    assert skills.calls == [('return_home',), ('list_objects',),
                             ('go_above', 'green', 0.25)]
 
 
@@ -141,7 +141,7 @@ def test_only_one_command_at_a_time():
     with pytest.raises(Busy) as exc:
         runner.run(parse_command('home'))
     assert 'above red' in str(exc.value)
-    assert ('go_to_named_pose', 'home') not in skills.calls      # the second command never ran
+    assert ('return_home',) not in skills.calls      # the second command never ran
     block.set()
     worker.join(5)
     assert results[0].ok and runner.status()['running'] is False

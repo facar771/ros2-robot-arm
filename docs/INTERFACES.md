@@ -138,8 +138,8 @@ doğrulamasıyla* kanıtlamaz (bunu yalnızca `/api/stop` yapar); `moving` alan�
 ### Güvenli çalışma kutusu ve hız tavanı (`robot_moveit_config/config/safe_zone.yaml`)
 `Skills`, **hedef noktası** kutunun dışında kalan her kartezyen hareketi (`go_to_position`,
 `go_above`) açık hatayla (`code_name: SAFE_ZONE`, "hedef güvenli çalışma kutusunun dışında (z=...,
-izin verilen aralık [...]), robot hareket etmedi") reddeder; robot oynamaz. Yalnızca hedef denetlenir,
-yol MoveIt'in çarpışma denetimindedir; adlandırılmış eklem pozları (`home`) denetlenmez. Varsayılan
+izin verilen aralık [...]), robot hareket etmedi") reddeder; robot oynamaz. Hedefe ek olarak **yol da**
+denetlenir (F4b, aşağıda); yolun çarpışma denetimi MoveIt'indir. Varsayılan
 kutu (m, world): x [0.05, 0.75], y [-0.5, 0.5], z [0.02, 0.70]; `max_velocity_scale` (0.5) MoveIt'e
 istenebilecek hız/ivme ölçeğinin üst sınırıdır. Dosya eksik/bozuksa `web_view` ve `cli_moveit`
 **başlamaz** ("sınırsız" varsayılmaz). Yol `ROBOT_SAFETY` ortam değişkeniyle değiştirilir. Geçerli
@@ -292,7 +292,7 @@ nokta, virgül, alt çizgi dışındaki karakter, ≤ 64 karakter); büyük/kü�
 
 | Komut | Anlam |
 |---|---|
-| `home` | `Skills.go_to_named_pose('home')` |
+| `home` | `Skills.return_home()` ("Eve dön": ready'de değilse önce ready, sonra yavaş park geçişi; F4b) |
 | `objects` | `Skills.list_objects()`; `data.objects[]`: `name`, `label`, `position`, `size` |
 | `above <red\|green\|blue> [yükseklik_m]` | `Skills.go_above(renk, yükseklik)`, yükseklik 0-0.5 (varsayılan 0.10; `0,25` de olur); `kırmızı`, `yeşil`, `mavi` takma adları; `data.target` [x,y,z] |
 | `demo_scenario` | `home` → `above green 0.25` → `above red 0.35` → `home`; her adımdan sonra TF ile uç konum ölçülür: hedefe ≤ 1.5 cm, ikinci `home` birincisine ≤ 3 cm (kol yukarıda ~1 cm sallanır); ilk başarısız/doğrulanamayan adımda durur; `data.steps[]`: `step`, `say`, `ok`, `message`, `target`, `measured`, `error_cm` |
@@ -539,7 +539,8 @@ Birimler metre/radyan, konumlar `world` çerçevesinde (taban orijinde, z yukar�
 | Beceri | Açıklama |
 |---|---|
 | `list_objects()` | Bilinen nesneler: ad (`obj_red_1`), renk, merkez, boyut |
-| `go_to_named_pose(name)` | Robot tanımındaki hazır poz (`home`, `cnc`, ...) |
+| `go_to_named_pose(name)` | Robot tanımındaki hazır poz (`home`, `cnc`, ...); yol kutu denetimli, `home` yalnız `ready`'den (park geçişi) |
+| `return_home()` | "Eve dön": ready'de değilse önce ready'ye (kutu denetimli), sonra ready → home park geçişi |
 | `go_to_position(x, y, z)` | Aleti (x,y,z)'ye götür, alet aşağı bakar |
 | `go_above(object_name, height=0.10)` | Aleti nesnenin üst yüzeyinin `height` m üstüne götür; ad ya da benzersiz renk (`red`) |
 
@@ -716,7 +717,7 @@ yabancı Origin / `Sec-Fetch-Site` reddi; gövde ≤ 1 KiB).
   denetimsiz eklem hedefi YOKTUR. Nokta, gidişten hemen önce eklem limitlerine ve güvenli kutuya karşı **yeniden**
   denetlenir (kutu/profil sonradan daralmış olabilir). Acil dur `423`, iş/jog dışlaması `409` (`state: jogging`),
   iptal ve zaman aşımı diğer işlerle aynıdır; MoveIt reddederse `failed` + neden, "Robot hareket etmedi.".
-- **Bilinen açık (F4):** güvenli kutu yalnız HEDEF noktada denetlenir; eklem uzayı yolunda iki kutu-içi nokta arasında TCP kutudan çıkabilir (`go_to_position` ve `go_above` için de geçerli). Bu belge kutunun yol boyunca garanti edildiğini SÖYLEMEZ. Yalnız simülasyon için kabul edilir, `mode: real` bu kapatılmadan açılmaz. Kutu yalnız uç noktayı (TCP) sınırlar, dirsek ve bilek kutu dışına çıkabilir.
+- **Güvenli kutu yol boyunca denetlenir (F4b):** bkz. aşağıdaki "Yol boyunca güvenli kutu denetimi" bölümü; `goto_waypoint` planlanır, **planın kendisi** kutuya karşı doğrulanır, sonra çalışır.
 - Durum belgesi (`/api/state`) değişmedi.
 
 ## Kamera platformu Robot API'de (H4): `/api/camera` — Robot API v1'e EKLEMELİ
@@ -778,3 +779,48 @@ Karar (Robot_1, L8): küre, çerçeve listesinde `type` alanıyla eklenir; `fram
   Artım ölçülen açıda kapalı döngüdür; bitince durum `done` (kiralama süresi kadar görünür kalır).
 - **`GET /api/state` `jog.sphere`:** `{name, azimuth_deg, elevation_deg, radius, …}`.
 - Selftest: `run_selftest sphere` (CI + nightly), `docker compose run --rm selftest-sphere`.
+
+## Yol boyunca güvenli kutu denetimi: `PathGuard` / `GuardedMotion` (F4b) — Robot API v1'e EKLEMELİ (uç yok, davranış)
+
+Kutu artık yalnız hedef noktada değil, **yürütülecek yolun her örneğinde** denetlenir. Yeni uç, alan ya da komut YOKTUR;
+mevcut komutların reddetme nedenleri ve `home`'un anlamı (aşağıda) değişir.
+
+- **Tek ortak yer:** `robot_core.pathguard.PathGuard` (`GuardedMotion` içinden). `goto_waypoint`, `go_to_position`, `go_above`
+  ve adlandırılmış pozlar (`ready`, `home`, ...) AYNI koddan geçer. Sıra: **planla** (MoveIt `plan_only`, hareket yok) →
+  **doğrula** (`pathcheck.check_path`: ardışık plan noktaları arası eklem uzayında örneklenir, her örnekte FK ile TCP kutuya
+  karşı denetlenir) → **çalıştır** (doğrulanan planın kendisi, MoveIt `execute_trajectory`; yeniden planlama yok).
+- **Reddedilen plan:** hareket BAŞLAMAZ. En çok **3 plan** (ilki dahil) denenir (planlayıcı rastgeledir); hiçbiri geçmezse
+  `code_name: PATH_ZONE` ve mesaj ihlal noktasını söyler: "yol N. parçasında %P noktasında TCP (x, y, z) m güvenli kutunun
+  dışında: x üst sınırını D mm aşıyor; hareket başlamaz … 3 planın hepsi güvenli kutudan çıkıyor, hareket başlamadı (kutu
+  genişletilmedi)". Kutu **sessizce genişletilmez**, yol onarılmaz. MoveIt'in kendi planlama hatası (`PLANNING_FAILED` vb.)
+  aynen iletilir, yeniden planlanmaz.
+- **Başlangıç kutunun dışındaysa** (örn. `home`): yalnız kutuya **yaklaşırken** (uzaklık azalıyor) izin vardır, kutuya girdikten
+  sonra yol tamamen içeride kalmalıdır (`home → ready` bu yüzden geçer; `ready → cnc/pc/dik` reddedilir).
+- **Plan eskirse çalışmaz:** planın ilk noktası robotun ölçülen eklem durumundan > 0,05 rad farklıysa ya da eklem durumu
+  okunamıyorsa hareket başlamaz. **ACİL DUR ve iptal** hem planlamadan önce hem çalıştırmadan hemen önce sorulur; çalışan hedef
+  acil durda iptal edilir (değişmedi). Çarpışma denetimi MoveIt'te aynen kalır.
+- **Park geçişi (tek muafiyet, `safe_zone.park.yaml`):** `home` kutunun dışındadır (TCP 1,24 m yükseklikte). **Yalnız**
+  `go_to_named_pose` ile, **bir ucu `ready` olan** harekette: `ready → home` ve `home → ready`. MoveIt kullanılmaz: düz eklem
+  enterpolasyonu (beşinci derece düzgün hız profili; tüm eklemler aynı skaler profili izler, yani konum ve hızlar hep doğruya
+  paraleldir, aradaki spline da doğrunun üstünde kalır), hız ve ivme azami değerin **%30'u** (`max_velocity_fraction`),
+  `check_park_move` ile park zarfına karşı doğrulanır ve doğru boyunca ≤ 0,05 rad aralıkla `/check_state_validity` ile
+  **çarpışma denetimi** yapılır (servis yoksa ya da yanıtsızsa reddedilir). Başlangıç `ready`'ye en çok 0,02 rad yakın olmalıdır,
+  değilse `code_name: PARK_REJECTED` ve "robot 'ready' konumunda değil … Önce ready'ye gidin ya da \"Eve dön\" kullanın".
+  Profildeki `home`/`ready` doğrulanmış eklem değerinden farklıysa poz muaf sayılmaz. Jog, `goto_waypoint`, `go_to_position`,
+  `go_above` ve ajan park zarfını **kullanamaz** (aynı adı taşıyan bir nokta bile iç kutuya tabidir).
+- **`home` komutu = "Eve dön" makrosu** (`Skills.return_home`; Hub'ın "Eve dön" düğmesi, ajanın `go_home`'u): robot `ready`'de değilse
+  önce `ready`'ye (normal, kutu denetimli), sonra `ready → home` park geçişi. Zaten home'daysa hareketsiz başarı. `ready`
+  yoluna çıkılamıyorsa home'a geçilmez ve mesaj söyler. `ready` komutu: `home`'dayken park geçişidir, başka yerden normal bir
+  kutu denetimli harekettir. Park dosyası yüklenemezse `web_view` yine açılır (kutu denetimi açık kalır), yalnız park geçişi ve
+  "Eve dön" `PARK_REJECTED` verir ve nedeni söyler; hiçbir yol denetimsiz çalışmaz.
+- **Kapsam ve sınırlar (açıkça):** kutu yalnız uç noktayı (TCP) sınırlar; dirsek ve bilek kutu dışına çıkabilir (ayrı karar).
+  Denetim, plan noktaları arasının **düz eklem enterpolasyonu** olduğunu varsayar; yürütücünün gerçek spline'ı plan noktaları arasında
+  (varsayılan ~0,1 s aralık) bundan sapabilir. Bu sapma `mock` selftest'te park geçişi için ölçüldü (TCP park zarfında), MoveIt
+  planları için Gazebo'da ölçülmedi. Duvara ≤ 0,05 mm'den yakın yollarda `check_path`'in belgelenmiş ≤ 0,05 mm kaçak payı vardır.
+- **Denetimsiz kalan yol (geliştirici aracı):** ham `MoveItMotion` kullanan araçlar — `robot_controller` içindeki `scene_check`,
+  `selftest`, `pose_check`, `cli_moveit` (örn. `scene_check` `home → cnc`) — `PathGuard` kullanmaz; kutuyu yol boyunca DENETLEMEZ
+  (hedef kutusu `Skills` içinde yine geçerlidir). Bunlar Robot API üzerinden gelmez ve ajanın/Hub'ın erişiminde değildir.
+  Üretim yolu (`web_view` → `GuardedMotion`) her zaman `PathGuard`'dan geçer.
+- Selftest: `run_selftest pathguard`, `docker compose run --rm selftest-pathguard` (`guard_check`: park hızı ve zarfı ölçülür,
+  kutu dışına çıkan iki içeride nokta reddedilir ve kol kıpırdamaz, rastgele nokta → `go_to_named_pose('home')` reddedilir,
+  `home` komutu rastgele noktadan eve döner, `ready → home` geçer, park geçişinin ortasında acil dur ölçülür).

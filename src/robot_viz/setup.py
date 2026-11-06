@@ -31,6 +31,7 @@ setup(
             'camera_api_check = robot_viz.camera_api_check:main',
             'model_check = robot_viz.model_check:main',
             'sphere_check = robot_viz.sphere_check:main',
+            'guard_check = robot_viz.guard_check:main',
             'hw_check = robot_viz.hw_check:main',
         ],
     },

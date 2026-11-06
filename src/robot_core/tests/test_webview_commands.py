@@ -62,7 +62,7 @@ def test_home(server):
     status, headers, body = post(view, 'home')
     assert status == 200 and body['ok'] is True and body['command'] == 'home'
     assert body['duration_s'] >= 0 and 'no-store' in headers['Cache-Control']
-    assert skills.calls == [('go_to_named_pose', 'home')]
+    assert skills.calls == [('return_home',)]
 
 
 def test_objects(server):
@@ -210,7 +210,7 @@ def test_server_survives_all_of_the_above(server):
     post(view, raw=b'garbage')
     post(view, 'home', headers={'Content-Type': 'text/plain'})
     assert post(view, 'home')[0] == 200
-    assert skills.calls == [('go_to_named_pose', 'home')]
+    assert skills.calls == [('return_home',)]
 
 
 # ---- valid command the robot cannot do, internal errors, busy ----------------------------------
@@ -260,7 +260,7 @@ def test_second_command_while_one_runs_is_409_and_state_shows_it_live():
         assert s['command']['log'] == ['> above green 0.25']
         status, _, body = post(view, 'home')
         assert status == 409 and 'above green' in body['error']
-        assert ('go_to_named_pose', 'home') not in skills.calls
+        assert ('return_home',) not in skills.calls
         block.set()
         worker.join(5)
         assert first[0][0] == 200

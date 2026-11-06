@@ -55,6 +55,9 @@
 # sphere        = mock stack + the browser with commands; runs only sphere_check (L8: sphere frames over the
 #                 Robot API: reach range, PUT/old-client rules, goto a pose on the sphere, azimuth/elevation/r
 #                 increments + hold measured with TF, off-sphere refusal + align, e-stop mid sphere-jog)
+# pathguard     = mock stack + the browser with commands; runs only guard_check (F4b: park transit home<->ready
+#                 straight at <= 30 % speed, the safe box ALONG a planned path rejects a path that leaves it,
+#                 strict go_to_named_pose, "Eve dön" macro, e-stop mid park move; positions from TF/joint samples)
 # Works inside the `ci` image (workspace already built) and in `dev` after `colcon build`.
 # NOTE: no `set -u`: ROS setup scripts reference unset variables (e.g. COLCON_TRACE).
 set -o pipefail
@@ -94,6 +97,11 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
     sphere) LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
+    # pathguard is NOT in the usage list below on purpose: F4b did not touch the CI files, and
+    # test_repeat_selftest requires every listed mode in ci.yml AND nightly.yml. Add it to the usage
+    # list, ci.yml and nightly.yml together.
+    pathguard) LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false)
+                EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
     gazebo-camera-api) LAUNCH=(ros2 launch robot_vision_ros tracking.launch.py manual:=true tracker:=false)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=gazebo); CTRL_TIMEOUT=240 ;;
     hw) LAUNCH=(ros2 launch robot_hw_bridge hw_stack.launch.py bridge_host:=127.0.0.1 bridge_port:=8771 loop_stall_ms:=300 robot_api_url:=http://127.0.0.1:8080)
@@ -106,7 +114,7 @@ source "/opt/ros/${ROS_DISTRO}/setup.bash"
 source /workspace/install/setup.bash
 
 # jog modes keep the taught frames in a throw-away data directory (never in the repo)
-case "$MODE" in jog|gazebo-jog|waypoints|gazebo-waypoints|gazebo-camera-api|sphere) export ROBOT_DATA_DIR=$(mktemp -d /tmp/jog_data.XXXXXX) ;; esac
+case "$MODE" in jog|gazebo-jog|waypoints|gazebo-waypoints|gazebo-camera-api|sphere|pathguard) export ROBOT_DATA_DIR=$(mktemp -d /tmp/jog_data.XXXXXX) ;; esac
 
 LOG=/tmp/sim_launch.log
 CHECK_LOG=/tmp/selftest_check.log      # what the check printed (the annotation reads this)
@@ -217,6 +225,8 @@ elif [ "$MODE" = "jog" ] || [ "$MODE" = "gazebo-jog" ]; then
     timeout 900 ros2 run robot_viz jog_check --plant "$PLANT" 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "waypoints" ] || [ "$MODE" = "gazebo-waypoints" ]; then
     timeout 900 ros2 run robot_viz waypoint_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+elif [ "$MODE" = "pathguard" ]; then
+    timeout 900 ros2 run robot_viz guard_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "sphere" ]; then
     timeout 900 ros2 run robot_viz sphere_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "model" ]; then
