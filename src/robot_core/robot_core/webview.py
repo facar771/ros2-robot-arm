@@ -53,9 +53,16 @@ from robot_core.cameraapi import MAX_BODY as MAX_CAMERA_BODY
 from robot_core.cameraapi import CameraApi, CameraDenied
 from robot_core.frames import FrameError, FrameStore
 from robot_core.jobs import BadTimeout, JobBusy, JobManager, JobNotFound, check_timeout
-from robot_core.jogapi import JogController, JogDenied, frames_document, replace_frames
+from robot_core.jogapi import (
+    JogController,
+    JogDenied,
+    frames_document,
+    replace_frames,
+    sphere_reach,
+)
 from robot_core.modelapi import ModelApi, ModelUnavailable
 from robot_core.perception import Intrinsics, Transform
+from robot_core.spheres import SphereStore
 from robot_core.supervisor import API_VERSION, MOVING_SPEED, EStopped, Supervisor, max_speed
 from robot_core.viz import OverlayItem, box_to_pixels, depth_to_rgb, draw_overlay, encode_png
 from robot_core.waypointapi import (
@@ -235,14 +242,16 @@ RESET_PATH = '/api/reset'
 JOBS_PATH = '/api/jobs'
 JOG_PATH = '/api/jog'
 FRAMES_PATH = '/api/frames'
+REACH_PATH = '/api/frames/reach'
 WAYPOINTS_PATH = '/api/waypoints'
 CAMERA_PATH = '/api/camera'
 MODEL_PATH = '/api/model'
 RECORD_PATH = '/api/waypoints/record'
 POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH, RECORD_PATH,
-              CAMERA_PATH)
+              CAMERA_PATH, REACH_PATH)
 _WAYPOINT_PATH = re.compile(r'^/api/waypoints/([^/]{1,64})$')
 MAX_FRAMES_BODY = 8192
+MAX_REACH_BODY = 512
 _JOB_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})$')
 _CANCEL_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})/cancel$')
 MAX_BODY = 512
@@ -262,12 +271,15 @@ class WebView:
                  jobs: Optional[JobManager] = None, jog: Optional[JogController] = None,
                  frames: Optional[FrameStore] = None, waypoints: Optional[WaypointApi] = None,
                  waypoints_error: Optional[str] = None, camera: Optional[CameraApi] = None,
-                 model: Optional[ModelApi] = None):
+                 model: Optional[ModelApi] = None, spheres: Optional[SphereStore] = None,
+                 spheres_error: Optional[str] = None):
         self.source = source
         self.jog = jog if jog is not None else (supervisor.jog if supervisor is not None else None)
         self.frames = frames
         self.camera = camera                       # the camera platform API (H4), or None
         self.model = model                         # read-only view model (L9b), or None
+        self.spheres = spheres                     # sphere frames (L8), or None
+        self.spheres_error = spheres_error         # why they are unusable (corrupt file)
         self.waypoints = waypoints
         self.waypoints_error = waypoints_error     # why the waypoint store is unusable (or None)
         self.commands = commands
@@ -356,7 +368,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, 'application/json', b'{"error": "host izinli degil"}', head_only)
             return
         path = urlsplit(self.path).path
-        if path in (COMMAND_PATH, STOP_PATH, RESET_PATH):
+        if path in (COMMAND_PATH, STOP_PATH, RESET_PATH, REACH_PATH):
             self._not_allowed()               # POST only
             return
         if path == JOBS_PATH or _JOB_PATH.match(path):
@@ -398,7 +410,7 @@ class _Handler(BaseHTTPRequestHandler):
             if view.frames is None:
                 self._send(403, 'application/json', b'{"error": "cerceve ucu kapali"}', head_only)
                 return
-            payload = frames_document(view.frames)
+            payload = frames_document(view.frames, view.spheres, view.spheres_error)
         self._send(200, 'application/json', json.dumps(payload).encode(), head_only)
 
     def _waypoint_api(self) -> Optional[WaypointApi]:
@@ -483,6 +495,8 @@ class _Handler(BaseHTTPRequestHandler):
             allow, why = 'GET, HEAD, POST', 'GET (liste) ya da POST (iş başlat)'
         elif path == JOG_PATH:
             allow, why = 'GET, HEAD, POST', 'GET (durum) ya da POST (jog komutu)'
+        elif path == REACH_PATH:
+            allow, why = 'POST', 'bu uç noktaya yalnızca POST yapılır'
         elif path == FRAMES_PATH:
             allow, why = 'GET, HEAD, PUT', 'GET (liste) ya da PUT (tüm listeyi değiştir)'
         elif path == CAMERA_PATH:
@@ -575,6 +589,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_jog(runner)
         elif path == CAMERA_PATH:
             self._post_camera(runner)
+        elif path == REACH_PATH:
+            self._post_reach(runner)
         elif path == RECORD_PATH:
             self._post_record(runner)
         elif cancel:
@@ -706,6 +722,20 @@ class _Handler(BaseHTTPRequestHandler):
         except JogDenied as exc:
             self._json(exc.status, {'ok': False, 'error': exc.message, **exc.extra})
 
+    def _post_reach(self, runner: CommandRunner) -> None:
+        view = self.server.view
+        if view.jog is None or view.spheres is None:
+            self._json(403, {'error': 'küre çerçevesi bu sunucuda kapalı'
+                             + (f': {view.spheres_error}' if view.spheres_error else '')})
+            return
+        body = self._read_json_body(runner, MAX_REACH_BODY)
+        if body is _RESPONDED:
+            return
+        try:
+            self._json(200, sphere_reach(view.jog, body))
+        except JogDenied as exc:
+            self._json(exc.status, {'ok': False, 'error': exc.message, **exc.extra})
+
     def _post_camera(self, runner: CommandRunner) -> None:
         camera = self.server.view.camera
         if camera is None:
@@ -787,7 +817,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(409, {'error': 'jog etkinken çerçeve listesi değiştirilemez'})
             return
         try:
-            self._json(200, replace_frames(view.frames, body, frames_guard(view.waypoints)))
+            self._json(200, replace_frames(view.frames, body, frames_guard(view.waypoints),
+                                           view.spheres, view.spheres_error))
         except FrameInUse as exc:
             self._json(409, {'error': str(exc)})
         except FrameError as exc:

@@ -757,3 +757,24 @@ Mevcut hiçbir uç/alan değişmedi.
 - **Acil dur / 423:** bu uç komut yolu değildir; acil dur kilitliyken de `200` döner (donmuş görünümü uyarmak istemcinin işidir, L9c). Hareket uçları `423` vermeye devam eder.
 - Kuruluma girer: `robot_description/CMakeLists.txt` artık `profile/generated/view_model.json` dosyasını `share/robot_description/profile/generated/` altına kurar.
 - Selftest: `run_selftest model` (CI + nightly), `docker compose run --rm selftest-model`.
+
+## Küresel çerçeve: `/api/frames` `type: sphere` + erişim + jog (L8) — Robot API v1'e EKLEMELİ
+
+Karar (Robot_1, L8): küre, çerçeve listesinde `type` alanıyla eklenir; `frames_version` **1 KALIR**. Hub sihirbazı bu PR'da YOK (Robot_4).
+
+- **`GET /api/frames`** eklemeler: `types: ["user", "sphere"]` (okuyucunun bildiği türler), her kullanıcı çerçevesinde `type: "user"` (yoksa varsayılan
+  `user`; mevcut kayıtlar aynen geçerli), `spheres: [{type: "sphere", name, center: [x,y,z], radius, tool_axis, …}]`, `max_spheres`, `spheres_error`
+  (küre dosyası bozuksa neden; yalnız küreler kapanır, çerçeveler ve jog etkilenmez).
+- **`PUT /api/frames`:** `spheres` anahtarı YOKSA küreler **korunur** (eski Hub yalnız `frames` geri yazar; küreleri silmesi engellenir). Anahtar varsa liste
+  tümüyle değiştirilir. **Bilinmeyen `type` sessizce atlanmaz: `400` ve ad/tür yanıtta**, hiçbir şey yazılmaz (atlansaydı sonraki yazma çerçeveyi silerdi).
+  Geçersiz merkez/yarıçap/ad/yinelenen ad → `400`. Jog sürerken `409`, acil durda yine yazılabilir (önceki davranış).
+- **Saklama (Robot_2'den istek):** küreler `frames.yaml`'a DEĞİL, yanındaki `spheres.yaml`'a (`spheres_version: 1`) yazılır; FrameStore'a dokunulmadı.
+  `frames.yaml` bayt bayt eski biçimde kalır. İki dosyanın yazımı birlikte atomik DEĞİL.
+- **`POST /api/frames/reach`** `{center:[x,y,z], radius, tool_axis?}` → erişim aralığı: `reachable`, `elevation_range_deg`, azimut aralıkları, kaba `grid`
+  (15° azimut × 10° yükselme), `summary`. IK + kutu + eklem sınırı + tekillik; **çarpışma modeli yok**. `409` jog/iş sürerken, `423` acil durda, `413` büyük gövde.
+- **`POST /api/jog`** (`frame` = küre adı): `twist` **3 sayı** `[azimut, yükselme, r]` (rad/s, rad/s, m/s), `increment {axis: 0|1|2, amount: ±0.1|1|10}`
+  (azimut°, yükselme°, r mm), ya da `align: true` (TCP'yi küreye getirir ve merkeze baktırır). TCP küreden >10 mm / bakış >0.1 rad saptıysa durum `tracking`
+  ("önce hizalayın"), kol kıpırdamaz. Yükselme tavanı 85°. `hold` ve `align` `hold_enabled` kapısına tabidir (gerçek modda kapalı → yalnız artım).
+  Artım ölçülen açıda kapalı döngüdür; bitince durum `done` (kiralama süresi kadar görünür kalır).
+- **`GET /api/state` `jog.sphere`:** `{name, azimuth_deg, elevation_deg, radius, …}`.
+- Selftest: `run_selftest sphere` (CI + nightly), `docker compose run --rm selftest-sphere`.
