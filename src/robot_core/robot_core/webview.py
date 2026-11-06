@@ -49,6 +49,8 @@ from urllib.parse import urlsplit
 
 import numpy as np
 
+from robot_core.cameraapi import MAX_BODY as MAX_CAMERA_BODY
+from robot_core.cameraapi import CameraApi, CameraDenied
 from robot_core.frames import FrameError, FrameStore
 from robot_core.jobs import BadTimeout, JobBusy, JobManager, JobNotFound, check_timeout
 from robot_core.jogapi import JogController, JogDenied, frames_document, replace_frames
@@ -233,8 +235,10 @@ JOBS_PATH = '/api/jobs'
 JOG_PATH = '/api/jog'
 FRAMES_PATH = '/api/frames'
 WAYPOINTS_PATH = '/api/waypoints'
+CAMERA_PATH = '/api/camera'
 RECORD_PATH = '/api/waypoints/record'
-POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH, RECORD_PATH)
+POST_PATHS = (COMMAND_PATH, STOP_PATH, RESET_PATH, JOBS_PATH, JOG_PATH, RECORD_PATH,
+              CAMERA_PATH)
 _WAYPOINT_PATH = re.compile(r'^/api/waypoints/([^/]{1,64})$')
 MAX_FRAMES_BODY = 8192
 _JOB_PATH = re.compile(r'^/api/jobs/(j[0-9]{1,9})$')
@@ -255,10 +259,11 @@ class WebView:
                  supervisor: Optional[Supervisor] = None, mode: str = 'gazebo',
                  jobs: Optional[JobManager] = None, jog: Optional[JogController] = None,
                  frames: Optional[FrameStore] = None, waypoints: Optional[WaypointApi] = None,
-                 waypoints_error: Optional[str] = None):
+                 waypoints_error: Optional[str] = None, camera: Optional[CameraApi] = None):
         self.source = source
         self.jog = jog if jog is not None else (supervisor.jog if supervisor is not None else None)
         self.frames = frames
+        self.camera = camera                       # the camera platform API (H4), or None
         self.waypoints = waypoints
         self.waypoints_error = waypoints_error     # why the waypoint store is unusable (or None)
         self.commands = commands
@@ -356,6 +361,9 @@ class _Handler(BaseHTTPRequestHandler):
         if path in (JOG_PATH, FRAMES_PATH):
             self._get_jog_or_frames(path, head_only)
             return
+        if path == CAMERA_PATH:
+            self._get_camera(head_only)
+            return
         if path == RECORD_PATH:
             self._not_allowed()               # POST only
             return
@@ -396,6 +404,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(403, {'error': 'nokta ucu kapalı'})
             return None
         return view.waypoints
+
+    def _get_camera(self, head_only: bool) -> None:
+        camera = self.server.view.camera
+        if camera is None:
+            self._json(403, {'error': 'kamera ucu kapalı'})
+            return
+        self._send(200, 'application/json', json.dumps(camera.document()).encode(), head_only)
 
     def _get_waypoints(self, path: str, head_only: bool) -> None:
         if not self._host_allowed():
@@ -449,6 +464,8 @@ class _Handler(BaseHTTPRequestHandler):
             allow, why = 'GET, HEAD, POST', 'GET (durum) ya da POST (jog komutu)'
         elif path == FRAMES_PATH:
             allow, why = 'GET, HEAD, PUT', 'GET (liste) ya da PUT (tüm listeyi değiştir)'
+        elif path == CAMERA_PATH:
+            allow, why = 'GET, HEAD, POST', 'GET (durum) ya da POST (kamera komutu)'
         elif path == RECORD_PATH:
             allow, why = 'POST', 'bu uç noktaya yalnızca POST yapılır'
         elif path == WAYPOINTS_PATH:
@@ -535,6 +552,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_job(runner)
         elif path == JOG_PATH:
             self._post_jog(runner)
+        elif path == CAMERA_PATH:
+            self._post_camera(runner)
         elif path == RECORD_PATH:
             self._post_record(runner)
         elif cancel:
@@ -666,6 +685,20 @@ class _Handler(BaseHTTPRequestHandler):
         except JogDenied as exc:
             self._json(exc.status, {'ok': False, 'error': exc.message, **exc.extra})
 
+    def _post_camera(self, runner: CommandRunner) -> None:
+        camera = self.server.view.camera
+        if camera is None:
+            self._json(403, {'error': 'kamera ucu kapalı'})
+            return
+        body = self._read_json_body(runner, MAX_CAMERA_BODY)
+        if body is _RESPONDED:
+            return
+        try:
+            status, payload = camera.command(body)
+            self._json(status, payload)
+        except CameraDenied as exc:
+            self._json(exc.status, {'error': exc.message, **exc.extra})
+
     def _post_record(self, runner: CommandRunner) -> None:
         api = self._waypoint_api()
         if api is None:
@@ -762,4 +795,5 @@ class _Handler(BaseHTTPRequestHandler):
         self._json(200, {'ok': True, 'job': doc})
 
     def log_message(self, format: str, *args: Any) -> None:    # noqa: A002
-        log.debug('%s - %s', self.address_string(), format % args)
+        text = re.sub(r'\?[^\s"]*', '?…', format % args)    # a query may carry a credential
+        log.debug('%s - %s', self.address_string(), text)

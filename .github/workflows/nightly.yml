@@ -44,6 +44,7 @@ jobs:
           - gazebo-jog
           - waypoints
           - gazebo-waypoints
+          - gazebo-camera-api
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

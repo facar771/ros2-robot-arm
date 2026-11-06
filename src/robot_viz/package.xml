@@ -12,6 +12,8 @@
   <depend>robot_controller</depend>
   <depend>robot_data</depend>
   <depend>robot_perception</depend>
+  <depend>robot_vision</depend>
+  <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>visualization_msgs</depend>
   <depend>tf2_ros</depend>
