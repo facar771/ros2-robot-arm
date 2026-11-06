@@ -716,4 +716,5 @@ yabancı Origin / `Sec-Fetch-Site` reddi; gövde ≤ 1 KiB).
   denetimsiz eklem hedefi YOKTUR. Nokta, gidişten hemen önce eklem limitlerine ve güvenli kutuya karşı **yeniden**
   denetlenir (kutu/profil sonradan daralmış olabilir). Acil dur `423`, iş/jog dışlaması `409` (`state: jogging`),
   iptal ve zaman aşımı diğer işlerle aynıdır; MoveIt reddederse `failed` + neden, "Robot hareket etmedi.".
+- **Bilinen açık (F4):** güvenli kutu yalnız HEDEF noktada denetlenir; eklem uzayı yolunda iki kutu-içi nokta arasında TCP kutudan çıkabilir (`go_to_position` ve `go_above` için de geçerli). Bu belge kutunun yol boyunca garanti edildiğini SÖYLEMEZ. Yalnız simülasyon için kabul edilir, `mode: real` bu kapatılmadan açılmaz. Kutu yalnız uç noktayı (TCP) sınırlar, dirsek ve bilek kutu dışına çıkabilir.
 - Durum belgesi (`/api/state`) değişmedi.
