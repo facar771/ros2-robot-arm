@@ -25,6 +25,7 @@ import time
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from robot_controller.adapters import BackgroundSpinner
 from robot_core.viz import decode_png
 from sensor_msgs.msg import JointState
 
@@ -249,11 +250,12 @@ def main(args=None):
     node.set_parameters([rclpy.parameter.Parameter('use_sim_time',
                                                    rclpy.Parameter.Type.BOOL, True)])
     platform = Platform(node)
-    spinner = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    spinner = BackgroundSpinner(node)
     spinner.start()
     try:
         results = run(opts.url, platform)
     finally:
+        spinner.stop()      # no callback may still run when the node is destroyed
         node.destroy_node()
         rclpy.shutdown()
     passed = sum(results)
