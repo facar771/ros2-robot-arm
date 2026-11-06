@@ -32,7 +32,7 @@ import numpy as np
 
 from robot_core.kinematics import Chain
 from robot_core.profile import Profile
-from robot_core.safezone import AXES, SafeZone
+from robot_core.safezone import AXES, ParkConfig, ParkZone, SafeZone
 
 Vec = Tuple[float, float, float]
 DEFAULT_MAX_STEP = 0.005         # m between samples (TCP path length bound): narrow default
@@ -91,7 +91,16 @@ def check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional[
                max_step: float = DEFAULT_MAX_STEP, min_step: float = DEFAULT_MIN_STEP,
                max_samples: int = DEFAULT_MAX_SAMPLES) -> PathCheck:
     """Check ``path`` (list of joint vectors, chain order, rad) against ``box``
-    (default ``profile.safety.zone``). Never raises for a violation: returns ``ok=False``."""
+    (default ``profile.safety.zone``). Never raises for a violation: returns ``ok=False``.
+    The park envelope (``ParkZone``) is refused here: only ``check_park_move`` may use it."""
+    if isinstance(box, ParkZone) or (box is not None and not isinstance(box, SafeZone)):
+        raise PathError('check_path yalnız SafeZone kabul eder; park zarfı yalnız '
+                        'check_park_move ile kullanılır')
+    return _check_path(path, profile, box, max_step, min_step, max_samples)
+
+
+def _check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional[SafeZone],
+                max_step: float, min_step: float, max_samples: int) -> PathCheck:
     if not (isinstance(max_step, (int, float)) and math.isfinite(max_step) and max_step > 0
             and isinstance(min_step, (int, float)) and 0 < min_step <= max_step
             and isinstance(max_samples, int) and max_samples >= 2):
@@ -201,3 +210,76 @@ def check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional[
                          None, state['n'], state['chord'], min_step / 2, True, None)
     return PathCheck(True, '', None, state['n'], state['chord'], min_step / 2, starts_outside,
                      entered)
+
+
+def transit_extent(path: Sequence[Sequence[float]], profile: Profile,
+                   step: float = 0.0005) -> Tuple[Tuple[float, float], ...]:
+    """TCP extent per axis (metres, rounded OUTWARD to 0.1 mm) of the straight joint-space path,
+    sampled at ``step`` (TCP path length bound). This is how the park file's ``measured`` is
+    derived and re-derived by the tests."""
+    chain = Chain(profile)
+    pts = np.asarray(path, float)
+    levers = _levers(profile)
+    lo, hi = np.full(3, math.inf), np.full(3, -math.inf)
+    for a, b in zip(pts, pts[1:]):
+        n = max(1, math.ceil(float(np.abs(b - a) @ levers) / step))
+        for i in range(n + 1):
+            p = chain.fk(a + (b - a) * (i / n))[:3, 3]
+            lo, hi = np.minimum(lo, p), np.maximum(hi, p)
+    return tuple((math.floor(a * 1e4) / 1e4, math.ceil(b * 1e4) / 1e4) for a, b in zip(lo, hi))
+
+
+def _reject(reason: str) -> PathCheck:
+    return PathCheck(False, 'park: ' + reason, None, 0, 0.0, 0.0, False, None)
+
+
+def check_park_move(path: Sequence[Sequence[float]], profile: Profile, park: ParkConfig,
+                    pose: str = 'home', max_step: float = DEFAULT_MAX_STEP,
+                    min_step: float = DEFAULT_MIN_STEP,
+                    max_samples: int = DEFAULT_MAX_SAMPLES) -> PathCheck:
+    """The ONE exemption from the inner box: a straight joint move between ``ready`` and the
+    parked pose ``home``, checked against the park envelope.
+
+    Accepted only if (1) the profile's ``home`` and ``ready`` joint values equal the verified
+    values of the park file (otherwise the pose is not exempt), (2) ``path`` is exactly
+    [start, goal] with the goal EXACTLY the profile's pose (``home`` or ``ready``), (3) the other
+    end of the move is ``ready`` / ``home`` and the start is within ``ready_tolerance`` of it,
+    (4) every sample (and the no-leak bisection of ``check_path``) lies inside the park envelope.
+    Returns ``ok=False`` with the reason; the speed cap is ``park.max_velocity_fraction`` of
+    the maximum (applied by the caller)."""
+    if pose not in park.poses:
+        return _reject(f'{pose!r} park listesinde değil (izinli: {sorted(park.poses)})')
+    ready_profile = profile.named_poses.get('ready')
+    home_profile = profile.named_poses.get(pose)
+    if ready_profile is None or home_profile is None:
+        return _reject("profilde 'ready' ya da park pozu tanımlı değil")
+    for name, got, verified in (('ready', ready_profile, park.ready_joints),
+                                (pose, home_profile, park.poses[pose])):
+        if len(got) != len(verified) or max(abs(g - v) for g, v in zip(got, verified)) > 1e-9:
+            return _reject(f"profildeki {name!r} doğrulanmış eklem değerinden farklı; muaf "
+                           'sayılmaz (park dosyası gözden geçirilmeden güncellenmez)')
+    try:
+        pts = np.asarray(path, float)
+    except (TypeError, ValueError) as exc:
+        raise PathError(f'yol sayısal olmalı: {exc}') from exc
+    if pts.shape != (2, len(park.ready_joints)) or not np.all(np.isfinite(pts)):
+        raise PathError(f'park hareketi tam iki nokta ([başlangıç, hedef]) olmalı, şekil: '
+                        f'{pts.shape}')
+    ready, parked = np.array(park.ready_joints), np.array(park.poses[pose])
+
+    def dist(q: np.ndarray, ref: np.ndarray) -> float:
+        return float(np.max(np.abs(q - ref)))
+
+    if dist(pts[1], parked) <= 1e-9 and dist(pts[0], ready) <= park.ready_tolerance:
+        pass                                           # ready -> home
+    elif dist(pts[1], ready) <= 1e-9 and dist(pts[0], parked) <= park.ready_tolerance:
+        pass                                           # home -> ready
+    else:
+        return _reject(f"hareketin bir ucu 'ready' (başlangıç {park.ready_tolerance} rad içinde) "
+                       f"ve hedef tam {pose!r} (ya da tersi) olmalı")
+    result = _check_path(pts, profile, park.zone.as_safe_zone(), max_step, min_step, max_samples)
+    if not result.ok:
+        return PathCheck(False, 'park zarfı: ' + result.reason, result.violation, result.samples,
+                         result.max_chord_bound, result.leak_bound, result.starts_outside,
+                         result.enters_box_at)
+    return result

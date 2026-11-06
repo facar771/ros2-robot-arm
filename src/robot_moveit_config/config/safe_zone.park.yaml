@@ -1,0 +1,28 @@
+# NOT GENERATED. Hand-reviewed safety file; `profile_gen` never writes, reads or changes it and the
+# robot profile (Hub profile editor) has no field for it. Changing it needs a code review.
+#
+# Park exemption (F4a-2): the ONE move allowed to leave the inner box (safe_zone.yaml) is the straight
+# joint move between `ready` and `home`, validated by robot_core.pathcheck.check_park_move against the
+# park envelope = measured transit extent + 5 cm (no further tolerance). Jog, waypoints,
+# go_to_position and the agent only ever use the inner box. Only the move `go_to_named_pose` may use it.
+# If the profile's `ready` or `home` joint values differ from the verified values below, the move is
+# NOT exempt and is refused.
+#
+# `transit.measured` = TCP extent (m, rounded outward to 0.1 mm) of the straight joint path
+# ready <-> home, derived with robot_core.pathcheck.transit_extent; a test recomputes it from the
+# profile and fails if it drifts, so the envelope can not be tuned "just enough".
+park_version: 1
+frame: world
+reference_pose: ready
+ready_joints: [0.0, -0.1, 1.65, 0.0, 1.2, 0.0]
+ready_tolerance: 0.02        # rad, max |q - ready| of the starting configuration
+poses:
+  home:
+    joints: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # the ONLY parkable pose; verified values
+transit:
+  measured:
+    x: [0.0, 0.5664]
+    y: [0.0, 0.0]
+    z: [0.46, 1.24]
+  margin: 0.05               # m, exactly; the envelope is measured +- margin
+max_velocity_fraction: 0.3   # of the maximum speed, applied by the executor
