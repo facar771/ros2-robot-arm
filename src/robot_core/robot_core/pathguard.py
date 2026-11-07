@@ -152,9 +152,11 @@ class PathGuard:
             reasons.append(problem)
             self._events.emit('path_rejected', {'goal': what, 'attempt': attempt,
                                                 'reason': problem})
+        # every attempt is named (a flaky Gazebo run must show all of them, not only the last one)
+        history = ' | '.join(f'plan {i}: {r}' for i, r in enumerate(reasons, 1))
         return MotionResult(False, None, CODE_PATH, (
             f'{self._cfg.max_plans} planın hepsi güvenli kutudan çıkıyor, hareket başlamadı '
-            f'(kutu genişletilmedi). Son plan: {reasons[-1]}'))
+            f'(kutu genişletilmedi). Son plan: {reasons[-1]}. Tüm planlar: {history}'))
 
     def _reject_reason(self, plan: PlanResult) -> Optional[str]:
         """None when the planned path is acceptable, otherwise why not."""

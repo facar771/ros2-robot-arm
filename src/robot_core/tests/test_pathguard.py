@@ -123,6 +123,7 @@ def test_a_path_leaving_the_box_is_rejected_three_times_and_never_executed(profi
     assert state.q == OUT_A                                              # nothing moved
     assert 'güvenli kutunun dışında' in out.message and 'TCP (' in out.message
     assert 'hareket başlamadı' in out.message and 'genişletilmedi' in out.message
+    assert all(f'plan {i}:' in out.message for i in (1, 2, 3))           # every attempt is named
 
 
 def test_the_error_names_the_violation_point_and_its_coordinates(profile, park, zone):
