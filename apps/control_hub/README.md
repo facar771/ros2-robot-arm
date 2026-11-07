@@ -309,6 +309,15 @@ Robot API'sinin `POST /api/jog` + `GET/PUT /api/frames` uçlarını (J2) Hub **g
 Panel: **artımlı varsayılan** (0.1 / 1 / 10 mm ya da °). Basılı-tut yalnızca `hold_allowed` ise açılır ve
 kullanıcı kutuyu işaretlerse çalışır; kapalıysa nedeni panelde yazar (gerçek mod, `jog_hold` kapalı, telefon,
 Docker NAT'ta robotun reddi: `403`). `409` = başka istemci/iş, `423` = ACİL DUR kilidi, `502` = robota ulaşılamıyor.
+**Robot görünümü (L9c):** `GET /api/model` (robotun `view_model.json`'u, salt-okunur geçiş) + durumdaki `joints` ile
+bağımlılıksız Canvas 2D, ortografik, sürükleyerek döner; link = çubuk/kapsül, turuncu kesikli kutu = modeldeki etkin
+güvenli kutu, beyaz nokta = çizilen zincirin ucu, yeşil halka = robotun bildirdiği TCP, eksenler = jog'da seçili çerçeve.
+**Bayatlık:** WS'ten gelen son mesaj ya da robot verisi 1 s'den eskiyse görünüm griye döner ve kırmızı "ACİL DUR" bandı
+çıkar (Hub WS'i durum değişmese de en geç 0,4 s'de bir `tick` yollar; WS yokken HTTP yoklaması görünümü "taze" yapmaz).
+`mode: real`'de çizim "KESTİRİM" etiketlidir (API eksen bazında encoder bilgisi vermez, hepsi kestirim sayılır);
+`--fake`'de "SAHTE ROBOT" (duruş kinematik değil). Model alınamazsa ya da eklem adları uyuşmazsa "Görünüm kullanılamıyor:
+<neden>" kartı çıkar. Görünüm komut yolu içermez ve ölçüm/güvenlik işlevi değildir; ACİL DUR Hub'ın kendi düğmesidir.
+
 **Düzlem öğretme sihirbazı (L3):** "Düzlemler" kartı. Orijin, +X yönü ve XY düzlemi noktaları robot jog ile
 götürülüp "Şu anki TCP'yi kaydet" ile alınır (sihirbaz robotu hareket ettirmez); "Düzlemi kaydet" taze listeyi
 okuyup yenisini ekleyerek **tüm listeyi** `PUT /api/frames` ile yollar (dosyayı robot yazar). Geçersiz nokta

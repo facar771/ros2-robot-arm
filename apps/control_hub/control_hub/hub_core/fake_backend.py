@@ -6,6 +6,7 @@ gerçek ters kinematik yoktur, amaç arayüzün canlı akışını denemektir.
 """
 from __future__ import annotations
 
+import copy
 import math
 import threading
 from typing import Any, Dict, List, Tuple
@@ -13,6 +14,7 @@ from typing import Any, Dict, List, Tuple
 from control_hub.hub_core.backend import BackendResult, ResetResult, StopReport
 from control_hub.hub_core.commands import CommandError, parse_robot_command
 from control_hub.hub_core.fake_jog import FakeJog
+from control_hub.hub_core.fake_model import FAKE_MODEL
 
 Vec = Tuple[float, float, float]
 JOINTS = ('joint_1', 'joint_2', 'joint_3', 'joint_4', 'joint_5', 'joint_6')
@@ -99,6 +101,9 @@ class FakeBackend:
 
     def jog_status(self):
         return 200, {**self.jog.status(), 'tcp': self.jog.tcp()}
+
+    def model(self):
+        return 200, copy.deepcopy(FAKE_MODEL)
 
     def frames_get(self):
         return 200, self.jog.frames_doc()
