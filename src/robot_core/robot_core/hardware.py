@@ -324,21 +324,32 @@ class HardwareProfile:
 # ---- limits in steps (firmware) ---------------------------------------------------------------
 def steps_range(axis: Axis, lower: float, upper: float) -> Tuple[int, int]:
     """Step interval for a joint interval, rounded INWARD (narrower); direction -1 swaps ends."""
+    _step_axis(axis, 'steps_range')
     a, b = axis.to_steps(lower), axis.to_steps(upper)
     return math.ceil(min(a, b) - 1e-9), math.floor(max(a, b) + 1e-9)
 
 
+def _step_axis(axis: Any, what: str) -> None:
+    """Step-only helpers refuse a servo axis with a clear error, never an AttributeError."""
+    if isinstance(axis, ServoAxis):
+        raise HardwareError(f'{what}: {axis.joint} bir hobby_servo ekseni; bu yol yalnız step '
+                            'eksenleri bilir (servo protokolü K6b), güvenli tarafta reddedildi')
+
+
 def soft_limits(axis: Axis, profile: Profile) -> Tuple[int, int]:
+    _step_axis(axis, 'soft_limits')
     joint = next(j for j in profile.joints if j.name == axis.joint)
     return steps_range(axis, joint.lower, joint.upper)
 
 
 def hard_limits(axis: Axis) -> Tuple[int, int]:
+    _step_axis(axis, 'hard_limits')
     return steps_range(axis, *axis.position_limits)
 
 
 def rate_steps(axis: Axis, joint_rate: float) -> int:
     """Joint rate (rad/s or rad/s^2) -> steps/s (or steps/s^2), rounded down (narrower)."""
+    _step_axis(axis, 'rate_steps')
     return math.floor(joint_rate * axis.steps_per_joint_rad + 1e-9)
 
 

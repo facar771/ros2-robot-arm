@@ -18,8 +18,12 @@ from robot_core.hardware import (
     HardwareError,
     ServoAxis,
     describe_hardware,
+    hard_limits,
     load_hardware,
     parse_hardware,
+    rate_steps,
+    soft_limits,
+    steps_range,
 )
 from robot_core.hardware_gen import HARDWARE_PATH, generate, main
 from robot_core.maturity import HARDWARE_READY, SIM_READY, Quality, gate, maturity, parse_quality
@@ -468,3 +472,78 @@ def test_quality_file_may_tag_servo_fields_and_rejects_typos(strong):
         data['fields'] = {typo: 'measured'}
         with pytest.raises(Exception, match='bilinmeyen alan yolu'):
             parse_quality(data, strong)
+
+
+# ---- step-only helpers and the bridge path: a servo axis is a clear error, never AttributeError -
+@pytest.mark.parametrize('call', [
+    lambda ax, robot: soft_limits(ax, robot),
+    lambda ax, robot: hard_limits(ax),
+    lambda ax, robot: rate_steps(ax, 1.0),
+    lambda ax, robot: steps_range(ax, -1.0, 1.0),
+], ids=['soft_limits', 'hard_limits', 'rate_steps', 'steps_range'])
+def test_step_only_helpers_refuse_a_servo_axis_naming_it(mixed, robot, call):
+    with pytest.raises(HardwareError, match=r'joint_2.*hobby_servo.*K6b'):
+        call(mixed.axis('joint_2'), robot)
+    call(mixed.axis('joint_1'), robot)                     # a step axis still works
+
+
+class BridgeRig:
+    """The real HwBridge on an in-memory link to the simulator, with the mixed profile."""
+
+    def __init__(self, hw, robot):
+        from robot_hw_bridge.core import BridgeConfig, HwBridge
+        from robot_hw_bridge.sim import SimAxis
+
+        from robot_hw_bridge import Esp32Sim, HwLink, LoopbackLink, SimRunner
+        self.bridge = HwBridge(hw, robot, BridgeConfig())
+        lb = LoopbackLink()
+        self.runner = SimRunner(Esp32Sim([SimAxis(phys_min=-5000.0, phys_max=20000.0)
+                                          for _ in hw.axes]), lb.device).start()
+        b = self.bridge
+        self.link = HwLink(lb.host, heartbeat_s=0.02, link_timeout_s=0.25, ack_timeout_s=0.1,
+                           on_status=b.on_status, on_fault=b.on_fault,
+                           on_link_lost=b.on_link_lost, on_link_up=b.on_link_up)
+        b.attach(self.link)
+        self.link.start()
+        assert self.link.wait_link(3.0)
+
+    def close(self):
+        self.bridge.close()
+        self.runner.stop()
+
+
+@pytest.fixture
+def rig(mixed, robot):
+    r = BridgeRig(mixed, robot)
+    yield r
+    r.close()
+
+
+def test_bridge_path_gives_a_clear_error_for_a_servo_profile(rig):
+    from robot_hw_bridge.core import INVALID_GOAL, Point
+    b = rig.bridge
+    names = [f'joint_{i}' for i in range(1, 7)]
+    points = [Point(0.0, (0.0,) * 6), Point(1.0, (0.0,) * 6)]
+    for name, call in (('configure', b.configure), ('home', b.home),
+                       ('validate', lambda: b.validate(names, points))):
+        try:
+            call()
+        except HardwareError as exc:
+            assert 'joint_2' in str(exc) and 'K6b' in str(exc), name
+        except AttributeError as exc:                       # pragma: no cover - the bug
+            pytest.fail(f'{name}: AttributeError {exc}')
+        else:
+            pytest.fail(f'{name}: no error for a servo profile')
+    # paths that stop at "not homed" before touching an axis: a normal refusal, no exception
+    assert b.execute(names, points).code == INVALID_GOAL
+    assert b.setpoint(names, points[:1]).code == INVALID_GOAL
+    assert b.homed is False
+    assert 'kestirim' in ' '.join(b.state_doc()['warnings'])
+
+
+def test_bridge_status_callback_raises_hardware_error_not_attribute_error(rig):
+    """Called directly (as the link thread does) it is a HardwareError. NOTE: HwLink's rx loop
+    swallows ``ValueError`` (``HardwareError`` is one) as a corrupt payload, so in a running node
+    the status is silently dropped; that is robot_hw_bridge's (Robot_3) to make loud."""
+    with pytest.raises(HardwareError, match=r'steps_to_joints.*joint_2.*K6b'):
+        rig.bridge.on_status(rig.link.status)
