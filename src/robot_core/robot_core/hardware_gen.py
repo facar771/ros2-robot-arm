@@ -21,6 +21,7 @@ from robot_core.hardware import (
     HOMING_METHODS,
     OPEN_LOOP_WARNING,
     Axis,
+    HardwareError,
     HardwareProfile,
     hard_limits,
     load_hardware,
@@ -60,6 +61,10 @@ def _axis_row(index: int, axis: Axis, robot: Profile) -> str:
 
 
 def generate(hw: HardwareProfile, robot: Profile) -> str:
+    if hw.servo_axes:       # K6a: this header only knows step axes; servo support comes with K6b/K3
+        raise HardwareError(
+            f"firmware başlığı: profilde hobby_servo ekseni var ({', '.join(hw.servo_axes)}); "
+            'başlık yalnız step eksenleri bilir (servo protokolü/firmware K6b/K3), üretilmedi')
     n = len(hw.axes)
     mask = sum(1 << i for i, a in enumerate(hw.axes) if a.open_loop)
     out = [f'/* {GENERATED.format(src=HARDWARE_REL)} */',
@@ -111,7 +116,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     import yaml
     robot_name = yaml.safe_load(args.hardware.read_text(encoding='utf-8')).get('robot')
     robot = load_profile(args.hardware.with_name(f'{robot_name}.yaml'))
-    text = generate(load_hardware(args.hardware, robot), robot)
+    try:
+        text = generate(load_hardware(args.hardware, robot), robot)
+    except HardwareError as exc:
+        print(f'HATA     {exc}')
+        return 2
     path = args.src / HEADER_REL
     current = path.read_text(encoding='utf-8') if path.exists() else None
     if current == text:
