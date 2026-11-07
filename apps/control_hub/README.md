@@ -305,15 +305,37 @@ Robot API'sinin `POST /api/jog` + `GET/PUT /api/frames` uçlarını (J2) Hub **g
 | `POST /api/jog` | kontrol | komut = heartbeat (`ttl_ms` 50-500, varsayılan 250; `0` bırakır). `423` Hub'da robota sormadan; `twist` (basılı-tut) loopback dışı istemciye `403`; ağ hatası `502` |
 | `GET /api/jog` | görüntüleme | robot jog durumu + `hold_allowed`/`hold_reason` (Hub'ın eklediği: neden kapalı) |
 | `GET /api/frames`, `PUT /api/frames` | görüntüleme / kontrol | çerçeve listesi; yazma robota gider (jog etkinken `409`) |
+| `POST /api/frames/reach` | kontrol | küre (C, r) erişim aralığı (L8); Hub aynen geçirir, hesap ve `409`/`423`/`403`/`400` robottadır |
 
 Panel: **artımlı varsayılan** (0.1 / 1 / 10 mm ya da °). Basılı-tut yalnızca `hold_allowed` ise açılır ve
 kullanıcı kutuyu işaretlerse çalışır; kapalıysa nedeni panelde yazar (gerçek mod, `jog_hold` kapalı, telefon,
 Docker NAT'ta robotun reddi: `403`). `409` = başka istemci/iş, `423` = ACİL DUR kilidi, `502` = robota ulaşılamıyor.
+**Robot görünümü (L9c):** `GET /api/model` (robotun `view_model.json`'u, salt-okunur geçiş) + durumdaki `joints` ile
+bağımlılıksız Canvas 2D, ortografik, sürükleyerek döner; link = çubuk/kapsül, turuncu kesikli kutu = modeldeki etkin
+güvenli kutu, beyaz nokta = çizilen zincirin ucu, yeşil halka = robotun bildirdiği TCP, eksenler = jog'da seçili çerçeve.
+**Bayatlık:** WS'ten gelen son mesaj ya da robot verisi 1 s'den eskiyse görünüm griye döner ve kırmızı "ACİL DUR" bandı
+çıkar (Hub WS'i durum değişmese de en geç 0,4 s'de bir `tick` yollar; WS yokken HTTP yoklaması görünümü "taze" yapmaz).
+`mode: real`'de çizim "KESTİRİM" etiketlidir (API eksen bazında encoder bilgisi vermez, hepsi kestirim sayılır);
+`--fake`'de "SAHTE ROBOT" (duruş kinematik değil). Model alınamazsa ya da eklem adları uyuşmazsa "Görünüm kullanılamıyor:
+<neden>" kartı çıkar. Görünüm komut yolu içermez ve ölçüm/güvenlik işlevi değildir; ACİL DUR Hub'ın kendi düğmesidir.
+
 **Düzlem öğretme sihirbazı (L3):** "Düzlemler" kartı. Orijin, +X yönü ve XY düzlemi noktaları robot jog ile
 götürülüp "Şu anki TCP'yi kaydet" ile alınır (sihirbaz robotu hareket ettirmez); "Düzlemi kaydet" taze listeyi
 okuyup yenisini ekleyerek **tüm listeyi** `PUT /api/frames` ile yollar (dosyayı robot yazar). Geçersiz nokta
 (20 mm'den yakın, aynı doğru) robotun hata metniyle gösterilir; 409/423/403 aynen. Kayıtlı düzlemler listelenir,
 "Jog'da seç" ile jog çerçevesi olur, çift tıkla (onaylı) silinir.
+
+**Küresel çerçeve sihirbazı (L8):** "Küresel çerçeve (kubbe)" kartı (`web/sphere.js`). Merkez C (mm; sayı olarak ya da
+"Şu anki TCP'yi merkez al" / "TCP'nin 10 cm üstünü merkez al"), yarıçap r (mm) ve takım ekseni girilir;
+"Erişim aralığını hesapla" `POST /api/frames/reach` ile robotun gösterdiği yükselme aralığını, azimut aralıklarını ve
+kaba ızgarayı (█ = erişilebilir) gösterir (hesap **çarpışma modeli olmadan**, robotun ŞU ANKİ pozundan, 15° × 10°
+ızgarayla; güvenlik garantisi değildir; jog yükselmeyi 85° ile sınırlar). Girdi değişince eski sonuç "yeniden
+hesapla" olur. "Küreyi kaydet" taze `GET /api/frames`'ten **tüm kullanıcı çerçevelerini ve tüm küreleri** okuyup
+yenisini ekleyerek tek `PUT` yollar; erişilemeyen küre için "Yine de kaydet" onayı ister. Sihirbaz robotu hareket
+ettirmez. **Tür kuralları:** `types` içinde `sphere` yoksa (eski robot) küre kartı HİÇ çıkmaz (küre dosyası bozuksa
+yalnız nedeni yazan bir kart çıkar); Düzlem sihirbazı yalnız `frames` yazar (`spheres` anahtarı yok = robot küreleri
+korur); bilinmeyen bir `type` görülürse sessizce atlanmaz, tür adıyla net hata gösterilir ve iki sihirbaz da
+yazmayı kilitler. Hub'da küre ile jog YOK (API'de var): yalnız tanımlama/silme.
 
 Tuş bırakılınca, sekme gizlenince, pencere odağı kaybolunca ve sayfa kapanınca kiralama bırakılır; bunlar
 yalnızca kibarlıktır, **asıl dead-man robot tarafındaki TTL'dir**. Yazılım dead-man donanım acil durdurmanın
@@ -343,9 +365,14 @@ cd ~/ros2-robot-arm/apps/control_hub && python -m tools.e2e_check --robot-url ht
 ```
 Ayrıca CI'daki `hub` işi Docker imajını derleyip `/health`'i ve PIN korumasını dener.
 
+`tests/test_sphere_wizard.py` (L8) küre uçlarını ve Hub geçişini sınar; `tests/js/sphere_wizard_check.js` gerçek
+`sphere.js`/`frames.js`'i küçük bir sahte DOM üzerinde çalıştırır (node gerekir; yoksa o test atlanır).
+
 ## Bilinen sınırlar
 
-* `--fake` robotunda eklem değerleri yalnızca görsel; gerçek kinematik yok (jog dahil).
+* `--fake` robotunda eklem değerleri yalnızca görsel; gerçek kinematik yok (jog dahil). Küre erişim aralığı da
+  sahte bir halka zarfıdır ("SAHTE robot" notu taşır); gerçek IK/kutu/tekillik hesabı yalnız gerçek Robot API'dedir.
+* Çerçeve/küre yazımı toplu `PUT`tur (çerçeve başına ekle/sil ucu yok): iki istemci aynı anda yazarsa sonuncusu kazanır.
 * Canlı durum 5 Hz yoklanır (200 ms'den kısa olaylar arayüzde görünmeyebilir).
 * Hub'ın senaryoları adım adım iş gönderir; robotun kendi `demo_scenario` komutundaki **TF ile uç konum
   doğrulaması** (≤ 1,5 cm) Hub senaryolarında yoktur. Doğrulama gerekirse `demo_scenario` adım türü sonra.

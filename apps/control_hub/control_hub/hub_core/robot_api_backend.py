@@ -232,11 +232,19 @@ class RobotApiBackend:
     def jog_status(self) -> Tuple[int, Dict[str, Any]]:
         return self._passthrough('GET', '/api/jog')
 
+    def model(self) -> Tuple[int, Dict[str, Any]]:
+        return self._passthrough('GET', '/api/model', timeout=3.0)
+
     def frames_get(self) -> Tuple[int, Dict[str, Any]]:
         return self._passthrough('GET', '/api/frames')
 
     def frames_put(self, body: Any) -> Tuple[int, Dict[str, Any]]:
         return self._passthrough('PUT', '/api/frames', body, timeout=5.0)
+
+    def frames_reach(self, body: Any) -> Tuple[int, Dict[str, Any]]:
+        """``POST /api/frames/reach`` (L8): küre (C, r) için erişim aralığı. Robot hiçbir şey yazmaz ve
+        oynatmaz; hesap saniyeler sürebilir, bu yüzden zaman aşımı jog'dan uzundur."""
+        return self._passthrough('POST', '/api/frames/reach', body, timeout=30.0)
 
     # --- ACİL DUR ------------------------------------------------------------------------------
     def emergency_stop(self) -> StopReport:

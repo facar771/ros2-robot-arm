@@ -2,6 +2,8 @@
  * Üç nokta: orijin, +X yönü, XY düzlemi. Her nokta robot JOG ile götürülüp "şu anki TCP'yi kaydet"le alınır
  * (sihirbaz robotu HAREKET ETTİRMEZ). Kaydet = tüm liste PUT /api/frames; dosyayı ROBOT yazar, Hub yazmaz.
  * Geçerlilik (20 mm, aynı doğru, ad, en çok çerçeve) robotta denetlenir: onun hata metni olduğu gibi gösterilir.
+ * L8: bu sihirbaz YALNIZ `frames` yazar (`spheres` anahtarı yok = robot küreleri korur). Tanımadığı bir `type`
+ * görürse (FrameTypes.typeError) sessizce atlamaz: net hata gösterir ve hiçbir şey yazmaz.
  * Veri textContent ile yazılır (innerHTML yok). */
 'use strict';
 
@@ -9,7 +11,7 @@ window.FrameWizard = (() => {
   const STEPS = [['origin', 'Orijin (O)', 'Robotu düzlemin orijin noktasına jog ile götür.'],
                  ['x', '+X yönü', 'Orijinden +X doğrultusunda en az 20 mm uzaktaki bir noktaya götür.'],
                  ['xy', 'XY düzlemi (+Y tarafı)', 'X ekseninin dışında, düzlemin +Y yarısında bir noktaya götür.']];
-  const W = { mounted: false, pts: {}, frames: [], max: 0, busy: false, confirmDel: null, snap: null };
+  const W = { mounted: false, pts: {}, frames: [], max: 0, busy: false, confirmDel: null, snap: null, typeErr: null };
   const q = (id) => document.getElementById(id);
   const mm = (p) => p.map((v) => (v * 1000).toFixed(1)).join(', ');
 
@@ -50,8 +52,17 @@ window.FrameWizard = (() => {
   async function load() {
     try {
       const d = await api('/api/frames');
-      W.frames = d.frames; W.max = d.max_frames;
+      reload(d);
     } catch (e) { say(JogPanel.explain(e), true); }
+    render();
+  }
+
+  /* Taze GET/PUT yanıtı: listeyi tazele, bilinmeyen tür varsa yazmayı kilitle, küre kartını güncelle. */
+  function reload(d) {
+    W.frames = d.frames; W.max = d.max_frames;
+    W.typeErr = FrameTypes.typeError(d);
+    if (W.typeErr) say(W.typeErr, true);
+    if (window.SphereWizard) SphereWizard.update(d);
     render();
   }
 
@@ -68,7 +79,6 @@ window.FrameWizard = (() => {
     await JogPanel.release(false);            // jog etkinken robot 409 verir; önce bırak
     return api('/api/frames', 'PUT', { frames: list });
   }
-  const asBody = (f) => ({ name: f.name, points: f.points });
 
   async function save() {
     if (W.busy) return;
@@ -78,10 +88,14 @@ window.FrameWizard = (() => {
     if (missing.length) { say(`Eksik nokta: ${missing.join(', ')}`, true); return; }
     W.busy = true; render();
     try {
-      const cur = (await api('/api/frames')).frames;        // taze liste: başka istemci değiştirmiş olabilir
+      const doc = await api('/api/frames');                 // taze liste: başka istemci değiştirmiş olabilir
+      const bad = FrameTypes.typeError(doc);
+      if (bad) { say(bad, true); return; }                  // bilinmeyen tür: yazma, sessizce atlama
+      const cur = doc.frames;
       if (cur.some((f) => f.name === name)) { say(`“${name}” adı zaten var: başka ad seç ya da önce sil.`, true); return; }
-      const d = await putAll([...cur.map(asBody), { name, points: { origin: W.pts.origin, x: W.pts.x, xy: W.pts.xy } }]);
-      W.frames = d.frames; W.pts = {}; q('fw-name').value = '';
+      if (entriesNamed(doc, name)) { say(`“${name}” adı bir küre çerçevesinde zaten var: başka ad seç.`, true); return; }
+      const d = await putAll([...FrameTypes.userBodies(doc), { name, points: { origin: W.pts.origin, x: W.pts.x, xy: W.pts.xy } }]);
+      reload(d); W.pts = {}; q('fw-name').value = '';
       await JogPanel.refreshFrames();
       const f = d.frames.find((x) => x.name === name);
       say(`“${name}” kaydedildi` + (f && f.warnings && f.warnings.length ? ` — uyarı: ${f.warnings.join('; ')}` : '.'));
@@ -92,14 +106,19 @@ window.FrameWizard = (() => {
     if (W.confirmDel !== name) { W.confirmDel = name; render(); return; }
     W.confirmDel = null; W.busy = true; render();
     try {
-      const cur = (await api('/api/frames')).frames;
-      const d = await putAll(cur.filter((f) => f.name !== name).map(asBody));
-      W.frames = d.frames;
+      const doc = await api('/api/frames');
+      const bad = FrameTypes.typeError(doc);
+      if (bad) { say(bad, true); return; }
+      const d = await putAll(FrameTypes.userBodies(doc).filter((f) => f.name !== name));
+      reload(d);
       if (JogPanel.frame() === name) JogPanel.setFrame('World');
       await JogPanel.refreshFrames();
       say(`“${name}” silindi.`);
     } catch (e) { say(JogPanel.explain(e), true); } finally { W.busy = false; render(); }
   }
+
+  const entriesNamed = (doc, name) => (Array.isArray(doc.spheres) ? doc.spheres : [])
+    .some((x) => String(x.name).toLowerCase() === name.toLowerCase());
 
   function useFrame(name) { JogPanel.setFrame(name); say(`Jog çerçevesi: ${name}`); }
 
@@ -111,7 +130,7 @@ window.FrameWizard = (() => {
     for (const f of W.frames) {
       const sel = el('button', { class: 'small', type: 'button', text: 'Jog’da seç' });
       sel.addEventListener('click', () => useFrame(f.name));
-      const del = el('button', { class: 'small', type: 'button', disabled: W.busy || ro,
+      const del = el('button', { class: 'small', type: 'button', disabled: W.busy || ro || !!W.typeErr,
         text: W.confirmDel === f.name ? 'Emin misin? Sil' : 'Sil' });
       del.addEventListener('click', () => remove(f.name));
       const o = f.points && f.points.origin;
@@ -128,10 +147,13 @@ window.FrameWizard = (() => {
       q(`fw-s-${key}`).classList.toggle('done', !!p);
       q(`fw-rec-${key}`).disabled = W.busy || !!(s && !s.me.can_control);
     }
-    q('fw-save').disabled = W.busy || ro || (W.max > 0 && W.frames.length >= W.max);
+    q('fw-save').disabled = W.busy || ro || !!W.typeErr || (W.max > 0 && W.frames.length >= W.max);
     if (W.max && W.frames.length >= W.max) say(`En çok ${W.max} düzlem: yenisi için birini sil.`, true);
   }
 
-  function onState(s) { W.snap = s; if (W.mounted) render(); }
-  return { mount, onState };
+  function onState(s) {
+    W.snap = s; if (W.mounted) render();
+    if (window.SphereWizard) SphereWizard.onState(s);
+  }
+  return { mount, onState, reload };
 })();

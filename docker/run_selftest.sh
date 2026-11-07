@@ -219,7 +219,11 @@ elif [ "$MODE" = "gazebo-integration" ]; then
     timeout 1500 ros2 run robot_viz integration_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "jog" ] || [ "$MODE" = "gazebo-jog" ]; then
     PLANT=mock; [ "$MODE" = "gazebo-jog" ] && PLANT=gazebo
-    timeout 900 ros2 run robot_viz jog_check --plant "$PLANT" 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+    if [ -n "${API_LATENCY:-}" ]; then  # N6 diagnostic: response times during a jog (not a CI mode)
+        timeout 900 ros2 run robot_viz api_latency --rounds "${API_LATENCY_ROUNDS:-30}" --load "${API_LATENCY_LOAD:-0}" 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+    else
+        timeout 900 ros2 run robot_viz jog_check --plant "$PLANT" 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
+    fi
 elif [ "$MODE" = "waypoints" ] || [ "$MODE" = "gazebo-waypoints" ]; then
     timeout 900 ros2 run robot_viz waypoint_check 2>&1 | tee -a "$CHECK_LOG" || STATUS=$?
 elif [ "$MODE" = "pathguard" ]; then

@@ -14,6 +14,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urlsplit
@@ -34,6 +35,7 @@ log = logging.getLogger('control_hub.server')
 COOKIE = 'hub_session'
 WEB_DIR = web_dir()
 WS_PERIOD_S = 0.2
+WS_TICK_S = 0.4                                   # durum değişmese de en geç bu aralıkla bir mesaj
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self' ws: wss:; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors 'none'")
@@ -251,7 +253,7 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
             await sock.close(code=4401)
             return
         await sock.accept()
-        last_json, last_seq = '', 0
+        last_json, last_seq, last_sent = '', 0, time.monotonic()
         try:
             while True:
                 if access.check_view(token_of(sock)) is Decision.NEED_LOGIN:    # oturum süresi doldu
@@ -263,10 +265,14 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
                 if dumped != last_json:
                     last_json = dumped
                     await sock.send_json({'type': 'state', 'state': snap})
+                    last_sent = time.monotonic()
                 new = hub.events.since(last_seq)
                 if new:
                     last_seq = new[-1].seq
                     await sock.send_json({'type': 'events', 'events': [e.as_dict() for e in new]})
+                if time.monotonic() - last_sent >= WS_TICK_S:     # canlılık işareti: sessizlik = kopuk/bayat
+                    await sock.send_json({'type': 'tick'})
+                    last_sent = time.monotonic()
                 try:                               # hem uyku hem kopma algılama
                     msg = await asyncio.wait_for(sock.receive(), WS_PERIOD_S)
                     if msg.get('type') == 'websocket.disconnect':

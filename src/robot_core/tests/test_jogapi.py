@@ -2,6 +2,7 @@
 
 import http.client
 import json
+import threading
 import time
 
 import numpy as np
@@ -21,7 +22,7 @@ from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
 from robot_core.safezone import SafetyConfig, SafeZone
 from robot_core.supervisor import CancelFlag, EStop, Supervisor
-from robot_core.webcmd import CommandRunner
+from robot_core.webcmd import CommandRunner, parse_command
 from robot_core.webview import Snapshot, WebView
 
 from tests.fakes import CancelAwareSkills, FakeArm, FakeTool, RecordingSink
@@ -306,6 +307,52 @@ def test_ready_pose_is_inside_the_box_away_from_singularity_and_limits():
     limit = min(np.min(q - CHAIN.lower), np.min(CHAIN.upper - q))
     assert zone.check(tuple(t)) is None and margin > 0.08
     assert sigma > JogConfig().sigma_slow * 2 and limit > 0.3
+
+
+# ---- N6: jobs lock <-> jog lock must never be taken in crossing orders -------------------------
+def test_job_submit_and_jog_tick_do_not_deadlock(tmp_path):
+    """Both threads meet at a barrier *inside* their first lock; crossing lock orders hang.
+
+    ``submit`` asks the jog gate (jog lock) and ``tick`` asks ``busy`` (jobs lock). Before N6 submit
+    held the jobs lock while asking the gate, so POST /api/jobs hung while a jog was running.
+    """
+    rig = Rig(tmp_path)
+    cancel, estop = CancelFlag(), rig.estop
+    runner = CommandRunner(CancelAwareSkills(cancel, estop), FakeTool((0, 0, 1)), estop=estop)
+    jobs = JobManager(runner, cancel, estop)
+    barrier = threading.Barrier(2, timeout=3.0)
+    state = {'armed': False}
+
+    def meet():
+        if state['armed']:
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                pass  # only one side got here: it was serialised, not deadlocked
+
+    rig.jog._busy = lambda: (meet(), jobs.is_running)[1]
+    real_active = type(rig.jog).active.fget
+    jobs.jog_gate = lambda: (meet(), real_active(rig.jog))[1]
+    rig.hold()  # a lease, so tick() reaches the busy check
+    state['armed'] = True
+    results = {}
+    t_tick = threading.Thread(target=lambda: rig.jog.tick(), daemon=True)
+    t_submit = threading.Thread(
+        target=lambda: results.setdefault('job', _submit_home(jobs)), daemon=True
+    )
+    t_tick.start()
+    t_submit.start()
+    t_tick.join(8.0)
+    t_submit.join(8.0)
+    assert not t_tick.is_alive() and not t_submit.is_alive(), 'jog.tick / jobs.submit kilitlendi'
+    barrier.abort()
+
+
+def _submit_home(jobs):
+    try:
+        return jobs.submit(parse_command('home'))
+    except Exception as exc:  # Busy (jog active) is a fine answer; hanging is not
+        return exc
 
 
 # ---- over HTTP ------------------------------------------------------------------------------

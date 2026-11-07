@@ -27,6 +27,7 @@ setup(
             'agent_check = robot_viz.agent_check:main',
             'integration_check = robot_viz.integration_check:main',
             'jog_check = robot_viz.jog_check:main',
+            'api_latency = robot_viz.api_latency:main',
             'waypoint_check = robot_viz.waypoint_check:main',
             'camera_api_check = robot_viz.camera_api_check:main',
             'model_check = robot_viz.model_check:main',
