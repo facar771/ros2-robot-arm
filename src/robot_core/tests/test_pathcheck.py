@@ -1,13 +1,16 @@
 """F4a check_path: the safe box along a joint-space path (ROS-free)."""
+import inspect
 import math
 
 import numpy as np
 import pytest
 from robot_core.kinematics import Chain
-from robot_core.pathcheck import PathError, check_path
+from robot_core.pathcheck import APPROACH_EPS, PathError, check_path
 from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
 from robot_core.safezone import SafeZone
+
+from robot_core import pathcheck
 
 # ready -> LEAVE: both ends inside the box, the straight joint-space path pokes out of it
 READY = [0.0, -0.1, 1.65, 0.0, 1.2, 0.0]
@@ -86,10 +89,16 @@ def test_path_that_stays_inside_passes_and_each_waypoint_segment_is_covered(prof
 
 # ---- start outside: approach only ---------------------------------------------------------------
 def test_start_outside_moving_away_is_rejected_at_the_first_step(profile):
-    home = profile.named_poses['home']
-    result = check_path([home, profile.named_poses['cnc']], profile)       # cnc is farther away
+    home = np.array(profile.named_poses['home'])
+    away = home.copy()
+    away[1] -= 0.3                          # joint 2 back: TCP 542 mm -> 604 mm from the box
+    result = check_path([home, away], profile)
     assert not result.ok and result.violation.side == 'approach'
     assert 'yalnız kutuya yaklaşırken' in result.reason and result.violation.fraction < 0.1
+    # home -> cnc first drifts 0.2 mm outward (inside the 2 mm noise allowance, F4b decision A),
+    # then approaches, but cnc itself is outside: still rejected, now as "never enters"
+    result = check_path([home, profile.named_poses['cnc']], profile)
+    assert not result.ok and 'hiç girmiyor' in result.reason
 
 
 def test_start_outside_must_stay_inside_after_entering(profile):
@@ -183,3 +192,93 @@ def test_malformed_input_raises_path_error(profile):
         with pytest.raises(PathError):
             check_path([READY, READY], profile, **kwargs)
     assert math.isfinite(check_path([READY, READY], profile).max_chord_bound)
+
+
+# ---- approach noise: running minimum + 2 mm (Robot_1 decision A) ---------------------------------
+class _LinearChain:
+    """TCP = first three joint values: path points ARE TCP points, so the test controls the
+    distance to the box exactly (the real chain is covered by the tests above)."""
+    dof = 6
+
+    def __init__(self, profile):
+        pass
+
+    def fk(self, q):
+        t = np.eye(4)
+        t[:3, 3] = np.asarray(q, float)[:3]
+        return t
+
+
+@pytest.fixture
+def linear(profile, monkeypatch):
+    monkeypatch.setattr(pathcheck, 'Chain', _LinearChain)
+    zone = SafeZone((0.05, -0.5, 0.02), (0.75, 0.5, 0.7), 'world')
+
+    def run(xs, tail=None, eps=None, z=0.3):
+        pts = [[x, 0.0, z, 0.0, 0.0, 0.0] for x in xs]
+        if tail:
+            pts += [[x, 0.0, z, 0.0, 0.0, 0.0] for x in tail]
+        return check_path(pts, profile, zone)
+
+    return run
+
+
+def test_approach_epsilon_is_a_fixed_2_mm_constant_nobody_can_pass_in(profile):
+    assert APPROACH_EPS == 0.002
+    assert 'eps' not in ' '.join(inspect.signature(check_path).parameters)
+    assert not hasattr(profile, 'approach_eps') and not hasattr(profile.safety, 'approach_eps')
+
+
+def test_epsilon_noise_passes_while_approaching(linear):
+    # 0.35 m outside, back off 1.9 mm (noise), then on into the box
+    assert linear([-0.30, -0.3019, 0.30]).ok
+    # the exact old failure shape: 0.1 mm bump
+    assert linear([-0.30, -0.2999, 0.30]).ok
+
+
+def test_more_than_2_mm_outward_drift_is_rejected(linear):
+    r = linear([-0.30, -0.3025, 0.30])
+    assert not r.ok and r.violation.side == 'approach'
+    assert 'en küçük' in r.reason and abs(r.violation.excess - 0.0025) < 1e-9
+    assert not linear([-0.30, -0.305, 0.30]).ok                       # the old test: 5 mm
+
+
+def test_drift_in_small_steps_does_not_accumulate_slack(linear):
+    # every step is only 1 mm outward (< eps), but the running minimum stays at -0.30
+    r = linear([-0.30, -0.301, -0.302, -0.303, -0.304, 0.30])
+    assert not r.ok and r.violation.side == 'approach'
+    # a step back inward resets nothing: min is the smallest distance so far, not the last one
+    r = linear([-0.30, -0.301, -0.30, -0.301, -0.30, -0.3011, -0.3022, 0.30])
+    assert not r.ok
+    # progress that DOES approach lowers the reference: 2 mm over the NEW minimum is the limit
+    assert linear([-0.30, -0.20, -0.2019, 0.30]).ok is True
+    assert linear([-0.30, -0.20, -0.2025, 0.30]).ok is False          # far below the start's 0.35
+
+
+def test_after_the_first_inside_sample_the_box_is_strict(linear):
+    assert linear([-0.30, 0.06, 0.30]).ok
+    # in, then 0.1 mm over the wall: no epsilon inside (walls and the inside phase get none)
+    r = linear([-0.30, 0.06, 0.0499])
+    assert not r.ok and r.violation.side == 'lower' and 'güvenli kutunun dışında' in r.reason
+    # exactly on the wall counts as inside, so entering ON the wall and staying on it passes
+    assert linear([-0.30, 0.05, 0.05, 0.30]).ok
+    # and the epsilon does not widen the wall for a start INSIDE the box
+    assert not linear([0.06, 0.0499]).ok
+
+
+def test_epsilon_does_not_reach_the_upper_wall_or_a_path_that_never_enters(linear):
+    assert not linear([0.30, 0.7501]).ok                              # inside start, 0.1 mm over
+    r = linear([-0.30, -0.3019])                                      # noise only, never enters
+    assert not r.ok and 'hiç girmiyor' in r.reason
+
+
+def test_mutation_switching_the_rule_off_or_back_to_zero_breaks_these_tests(
+        linear, monkeypatch):
+    """Mutation proof: the rule is real, the tests above are sensitive to it. eps = 0 (the old
+    rule) rejects the noise case; a huge eps (rule off) accepts the 5 mm drift."""
+    assert linear([-0.30, -0.3019, 0.30]).ok and not linear([-0.30, -0.305, 0.30]).ok
+    monkeypatch.setattr(pathcheck, 'APPROACH_EPS', 0.0)
+    assert not linear([-0.30, -0.3019, 0.30]).ok                      # noise test would fail
+    monkeypatch.setattr(pathcheck, 'APPROACH_EPS', 1e9)
+    assert linear([-0.30, -0.305, 0.30]).ok                           # drift test would fail
+    assert linear([-0.30, -0.301, -0.302, -0.303, -0.304, 0.30]).ok   # accumulation test too

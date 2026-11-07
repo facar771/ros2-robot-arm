@@ -96,7 +96,11 @@ def run_demo_scenario(skills: Skills, tool: ToolPositionPort,
         kind = step.action[0]
         try:
             if kind == 'home':
-                outcome = skills.go_to_named_pose('home')
+                # "Eve dön": from anywhere (ready first, then the slow park move); a skills object
+                # without it (the Hub's simulator) keeps the plain named pose
+                home = getattr(skills, 'return_home', None) or (
+                    lambda: skills.go_to_named_pose('home'))
+                outcome = home()
             else:
                 outcome = skills.go_above(step.action[1], step.action[2])
         except Exception as exc:    # noqa: BLE001 - skills do not raise; a broken fake must not either

@@ -32,8 +32,9 @@ from robot_core.safezone import SafeZone
 # Tool pointing straight down: link z axis = world -z (a half turn about y), quaternion (x,y,z,w).
 TOOL_DOWN: Tuple[float, float, float, float] = (0.0, 1.0, 0.0, 0.0)
 # Failures that say nothing about reachability: no "try another height" hint for them.
-NO_REACH_HINT = ('', 'SAFE_ZONE', 'PREEMPTED', 'TIMED_OUT')
-SKILLS = ('list_objects', 'go_to_named_pose', 'go_to_position', 'go_above')
+NO_REACH_HINT = ('', 'SAFE_ZONE', 'PREEMPTED', 'TIMED_OUT', 'PATH_ZONE', 'PARK_REJECTED')
+OWN_CODES = ('PATH_ZONE', 'PARK_REJECTED', 'UNKNOWN_POSE')   # F4b: robot_core.pathguard
+SKILLS = ('list_objects', 'go_to_named_pose', 'return_home', 'go_to_position', 'go_above')
 
 
 class Skills:
@@ -78,8 +79,28 @@ class Skills:
             return self._done('go_to_named_pose', args, SkillResult(
                 False, 'go_to_named_pose',
                 f"bilinmeyen poz '{name}'. Geçerli pozlar: {', '.join(known)}"))
-        return self._done('go_to_named_pose', args, self._joint_move(
-            'go_to_named_pose', JointTarget(tuple(values), str(name).lower())))
+        key = str(name).lower()
+        named = getattr(self._motion, 'move_to_named_pose', None)
+        if named is None:                       # a bare motion port (developer tools, fakes)
+            return self._done('go_to_named_pose', args, self._joint_move(
+                'go_to_named_pose', JointTarget(tuple(values), key)))
+        return self._done('go_to_named_pose', args, self._run_motion(
+            'go_to_named_pose', lambda: named(key, tuple(values)), {'pose': key}))
+
+    def return_home(self) -> SkillResult:
+        """Return to 'home' ("Eve dön"): when the arm is not at 'ready' it first goes there (a
+        normal, safe-box-checked move), then makes the slow ready -> home transit. The ``home``
+        command (Hub's home button, the agent's ``go_home``) runs this."""
+        values = self._config.poses.get('home')
+        if values is None:
+            return self._done('return_home', {}, SkillResult(
+                False, 'return_home', "SRDF'te 'home' pozu yok"))
+        home = getattr(self._motion, 'return_home', None)
+        if home is None:
+            return self._done('return_home', {}, self._joint_move(
+                'return_home', JointTarget(tuple(values), 'home')))
+        return self._done('return_home', {}, self._run_motion(
+            'return_home', lambda: home(tuple(values)), {'pose': 'home'}))
 
     def go_to_position(self, x: float, y: float, z: float) -> SkillResult:
         """Move the tool tip to (x, y, z) metres in the world frame with the tool pointing
@@ -172,16 +193,22 @@ class Skills:
         return self._from_motion(skill, result, {'target': [x, y, z]})
 
     def _joint_move(self, skill: str, target: JointTarget) -> SkillResult:
+        return self._run_motion(skill, lambda: self._motion.move_to(target),
+                                {'pose': target.label})
+
+    def _run_motion(self, skill: str, move: Any, data: Dict[str, Any]) -> SkillResult:
         try:
-            result = self._motion.move_to(target)
+            result = move()
         except Exception as exc:    # noqa: BLE001
             return SkillResult(False, skill, f'hareket katmanı hatası: {type(exc).__name__}: {exc}')
-        return self._from_motion(skill, result, {'pose': target.label})
+        return self._from_motion(skill, result, data)
 
     @staticmethod
     def _from_motion(skill: str, result: MotionResult, data: Dict[str, Any]) -> SkillResult:
         if result.ok:
             return SkillResult(True, skill, 'hedefe ulaşıldı', result.code_name, data)
+        if result.code_name in OWN_CODES:       # F4b: the message IS the explanation
+            return SkillResult(False, skill, result.message, result.code_name, data)
         hint = hint_for(result.code_name)
         why = result.code_name or result.message or 'bilinmeyen neden'
         text = f'hareket başarısız ({why})' + (f': {hint}' if hint else '')

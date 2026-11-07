@@ -108,10 +108,17 @@ CANCEL_MESSAGE = 'iş iptal ediliyor: yeni hareket başlatılmadı'
 
 class GuardedMotion:
     """MotionPort + PosePort that refuse new goals while the e-stop is latched or the running job
-    is being cancelled (so a scenario ends at its next step)."""
+    is being cancelled (so a scenario ends at its next step).
 
-    def __init__(self, motion: Any, estop: EStop, cancel: Optional[CancelFlag] = None):
-        self._motion, self._estop, self._cancel = motion, estop, cancel
+    With a ``guard`` (:class:`robot_core.pathguard.PathGuard`, F4b) every goal also goes
+    plan -> safe-box check along the path -> execute; without one (tests, developer tools) the
+    motion is passed through unchanged."""
+
+    def __init__(self, motion: Any, estop: EStop, cancel: Optional[CancelFlag] = None,
+                 guard: Any = None):
+        self._motion, self._estop, self._cancel, self._guard = motion, estop, cancel, guard
+        if guard is not None:
+            guard.set_abort(self._refusal)      # asked again right before the path is executed
 
     def _refusal(self) -> Optional[MotionResult]:
         if self._estop.is_set:
@@ -121,10 +128,24 @@ class GuardedMotion:
         return None
 
     def move_to(self, target: JointTarget) -> MotionResult:
-        return self._refusal() or self._motion.move_to(target)
+        mover = self._guard if self._guard is not None else self._motion
+        return self._refusal() or mover.move_to(target)
 
     def move_to_pose(self, target: PoseTarget) -> MotionResult:
-        return self._refusal() or self._motion.move_to_pose(target)
+        mover = self._guard if self._guard is not None else self._motion
+        return self._refusal() or mover.move_to_pose(target)
+
+    def move_to_named_pose(self, name: str, values: Sequence[float]) -> MotionResult:
+        """``go_to_named_pose``: the only goal that may use the park exemption (home <-> ready)."""
+        if self._guard is not None:
+            return self._refusal() or self._guard.move_to_named_pose(name, values)
+        return self._refusal() or self._motion.move_to(JointTarget(tuple(values), str(name)))
+
+    def return_home(self, home_values: Sequence[float]) -> MotionResult:
+        """"Eve dön": ready first (if needed), then the ready -> home park transit."""
+        if self._guard is not None:
+            return self._refusal() or self._guard.return_home()
+        return self._refusal() or self._motion.move_to(JointTarget(tuple(home_values), 'home'))
 
 
 def max_speed(velocities: Optional[Dict[str, float]], names: Sequence[str]) -> Optional[float]:
