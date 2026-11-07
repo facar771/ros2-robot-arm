@@ -302,7 +302,10 @@ def run(base: str, hub_dir: str, config, state: JointStateCache, buffer: Buffer,
             'arguments': {'color': 'red', 'duration_s': 60}})))
         worker.start()
         moving = wait_for(lambda: backend.snapshot().get('moving') is True, 60.0, 0.1)
-        time.sleep(0.5)
+        # F4b (B'): stop once the tool is inside the box (the park transit's first part is outside;
+        # an e-stop there needs the F4c recovery before the next task motion)
+        wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 60.0, 0.1)
+        time.sleep(0.3)
         t_stop = time.monotonic()
         agent.request_stop('integration Ctrl-C')
         t_back = time.monotonic()
