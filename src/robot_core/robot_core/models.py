@@ -27,6 +27,8 @@ class MotionResult:
     code: Optional[int] = None
     code_name: str = ''
     message: str = ''
+    # F4b: stages that RAN, e.g. ('park_gecisi', 'hareket'); () = a single stage
+    steps: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

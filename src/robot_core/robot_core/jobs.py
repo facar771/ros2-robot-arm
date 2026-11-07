@@ -29,8 +29,9 @@ from robot_core.webcmd import Busy, Command, CommandOutcome, CommandRunner
 
 log = logging.getLogger('robot_core.jobs')
 
-DEFAULT_TIMEOUTS = {'home': 90.0, 'ready': 90.0, 'goto_waypoint': 90.0, 'objects': 30.0,
-                    'above': 120.0, 'demo_scenario': 300.0}
+# F4b: a task motion from home is two stages (park transit home -> ready, then the motion): +30 s
+DEFAULT_TIMEOUTS = {'home': 90.0, 'ready': 90.0, 'goto_waypoint': 120.0, 'objects': 30.0,
+                    'above': 150.0, 'demo_scenario': 360.0}
 TIMEOUT_MIN, TIMEOUT_MAX = 1.0, 600.0
 CANCEL_WAIT_S = 3.0
 HISTORY = 50

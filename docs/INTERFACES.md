@@ -105,7 +105,7 @@ ise `409` + `error` (kilit korunur). Zaten hazırsa `200` + `"changed": false`. 
 ### İşler: `POST /api/jobs` (Hub/otomasyonun asıl kapısı)
 Gövde (`Content-Type: application/json`): `{"command": "above green 0.35", "timeout_s": 60}`; komut aynı
 beyaz listeden geçer (`home`, `objects`, `above <renk> [m]`, `demo_scenario`), `timeout_s` isteğe bağlı
-(1-600 s; varsayılan: home 90, objects 30, above 120, demo_scenario 300). **Aynı anda tek iş.**
+(1-600 s; varsayılan: home 90, objects 30, goto_waypoint 120, above 150, demo_scenario 360; F4b: +30 s için, kutu dışındaki home’dan görev hareketi iki aşamadır). **Aynı anda tek iş.**
 
 | Durum | Anlam |
 |---|---|
@@ -813,9 +813,16 @@ mevcut komutların reddetme nedenleri ve `home`'un anlamı (aşağıda) değişi
   yoluna çıkılamıyorsa home'a geçilmez ve mesaj söyler. `ready` komutu: `home`'dayken park geçişidir, başka yerden normal bir
   kutu denetimli harekettir. Park dosyası yüklenemezse `web_view` yine açılır (kutu denetimi açık kalır), yalnız park geçişi ve
   "Eve dön" `PARK_REJECTED` verir ve nedeni söyler; hiçbir yol denetimsiz çalışmaz.
-- **Yaklaşma gürültüsü (Robot_1 kararı A):** başlangıç kutu dışındaysa (home) yaklaşma evresinde kutuya uzaklık, o ana kadarki
-  EN KÜÇÜK uzaklığın en çok **2 mm** üstüne çıkabilir (`pathcheck.APPROACH_EPS`, kodda sabit; profil/yaml/API ile değişmez,
-  birikmez). Kutu duvarına, iç kutuya ve park zarfına tolerans eklenmez: ilk içeri örnekten sonra yol sıkı biçimde içeride kalır.
+- **Görev hareketi kutu İÇİNDEN başlar (Robot_1 kararı B′, tolerans yok):** `go_to_position`, `go_above`, `goto_waypoint` (ve kutu
+  denetimli adlandırılmış pozlar) yalnız başlangıç TCP'si güvenli kutudaysa planlanır. Başlangıç kutu dışındaysa ve eklemler bir park
+  pozuna (`home`) `ready_tolerance` (0,02 rad) içindeyse, önce doğrulanmış park geçişi `home → ready`, sonra plan `ready`'den
+  başlar; aksi halde **reddedilir** ("robot güvenli kutunun dışında ve bilinen park pozunda (home) değil", robot hareket etmez).
+  Muafiyet genişlemez (yalnız `home ↔ ready`, düz eklem çizgisi, hız tavanı). `MotionResult.steps` / skill `data.steps`:
+  `["park_gecisi", "hareket"]`; 1. aşama başarısız/ACİL DUR ise 2. aşama başlamaz ve mesaj kolun nerede kaldığını söyler.
+  Yaklaşma kuralındaki (`check_path`) tolerans/ε kaldırıldı; görev planları kutu dışından başlamadığı için bu kuralı kullanmaz.
+  Hub/ajan metni: "önce 'ready' pozuna gidecek". İş zaman aşımı varsayılanları +30 s (iki aşama için).
+  **Bilinen açık (F4c):** park geçişinin ortasında ACİL DUR olursa kol ne home'da ne ready'dedir; sonraki görev hareketi bu durumda
+  reddedilir (kurtarma geçişi F4c'de).
 - **Park geçişi hızı:** `min(park.max_velocity_fraction, etkin velocity_scale)`; etkin ölçek `max_velocity_scale` tavanına zaten
   kısıtlıdır, yani park geçişi hiçbir zaman başka bir hareketten hızlı değildir.
 - **Kapsam ve sınırlar (açıkça):** kutu yalnız uç noktayı (TCP) sınırlar; dirsek ve bilek kutu dışına çıkabilir (ayrı karar).

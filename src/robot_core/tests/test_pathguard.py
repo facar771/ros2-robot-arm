@@ -177,15 +177,127 @@ def test_no_joint_state_means_no_motion(profile, park, zone):
     assert not guard.move_to(JointTarget(IN_B)).ok and planner.executed == []
 
 
-def test_start_outside_the_box_may_only_approach(profile, park, zone):
+# ---- B' decision: a task motion starts INSIDE the box, from home via the park transit ---------
+def test_task_motion_from_home_is_two_stages_park_transit_then_the_motion(profile, park, zone):
+    home, ready = profile.named_poses['home'], profile.named_poses['ready']
+    guard, planner, state = make(profile, park, zone, home, [line(IN_B, IN_A)])
+    out = guard.move_to(JointTarget(IN_A, 'a'))
+    assert out.ok and out.steps == ('park_gecisi', 'hareket')
+    assert len(planner.timed) == 1 and len(planner.executed) == 1       # park first, then MoveIt
+    assert planner.planned and tuple(planner.timed[0][1][-1]) == tuple(ready)   # planned FROM ready
+    assert state.q == IN_A
+    # pose goals take the same road
+    guard, planner, state = make(profile, park, zone, home, [line(IN_B, IN_A)])
+    out = guard.move_to_pose(PoseTarget(0.4, 0.0, 0.3, label='p'))
+    assert out.ok and out.steps == ('park_gecisi', 'hareket')
+
+
+def test_a_start_inside_the_box_is_one_stage_and_has_no_steps(profile, park, zone):
+    guard, planner, _ = make(profile, park, zone, IN_A, [line(IN_A, IN_B)])
+    out = guard.move_to(JointTarget(IN_B))
+    assert out.ok and out.steps == () and planner.timed == []
+
+
+def test_stage_one_refused_means_no_motion_at_all(profile, park, zone):
     home = profile.named_poses['home']
-    ready = profile.named_poses['ready']
-    guard, planner, _ = make(profile, park, zone, home, [line(home, ready)])
-    assert guard.move_to(JointTarget(ready, 'ready')).ok                 # home -> ready: approach
-    cnc = profile.named_poses['cnc']
-    guard, planner, _ = make(profile, park, zone, ready, [line(ready, cnc)])
-    out = guard.move_to(JointTarget(cnc, 'cnc'))                         # ready -> cnc: leaves
-    assert not out.ok and planner.executed == []
+    guard, planner, state = make(profile, park, zone, home, [line(IN_B, IN_A)],
+                                 valid='çarpışma var')                  # park line collides
+    out = guard.move_to(JointTarget(IN_A, 'a'))
+    assert not out.ok and out.steps == () and 'park geçişi' in out.message
+    assert planner.planned == [] and planner.timed == [] and state.q == tuple(home)
+
+
+def test_estop_during_the_park_transit_stops_before_stage_two(profile, park, zone):
+    home = profile.named_poses['home']
+    estop = EStop()
+    refusal = lambda: MotionResult(False, message='ACİL DUR') if estop.is_set else None  # noqa: E731
+    guard, planner, state = make(profile, park, zone, home, [line(IN_B, IN_A)], abort=refusal)
+    run = planner.execute_timed
+
+    def stopped_midway(times, pos, vel):                                 # the e-stop lands in it
+        run(times, pos, vel)
+        estop.trip('park sırasında')
+        return MotionResult(True, 1, 'SUCCESS')
+
+    planner.execute_timed = stopped_midway
+    out = guard.move_to(JointTarget(IN_A, 'a'))
+    assert not out.ok and out.message.startswith('ACİL DUR') and out.steps == ('park_gecisi',)
+    assert planner.planned == [] and planner.executed == []              # stage 2 never started
+    # and a failing stage 1 (executor cancelled it) does not start stage 2 either
+    estop.reset()
+    guard, planner, _ = make(profile, park, zone, home, [line(IN_B, IN_A)])
+    planner.execute_timed = lambda *a: MotionResult(False, 6, 'PREEMPTED', 'iptal')
+    assert not guard.move_to(JointTarget(IN_A)).ok and planner.planned == []
+
+
+def test_a_failed_stage_two_says_the_arm_is_at_ready(profile, park, zone):
+    home = profile.named_poses['home']
+    guard, planner, _ = make(profile, park, zone, home,
+                             [lambda q: PlanResult(False, code_name='NO_IK_SOLUTION')])
+    out = guard.move_to_pose(PoseTarget(0.4, 0.0, 0.3))
+    assert not out.ok and out.steps == ('park_gecisi',) and "'ready' pozunda" in out.message
+
+
+def test_outside_the_box_and_not_at_home_is_refused_without_moving(profile, park, zone):
+    home = profile.named_poses['home']
+    far = tuple(np.array(home) + np.array([0.0, -0.3, 0.0, 0.0, 0.0, 0.0]))   # outside, not home
+    guard, planner, state = make(profile, park, zone, far, [line(IN_B, IN_A)])
+    out = guard.move_to(JointTarget(IN_A))
+    assert not out.ok and 'bilinen park pozunda' in out.message and out.code_name == CODE_PATH
+    assert planner.planned == [] and planner.timed == [] and state.q == far
+    # a little off home (> ready_tolerance 0.02 rad) is also "not at the known park pose"
+    off = tuple(np.array(home) + np.array([0.0, 0.03, 0.0, 0.0, 0.0, 0.0]))
+    guard, planner, _ = make(profile, park, zone, off, [line(IN_B, IN_A)])
+    assert not guard.move_to(JointTarget(IN_A)).ok and planner.timed == []
+    # no park file: nothing outside the box is ever planned
+    guard, planner, _ = make(profile, park, zone, home, [line(IN_B, IN_A)], with_park=False)
+    assert not guard.move_to(JointTarget(IN_A)).ok and planner.planned == []
+    # within 0.02 rad of home still counts as home
+    near = tuple(np.array(home) + np.array([0.0, 0.015, 0.0, 0.0, 0.0, 0.0]))
+    guard, planner, _ = make(profile, park, zone, near, [line(IN_B, IN_A)])
+    assert guard.move_to(JointTarget(IN_A)).ok
+
+
+def test_the_exemption_does_not_grow_the_task_plan_never_starts_outside(profile, park, zone):
+    """No plan is ever checked from a start outside the box: the approach rule stays a
+    check_path property (F4a), unused by task motions, and no epsilon exists anywhere."""
+    home = profile.named_poses['home']
+    guard, planner, _ = make(profile, park, zone, home, [line(IN_B, IN_A)])
+    starts = []
+    real = check_path
+
+    import robot_core.pathguard as pg
+
+    def spy(path, *a, **k):
+        if len(path) >= 2:                  # (the one-point start probe is not a plan check)
+            starts.append(real([path[0]], *a, **k).ok)
+        return real(path, *a, **k)
+
+    pg_check = pg.check_path
+    pg.check_path = spy
+    try:
+        assert guard.move_to(JointTarget(IN_A)).ok
+    finally:
+        pg.check_path = pg_check
+    assert starts and all(starts), 'every checked path starts inside the box'
+
+
+def has_epsilon(text):
+    import re
+    return bool(re.search(r'APPROACH_EPS|approach_eps|\beps\b|epsilon', text, re.I))
+
+
+def test_no_epsilon_in_any_code_path_and_mutation_would_break_it():
+    """B' decision: the (A) epsilon rule is gone from every code path. Source scan; mutation: the
+    same scan flags the old (A) code, so putting the epsilon back breaks this test."""
+    import inspect
+
+    from robot_core import pathcheck, pathguard
+    for module in (pathcheck, pathguard):
+        assert not has_epsilon(inspect.getsource(module)), module.__name__
+    assert not hasattr(pathcheck, 'APPROACH_EPS')
+    assert 'dist > prev_d + 1e-12' in inspect.getsource(pathcheck)       # the original strict rule
+    assert has_epsilon('if dist - min_d > eps:  # (A)') and has_epsilon('APPROACH_EPS = 0.002')
 
 
 # ---- e-stop and cancel keep working ----------------------------------------------------------

@@ -56,11 +56,13 @@ class ConfirmRequest:
     arguments: Dict[str, Any]
     command: str
     target: Optional[List[float]] = None
+    note: str = ''                      # F4b: e.g. "önce 'ready' pozuna gidecek (park geçişi)"
 
     def describe(self) -> str:
         where = f' (hedef {[round(v, 3) for v in self.target]})' if self.target else ''
         args = json.dumps(self.arguments, ensure_ascii=False)
-        return f"{self.tool} {args} -> '{self.command}'{where}"
+        extra = f'; {self.note}' if self.note else ''
+        return f"{self.tool} {args} -> '{self.command}'{where}{extra}"
 
 
 @dataclass
@@ -231,25 +233,42 @@ class ToolExecutor:
                            f'({self.policy.max_motion_calls}); insan onayıyla yeniden başlat')
         return None
 
+    @staticmethod
+    def _staged_note(doc: Dict[str, Any], command: str) -> str:
+        """F4b: a task motion that starts OUTSIDE the safe box (the arm is at home) runs in two
+        stages on the robot side: park transit to 'ready', then the motion. Say so up front."""
+        if command.split()[:1] in (['home'], ['ready'], ['stop'], ['reset'], []):
+            return ''
+        pos = ((doc.get('tool') or {}).get('position')) or None
+        box = (((doc.get('robot') or {}).get('safety') or {}).get('zone') or {}).get('box')
+        if not pos or not box or len(pos) != 3:
+            return ''
+        if all(box[a][0] <= v <= box[a][1] for a, v in zip('xyz', pos)):
+            return ''
+        return ("robot güvenli kutunun dışında (home): önce 'ready' pozuna gidecek "
+                '(park geçişi), sonra asıl hareketi yapacak')
+
     def _needs_ok(self, tool: str, risk: str, arguments: Dict[str, Any], command: str,
-                  target) -> Optional[ToolResult]:
+                  target, note: str = '') -> Optional[ToolResult]:
         """Confirmation (None: given or not needed)."""
         if risk not in ('motion', 'long') or risk not in self.policy.confirm_risks:
             return None
         if self._confirm is None:
             return _result(tool, 'refused', 'onay gerekli ve onaylayan yok '
                            '(CLI: --yes ya da etkileşimli terminal)')
-        if not self._confirm(ConfirmRequest(tool, dict(arguments), command, target)):
+        if not self._confirm(ConfirmRequest(tool, dict(arguments), command, target, note)):
             return _result(tool, 'refused', 'kullanıcı onaylamadı; hareket verilmedi')
         return None
 
     def _robot_tool(self, spec: ToolSpec, arguments: Dict[str, Any], dry: bool) -> ToolResult:
-        robot = self._state().get('robot') or {}
+        doc = self._state()
+        robot = doc.get('robot') or {}
         refused = self._gate(spec.name, spec.risk, robot)
         if refused:
             return refused
         moves = spec.risk in ('motion', 'long')
         command = command_for(spec.name, arguments)
+        note = self._staged_note(doc, command) if moves else ''
         target = None
         extra: Dict[str, Any] = {}
         if spec.name == 'go_above_object':
@@ -261,7 +280,7 @@ class ToolExecutor:
             return _result(spec.name, 'dry_run', f"kuru çalıştırma: '{command}' çalıştırılırdı; "
                            'hareket GÖNDERİLMEDİ', data={'would_run': command, 'target': target,
                                                          **extra}, dry_run=True)
-        refused = self._needs_ok(spec.name, spec.risk, arguments, command, target)
+        refused = self._needs_ok(spec.name, spec.risk, arguments, command, target, note)
         if refused:
             return refused
         if moves:

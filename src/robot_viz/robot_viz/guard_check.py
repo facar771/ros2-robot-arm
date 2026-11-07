@@ -14,8 +14,12 @@ from the Robot API or the guard itself.
  C. strict named pose: from a random point ``go_to_named_pose('home')`` is REJECTED (arm unmoved),
     while the ``home`` command ("Eve dön") goes to ready first and parks: the arm ends at home
  D. ``ready`` -> ``home`` PASSES (park move), speed <= 30 %, TCP inside the park envelope
- E. emergency stop mid park move: the arm is measured stopped within 2 s, then reset and "Eve dön"
-    brings it home again
+ E. emergency stop mid park move: the arm is measured stopped within 2 s, then reset
+ F. B' decision: a task motion from home (outside the box) is TWO stages: park transit home ->
+    ready, then the motion planned from ready (``steps`` = park_gecisi, hareket; the sampled joints
+    pass through ready); repeated, the pass count is printed
+ G. e-stop during stage 1 of a task motion: stage 2 never starts (arm stopped, not at the target)
+    and from a parked-but-not-home pose the next task motion is refused (F4c recovers it later)
 Exit code 0 only if every check passed.
 """
 import argparse
@@ -34,6 +38,7 @@ from robot_controller.config_loader import load_robot_config, load_safety_config
 from robot_controller.guard_setup import build_path_guard, load_park_config
 from robot_core.jogapi import READY_NAME, READY_POSE
 from robot_core.kinematics import Chain
+from robot_core.models import JointTarget
 from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -51,7 +56,7 @@ SPEED_CAP = 0.3            # park speed, fraction of the 1.0 rad/s joint maximum
 SPEED_SLACK = 1.3          # own measurement over 0.1 s windows may read a bit above the cap
 POSE_TOLERANCE = 0.02      # rad
 STOP_DEADLINE_S = 2.0
-MIN_CHECKS = 20
+MIN_CHECKS = 24
 
 
 def tool_xyz(buffer, tip):
@@ -183,7 +188,7 @@ def run(base: str, node: Node, config, state: JointStateCache, buffer: Buffer,
     record('C home konumu ölçüldü (TF): TCP (0, 0, 1.24)', tcp is not None and abs(tcp[2] - 1.24)
            < 0.02 and abs(tcp[0]) < 0.02, f'TCP {None if tcp is None else np.round(tcp, 3)}')
 
-    # ---- F. the demo scenario's way: from home straight to a Cartesian target inside the box
+    # ---- F. B' decision: from home a task motion is two stages (park transit, then the motion)
     from robot_core.skills import Skills
     from robot_core.supervisor import EStop, GuardedMotion
     skills = Skills(cfg, GuardedMotion(motion, EStop(), None, guard), GuardedMotion(
@@ -191,13 +196,27 @@ def run(base: str, node: Node, config, state: JointStateCache, buffer: Buffer,
     out = skills.return_home()
     record('F "Eve dön" zaten home\'dayken sorunsuz (hareketsiz başarı)', out.ok and near(home),
            out.message)
-    out = skills.go_to_position(0.40, -0.10, 0.35)
-    print(f'       home -> go_to_position(0.40, -0.10, 0.35): ok={out.ok} {out.message[:240]}',
-          flush=True)
-    record('F home\'dan kutu içi kartezyen hedefe yaklaşma kuralıyla gidildi', out.ok,
-           out.message[:200])
-    out = skills.return_home()
-    record('F kartezyen hedeften "Eve dön" geçti', out.ok and near(home), out.message[:200])
+    goal = np.array([0.40, -0.10, 0.35])
+    repeats, good = 3, 0
+    for k in range(1, repeats + 1):
+        t0 = time.monotonic()
+        out = skills.go_to_position(*goal)
+        t1 = time.monotonic()
+        saw_ready = any(max(abs(a - b) for a, b in zip(q, ready)) <= POSE_TOLERANCE
+                        for t, q in sampler.samples if t0 <= t <= t1)
+        tcp = tool_xyz(buffer, config.tip_link)
+        err = None if tcp is None else float(np.linalg.norm(tcp - goal))
+        ok = (out.ok and out.data.get('steps') == ['park_gecisi', 'hareket'] and saw_ready
+              and err is not None and err <= 0.015)
+        good += bool(ok)
+        print(f'       F tekrar {k}/{repeats}: ok={out.ok} steps={out.data.get("steps")} '
+              f'ready\'den geçti={saw_ready} hata={err} {out.message[:160]}', flush=True)
+        record(f'F home -> go_to_position tekrar {k}: iki aşama (park_gecisi, hareket), '
+               f'ready\'den geçti, hedefe <= 1.5 cm', ok, out.message[:160])
+        back = skills.return_home()
+        record(f'F tekrar {k}: kartezyen hedeften "Eve dön" geçti', back.ok and near(home),
+               back.message[:160])
+    print(f'       F iki aşamalı hareket: {good}/{repeats} tekrar geçti', flush=True)
 
     # ---- D. ready -> home passes
     job, _, _ = run_job('ready')
@@ -225,9 +244,42 @@ def run(base: str, node: Node, config, state: JointStateCache, buffer: Buffer,
     record('E iş "cancelled" (acil dur)', bool(job), '')
     s_reset, _, _ = api.post('/api/reset', {})
     record('E reset (kol duruyor) -> 200', s_reset == 200, f'{s_reset}')
-    job, _, _ = run_job('home')
-    record('E acil duruş sonrası "Eve dön" kolu home\'a getirdi', bool(job) and near(home),
-           str(job and job.get('result')))
+    # the arm is now between home and ready: outside the box and NOT at a known park pose, so the
+    # next task motion is refused with a clear message and the arm does not move (F4c adds the
+    # recovery). If the stop happened to land inside the box, "Eve dön" is a normal move instead.
+    tcp_now = np.array(chain.fk(np.array(joints()))[:3, 3])
+    lo, hi = np.array(profile.safety.zone.lower), np.array(profile.safety.zone.upper)
+    outside_now = bool(np.any(tcp_now < lo) or np.any(tcp_now > hi))
+    before = joints()
+    job, _, _ = run_job('home', 'failed' if outside_now else 'done')
+    text = json.dumps(job, ensure_ascii=False) if job else ''
+    if outside_now:
+        record('E park yolunun ortasında durmuş kol (kutu dışı, home/ready değil): sonraki '
+               'hareket REDDEDİLDİ, mesaj açık, kol KIPIRDAMADI',
+               bool(job) and 'bilinen park pozunda' in text
+               and max(abs(a - b) for a, b in zip(before, joints())) < 0.005, text[:240])
+    else:
+        record('E acil duruş sonrası (kutu içinde kaldı) "Eve dön" kolu home\'a getirdi',
+               bool(job) and near(home), text[:200])
+    # recovery for the rest of this check: the developer path (raw MoveIt), not part of the API
+    raw = motion.move_to(JointTarget(tuple(home), 'home'))
+    record('E (geliştirici yolu) kol home\'a geri getirildi', raw.ok and near(home), raw.message)
+
+    # ---- G. e-stop in stage 1 of a task motion: stage 2 must never start
+    status, _, body = api.post('/api/jobs', {'command': 'goto_waypoint wp_c'}, timeout=30.0)
+    wait_for(lambda: max(abs(a - b) for a, b in zip(joints(), home)) > 0.2, 60.0, 0.1)
+    t_stop = time.monotonic()
+    s_stop, _, _ = api.post('/api/stop', {'reason': 'guard_check_g'}, timeout=30.0)
+    job = wait_job(api, body['id'], 'cancelled', 30.0) if status == 202 else None
+    time.sleep(3.0)                                    # long enough for a (wrong) stage 2 to start
+    moved_after = sampler.last_moving_time(t_stop + 2.0, time.monotonic())
+    record('G park geçişinde acil dur: iş cancelled, kol duruyor, 2. aşama başlamadı (hedefte '
+           'DEĞİL, ready\'de DEĞİL, 3 s sonra hâlâ hareketsiz)',
+           s_stop == 200 and bool(job) and moved_after is None and not near(POINT_C, 0.05)
+           and not near(ready), f'(durum {s_stop}, job {bool(job)})')
+    api.post('/api/reset', {})
+    raw = motion.move_to(JointTarget(tuple(home), 'home'))
+    record('G (geliştirici yolu) kol home\'a geri getirildi', raw.ok and near(home), raw.message)
     return results
 
 

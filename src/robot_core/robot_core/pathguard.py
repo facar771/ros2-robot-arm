@@ -6,6 +6,10 @@ through it, so the rule is written once:
 
 1. plan WITHOUT executing (``PlanningPort.plan_*``);
 2. ``pathcheck.check_path`` walks the planned joint path and tests the TCP against the safe box;
+0. the task motion starts INSIDE the box or it is not planned at all (B' decision, no tolerance):
+   from ``home`` (within ``ready_tolerance`` of a park pose) the verified park transit
+   home -> ready runs first and the planning starts from ``ready``; from anywhere else outside
+   the box the goal is refused. The result lists the stages that ran (``steps``);
 3. only a path that passes is executed. A rejected plan is replanned at most ``max_plans`` times
    in total (the planner is randomised); then the error names the violation point and its
    coordinates. The box is never widened and a path is never "repaired".
@@ -27,6 +31,7 @@ the executor itself keeps cancelling a running goal while the e-stop is latched.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -138,6 +143,60 @@ class PathGuard:
         refusal = self._abort()
         if refusal:
             return refusal
+        steps: Tuple[str, ...] = ()
+        start = self._start_inside()
+        if isinstance(start, MotionResult):
+            return start
+        if start is not None:                       # outside the box, parked: park transit first
+            first = self._park_move(start, to_home=False)
+            if not first.ok:
+                return MotionResult(False, first.code, first.code_name, (
+                    "önce 'ready' pozuna park geçişi gerekiyordu ve başarısız oldu, görev "
+                    f'hareketi başlamadı: {first.message or first.code_name}'))
+            steps = ('park_gecisi',)
+            refusal = self._abort()                 # e-stop in stage 1: stage 2 never starts
+            if refusal:
+                return self._staged(refusal, steps)
+            again = self._start_inside()
+            if again is not None:
+                return self._staged(again if isinstance(again, MotionResult) else MotionResult(
+                    False, None, CODE_PATH, ("park geçişinden sonra TCP hâlâ güvenli kutunun "
+                                             'dışında; görev hareketi başlamadı')), steps)
+        return self._staged(self._plan_and_run(plan, what), steps)
+
+    def _staged(self, out: MotionResult, steps: Tuple[str, ...]) -> MotionResult:
+        """Attach the stages that ran. A failure after the park transit says where the arm is."""
+        if not steps:
+            return out
+        if out.ok:
+            return dataclasses.replace(out, steps=steps + ('hareket',))
+        return dataclasses.replace(out, steps=steps, message=(
+            f"{out.message} Park geçişi tamamlandı: robot 'ready' pozunda, görev hareketi "
+            'yapılmadı.'))
+
+    def _start_inside(self):
+        """None: the TCP is inside the box. A park pose name: outside but at that parked pose
+        (within ``ready_tolerance``). A refusal otherwise (outside, or the state is unknown)."""
+        now = self._current()
+        if now is None:
+            return MotionResult(False, None, CODE_PATH,
+                                'eklem durumu okunamadı; başlangıç doğrulanamaz. Robot hareket '
+                                'etmedi.')
+        try:
+            inside = check_path([now], self._profile, self._zone).ok
+        except PathError as exc:
+            return MotionResult(False, None, CODE_PATH, f'başlangıç doğrulanamadı: {exc}')
+        if inside:
+            return None
+        if self._park is not None:
+            for name in self._park.poses:
+                if self._near(self._park.poses[name]):
+                    return name
+        return MotionResult(False, None, CODE_PATH, (
+            'robot güvenli kutunun dışında ve bilinen park pozunda (home) değil; görev hareketi '
+            'planlanmaz (kutu genişletilmedi). Robot hareket etmedi.'))
+
+    def _plan_and_run(self, plan: Callable[[], PlanResult], what: str) -> MotionResult:
         reasons: List[str] = []
         for attempt in range(1, self._cfg.max_plans + 1):
             result = plan()

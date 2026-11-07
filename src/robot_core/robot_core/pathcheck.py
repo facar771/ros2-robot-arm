@@ -21,16 +21,6 @@ Start outside the box (home): only samples where the distance to the box does no
 allowed (approach phase); after the first inside sample every later point must be inside.
 That approach rule is checked at the samples only (the distance function is not certified
 between them). The box limits the TCP only, not the elbow or wrist.
-
-Approach noise (F4b, Robot_1 decision A): a simulated/real ``home`` is never exactly the pose
-the plan starts from, and the first plan points can wobble by a fraction of a millimetre. So in
-the approach phase the distance to the box may not exceed the SMALLEST distance seen so far by
-more than ``APPROACH_EPS`` (2 mm). The reference is the running minimum, not the previous sample,
-so the slack does not accumulate: the path can never be farther than ``min + 2 mm`` however many
-small steps it takes. ``APPROACH_EPS`` is a constant in this file: no profile, yaml or API
-parameter changes it. It is NOT added to the box walls, the inner box or the park envelope: from
-the first inside sample on the path must be strictly inside, and ``check_park_move`` uses no
-slack at all.
 """
 from __future__ import annotations
 
@@ -48,8 +38,6 @@ Vec = Tuple[float, float, float]
 DEFAULT_MAX_STEP = 0.005         # m between samples (TCP path length bound): narrow default
 DEFAULT_MIN_STEP = 1e-4          # m: bisection floor near a wall; leak bound = min_step / 2
 DEFAULT_MAX_SAMPLES = 200_000
-APPROACH_EPS = 0.002             # m: approach-phase noise allowance over the running minimum;
-#                                  hard-coded on purpose (see the module docstring)
 
 
 class PathError(ValueError):
@@ -108,16 +96,11 @@ def check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional[
     if isinstance(box, ParkZone) or (box is not None and not isinstance(box, SafeZone)):
         raise PathError('check_path yalnız SafeZone kabul eder; park zarfı yalnız '
                         'check_park_move ile kullanılır')
-    return _check_path(path, profile, box, max_step, min_step, max_samples,
-                       approach_eps=APPROACH_EPS)
+    return _check_path(path, profile, box, max_step, min_step, max_samples)
 
 
 def _check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional[SafeZone],
-                max_step: float, min_step: float, max_samples: int,
-                approach_eps: Optional[float] = None) -> PathCheck:
-    # ``approach_eps`` is internal (not part of check_path's signature): None = APPROACH_EPS
-    # at call time; ``check_park_move`` passes 0.0 (no slack for the park envelope).
-    eps = APPROACH_EPS if approach_eps is None else float(approach_eps)
+                max_step: float, min_step: float, max_samples: int) -> PathCheck:
     if not (isinstance(max_step, (int, float)) and math.isfinite(max_step) and max_step > 0
             and isinstance(min_step, (int, float)) and 0 < min_step <= max_step
             and isinstance(max_samples, int) and max_samples >= 2):
@@ -153,7 +136,6 @@ def _check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional
     entered: Optional[Vec] = None
     inside_phase = not starts_outside
     prev_d, prev_p = d0, p0
-    min_d = d0                       # running minimum of the distance (approach phase)
 
     def where(seg: int, frac: float, p: np.ndarray) -> str:
         return (f'yol {seg + 1}. parçasında %{frac * 100:.0f} noktasında '
@@ -212,13 +194,11 @@ def _check_path(path: Sequence[Sequence[float]], profile: Profile, box: Optional
                     stack.append((a, qm, pa, pm, fa, fm))
                     stack.append((qm, b, pm, pb, fm, fb))
             else:
-                if dist - min_d > eps:
-                    return violation(seg, frac, q, p, k, 'approach', dist - min_d, (
+                if dist > prev_d + 1e-12:
+                    return violation(seg, frac, q, p, k, 'approach', dist - prev_d, (
                         f'{where(seg, frac, p)}: başlangıç kutu dışında, yalnız kutuya yaklaşırken '
-                        f'izin var ama kutuya uzaklık, o ana kadarki en küçük değer '
-                        f'{min_d * 1000:.1f} mm iken {dist * 1000:.1f} mm oldu '
-                        f'(izinli pay {eps * 1000:.1f} mm); hareket başlamaz'))
-                min_d = min(min_d, dist)
+                        f'izin var ama kutuya uzaklık {prev_d * 1000:.1f} mm -> '
+                        f'{dist * 1000:.1f} mm büyüdü; hareket başlamaz'))
                 if dist == 0.0:
                     inside_phase = True
                     entered = (float(p[0]), float(p[1]), float(p[2]))
@@ -297,8 +277,7 @@ def check_park_move(path: Sequence[Sequence[float]], profile: Profile, park: Par
     else:
         return _reject(f"hareketin bir ucu 'ready' (başlangıç {park.ready_tolerance} rad içinde) "
                        f"ve hedef tam {pose!r} (ya da tersi) olmalı")
-    result = _check_path(pts, profile, park.zone.as_safe_zone(), max_step, min_step, max_samples,
-                         approach_eps=0.0)               # no slack for the park envelope
+    result = _check_path(pts, profile, park.zone.as_safe_zone(), max_step, min_step, max_samples)
     if not result.ok:
         return PathCheck(False, 'park zarfı: ' + result.reason, result.violation, result.samples,
                          result.max_chord_bound, result.leak_bound, result.starts_outside,

@@ -205,9 +205,15 @@ class Skills:
 
     @staticmethod
     def _from_motion(skill: str, result: MotionResult, data: Dict[str, Any]) -> SkillResult:
+        if result.steps:                        # F4b: two stages ran, say so (transparency)
+            data = dict(data, steps=list(result.steps))
         if result.ok:
-            return SkillResult(True, skill, 'hedefe ulaşıldı', result.code_name, data)
-        if result.code_name in OWN_CODES:       # F4b: the message IS the explanation
+            text = 'hedefe ulaşıldı'
+            if result.steps:
+                text += (" (iki aşama: önce 'ready' pozuna park geçişi, sonra hareket; robot "
+                         'kutu dışındaki home pozundaydı)')
+            return SkillResult(True, skill, text, result.code_name, data)
+        if result.steps or result.code_name in OWN_CODES:   # F4b: the message IS the explanation
             return SkillResult(False, skill, result.message, result.code_name, data)
         hint = hint_for(result.code_name)
         why = result.code_name or result.message or 'bilinmeyen neden'
