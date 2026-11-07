@@ -7,7 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 from robot_core.pathguard import PathGuard
 from robot_core.profile import load_profile
 from robot_core.profile_gen import PROFILE_PATH
-from robot_core.safezone import PARK_FILE, ParkConfig, load_park
+from robot_core.safezone import PARK_FILE, ParkConfig, effective_velocity_scale, load_park
 
 
 def load_park_config() -> ParkConfig:
@@ -34,5 +34,8 @@ def build_path_guard(planner, state, config, safety, events=None,
     except Exception as exc:    # noqa: BLE001 - park off, box check stays on
         if log_error is not None:
             log_error(f'park dosyası yüklenemedi, park geçişi ve "Eve dön" kapalı: {exc}')
+    # the park transit obeys the SAME global speed cap as every other motion (read per move)
     return PathGuard(planner, state, config.joint_names, profile, safety.zone, park,
-                     poses=config.poses, events=events)
+                     poses=config.poses, events=events,
+                     velocity_scale=lambda: effective_velocity_scale(
+                         planner.velocity_scale, safety.max_velocity_scale))

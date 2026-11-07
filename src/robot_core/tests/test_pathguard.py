@@ -94,7 +94,8 @@ def make(profile, park, zone, start, plans=(), valid=None, with_park=True, abort
     state = State(start)
     planner = Planner(state, plans, valid)
     guard = PathGuard(planner, state, NAMES, profile, zone, park if with_park else None,
-                      poses=profile.named_poses, abort=abort, **kw)
+                      poses=profile.named_poses, abort=abort,
+                      **{'velocity_scale': lambda: 0.5, **kw})
     return guard, planner, state
 
 
@@ -209,7 +210,8 @@ def test_guarded_motion_asks_the_estop_and_cancel_flag(profile, park, zone):
     estop, cancel = EStop(), CancelFlag()
     state = State(IN_A)
     planner = Planner(state, [line(IN_A, IN_B)])
-    guard = PathGuard(planner, state, NAMES, profile, zone, park, poses=profile.named_poses)
+    guard = PathGuard(planner, state, NAMES, profile, zone, park, poses=profile.named_poses,
+                      velocity_scale=lambda: 0.5)
     motion = GuardedMotion(planner, estop, cancel, guard)
     cancel.set()
     assert not motion.move_to(JointTarget(IN_B)).ok and planner.planned == []
@@ -232,6 +234,66 @@ def test_ready_to_home_is_a_straight_slow_move_without_the_planner(profile, park
     v = np.array(vel)
     assert np.abs(v).max() <= park.max_velocity_fraction * 1.0 + 1e-9   # <= 30 % of the maximum
     assert np.all(np.diff(times) > 0)
+
+
+def peak_ratio(profile, planner):
+    """Largest |joint speed| / joint maximum over the timed park trajectory."""
+    vmax = np.array([j.velocity for j in profile.joints])
+    return float((np.abs(np.array(planner.timed[0][2])) / vmax).max())
+
+
+def test_park_speed_obeys_the_global_velocity_scale_too(profile, park, zone):
+    """Review finding: the park transit used only park.max_velocity_fraction (0.3) and ignored
+    max_velocity_scale / velocity_scale, so max_velocity_scale: 0.2 still ran it at 30 %."""
+    ready, home = profile.named_poses['ready'], profile.named_poses['home']
+    assert park.max_velocity_fraction == 0.3
+    for scale, cap in ((0.2, 0.2), (0.1, 0.1), (0.3, 0.3), (0.5, 0.3), (1.0, 0.3)):
+        guard, planner, _ = make(profile, park, zone, ready, velocity_scale=lambda s=scale: s)
+        assert guard.move_to_named_pose('home', home).ok
+        assert peak_ratio(profile, planner) <= cap + 1e-9, (scale, peak_ratio(profile, planner))
+    # and the way back, and "Eve dön" (ready -> home) use the same cap
+    guard, planner, _ = make(profile, park, zone, home, velocity_scale=lambda: 0.2)
+    assert guard.move_to_named_pose('ready', ready).ok
+    assert peak_ratio(profile, planner) <= 0.2 + 1e-9
+    guard, planner, _ = make(profile, park, zone, ready, velocity_scale=lambda: 0.2)
+    assert guard.return_home().ok and peak_ratio(profile, planner) <= 0.2 + 1e-9
+
+
+def test_a_slower_global_scale_makes_the_park_transit_slower_not_faster(profile, park, zone):
+    ready, home = profile.named_poses['ready'], profile.named_poses['home']
+    took = {}
+    for scale in (0.3, 0.1):
+        guard, planner, _ = make(profile, park, zone, ready, velocity_scale=lambda s=scale: s)
+        assert guard.move_to_named_pose('home', home).ok
+        took[scale] = planner.timed[0][0][-1]
+    assert took[0.1] > took[0.3]
+
+
+def test_global_scale_is_read_per_move_and_a_bad_scale_means_no_park_move(profile, park, zone):
+    ready, home = profile.named_poses['ready'], profile.named_poses['home']
+    scale = {'v': 0.3}
+    guard, planner, state = make(profile, park, zone, ready, velocity_scale=lambda: scale['v'])
+    assert guard.move_to_named_pose('home', home).ok
+    state.q = tuple(ready)
+    planner.timed.clear()
+    scale['v'] = 0.1                                   # the cap changed between two moves
+    assert guard.move_to_named_pose('home', home).ok and peak_ratio(profile, planner) <= 0.1 + 1e-9
+    for bad in (0.0, -1.0, float('nan'), None):
+        state.q = tuple(ready)
+        n = len(planner.timed)
+        scale['v'] = bad
+        out = guard.move_to_named_pose('home', home)
+        assert not out.ok and out.code_name == CODE_PARK and len(planner.timed) == n
+
+
+def test_mutation_park_fraction_alone_would_ignore_the_cap(profile, park, zone, monkeypatch):
+    """Mutation proof for the speed test above: with the global scale ignored (the old code)
+    scale 0.2 yields 30 %, which the test rejects."""
+    ready, home = profile.named_poses['ready'], profile.named_poses['home']
+    monkeypatch.setattr(PathGuard, 'park_fraction', lambda self, scale: park.max_velocity_fraction)
+    guard, planner, _ = make(profile, park, zone, ready, velocity_scale=lambda: 0.2)
+    assert guard.move_to_named_pose('home', home).ok
+    assert peak_ratio(profile, planner) > 0.2 + 1e-9
 
 
 def test_home_to_ready_is_the_same_move_backwards(profile, park, zone):
@@ -288,7 +350,8 @@ def test_a_changed_profile_pose_is_not_exempt(profile, park, zone):
                                                        'home': (0.0, 0.0, 0.0, 0.0, 0.0, 0.01)})
     state = State(ready)
     planner = Planner(state)
-    guard = PathGuard(planner, state, NAMES, moved, zone, park, poses=moved.named_poses)
+    guard = PathGuard(planner, state, NAMES, moved, zone, park, poses=moved.named_poses,
+                      velocity_scale=lambda: 0.5)
     out = guard.move_to_named_pose('home', home)
     assert not out.ok and planner.timed == [] and 'doğrulanmış' in out.message
 
@@ -384,7 +447,8 @@ def test_skills_named_pose_and_home_go_through_the_guard(profile, park, zone):
     config = RobotConfig(NAMES, {}, dict(profile.named_poses))
     state = State(ready)
     planner = Planner(state, [lambda q: PlanResult(True, (tuple(q), tuple(ready)))])
-    guard = PathGuard(planner, state, NAMES, profile, zone, park, poses=profile.named_poses)
+    guard = PathGuard(planner, state, NAMES, profile, zone, park, poses=profile.named_poses,
+                      velocity_scale=lambda: 0.5)
     skills = Skills(config, GuardedMotion(planner, EStop(), None, guard), None, None, zone=zone)
     assert skills.go_to_named_pose('home').ok and planner.planned == []   # park move, no MoveIt
     assert skills.go_to_named_pose('ready').ok and planner.timed.__len__() == 2

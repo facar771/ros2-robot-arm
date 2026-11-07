@@ -813,6 +813,11 @@ mevcut komutların reddetme nedenleri ve `home`'un anlamı (aşağıda) değişi
   yoluna çıkılamıyorsa home'a geçilmez ve mesaj söyler. `ready` komutu: `home`'dayken park geçişidir, başka yerden normal bir
   kutu denetimli harekettir. Park dosyası yüklenemezse `web_view` yine açılır (kutu denetimi açık kalır), yalnız park geçişi ve
   "Eve dön" `PARK_REJECTED` verir ve nedeni söyler; hiçbir yol denetimsiz çalışmaz.
+- **Yaklaşma gürültüsü (Robot_1 kararı A):** başlangıç kutu dışındaysa (home) yaklaşma evresinde kutuya uzaklık, o ana kadarki
+  EN KÜÇÜK uzaklığın en çok **2 mm** üstüne çıkabilir (`pathcheck.APPROACH_EPS`, kodda sabit; profil/yaml/API ile değişmez,
+  birikmez). Kutu duvarına, iç kutuya ve park zarfına tolerans eklenmez: ilk içeri örnekten sonra yol sıkı biçimde içeride kalır.
+- **Park geçişi hızı:** `min(park.max_velocity_fraction, etkin velocity_scale)`; etkin ölçek `max_velocity_scale` tavanına zaten
+  kısıtlıdır, yani park geçişi hiçbir zaman başka bir harekettten hızlı değildir.
 - **Kapsam ve sınırlar (açıkça):** kutu yalnız uç noktayı (TCP) sınırlar; dirsek ve bilek kutu dışına çıkabilir (ayrı karar).
   Denetim, plan noktaları arasının **düz eklem enterpolasyonu** olduğunu varsayar; yürütücünün gerçek spline'ı plan noktaları arasında
   (varsayılan ~0,1 s aralık) bundan sapabilir. Bu sapma `mock` selftest'te park geçişi için ölçüldü (TCP park zarfında), MoveIt

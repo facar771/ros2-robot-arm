@@ -12,7 +12,9 @@ through it, so the rule is written once:
 
 Park transit (the ONE exemption, ``safe_zone.park.yaml``): only for a NAMED pose request
 (``move_to_named_pose``), only ready <-> ``home``, never MoveIt: a straight joint line at
-``max_velocity_fraction`` of the maximum speed, checked by ``check_park_move`` against the park
+``min(max_velocity_fraction, velocity_scale)`` of the maximum speed (the global velocity cap
+``max_velocity_scale`` and the requested ``velocity_scale`` apply to the park transit too, the
+transit is never faster than any other motion), checked by ``check_park_move`` against the park
 envelope and against the planning scene (collision), starting within ``ready_tolerance`` of
 ``ready``. A waypoint called "home" or a pose goal never reaches this code path: they use
 ``move_to`` / ``move_to_pose``, which only know the inner box.
@@ -92,9 +94,13 @@ class PathGuard:
                  profile: Profile, zone: SafeZone, park: Optional[ParkConfig] = None,
                  poses: Optional[Dict[str, Q]] = None, events: Optional[EventSink] = None,
                  abort: Optional[Callable[[], Optional[MotionResult]]] = None,
-                 config: Optional[GuardConfig] = None):
+                 config: Optional[GuardConfig] = None, *,
+                 velocity_scale: Callable[[], float]):
         """``abort``: returns a refusal (e-stop latched, job cancelling) or None; asked before
-        planning and again before every execution. ``park`` None: no park moves at all."""
+        planning and again before every execution. ``park`` None: no park moves at all.
+        ``velocity_scale``: returns the EFFECTIVE global scale (requested, already limited to
+        ``max_velocity_scale``), read at every park move; required on purpose, so a caller cannot
+        forget the global cap. The park transit runs at ``min(park fraction, that scale)``."""
         if config is not None and config.max_plans < 1:
             raise ValueError('max_plans en az 1 olmalı')
         self._planner, self._state = planner, state
@@ -103,9 +109,16 @@ class PathGuard:
         self._events = events or NullEventSink()
         self._abort = abort or (lambda: None)
         self._cfg = config or GuardConfig()
+        self._velocity_scale = velocity_scale
         self._poses = {k.lower(): tuple(v) for k, v in (poses or {}).items()}
         self._vmax = [j.velocity for j in profile.joints]
         self._amax = [j.acceleration for j in profile.joints]
+
+    def park_fraction(self, scale: float) -> float:
+        """Speed fraction of the park transit: the park file's cap, never above the global
+        (effective) velocity scale."""
+        assert self._park is not None
+        return min(self._park.max_velocity_fraction, min(float(scale), 1.0))
 
     def set_abort(self, abort: Callable[[], Optional[MotionResult]]) -> None:
         self._abort = abort
@@ -227,8 +240,16 @@ class PathGuard:
         if bad is not None:
             return MotionResult(False, None, CODE_PARK, (
                 f'park geçişi çarpışma denetiminden geçmedi: {bad}. Robot hareket etmedi.'))
+        try:
+            scale = float(self._velocity_scale())
+        except Exception as exc:    # noqa: BLE001 - unknown scale: no park move
+            return MotionResult(False, None, CODE_PARK, (
+                f'global hız ölçeği okunamadı ({exc}); park geçişi başlamadı.'))
+        if not (math.isfinite(scale) and scale > 0.0):
+            return MotionResult(False, None, CODE_PARK, (
+                f'global hız ölçeği geçersiz ({scale!r}); park geçişi başlamadı.'))
         times, pos, vel = straight_trajectory(now, goal, self._vmax, self._amax,
-                                              self._park.max_velocity_fraction)
+                                              self.park_fraction(scale))
         refusal = self._abort()
         if refusal:
             return refusal

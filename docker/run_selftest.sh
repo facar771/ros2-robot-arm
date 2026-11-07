@@ -97,16 +97,13 @@ case "$MODE" in
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
     sphere) LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
-    # pathguard is NOT in the usage list below on purpose: F4b did not touch the CI files, and
-    # test_repeat_selftest requires every listed mode in ci.yml AND nightly.yml. Add it to the usage
-    # list, ci.yml and nightly.yml together.
     pathguard) LAUNCH=(ros2 launch robot_moveit_config demo.launch.py use_rviz:=false)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=mock use_sim_time:=false); CTRL_TIMEOUT=60 ;;
     gazebo-camera-api) LAUNCH=(ros2 launch robot_vision_ros tracking.launch.py manual:=true tracker:=false)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=gazebo); CTRL_TIMEOUT=240 ;;
     hw) LAUNCH=(ros2 launch robot_hw_bridge hw_stack.launch.py bridge_host:=127.0.0.1 bridge_port:=8771 loop_stall_ms:=300 robot_api_url:=http://127.0.0.1:8080)
                 EXTRA=(ros2 launch robot_viz web_view.launch.py commands:=true mode:=real use_sim_time:=false); CTRL_TIMEOUT=60 ;;
-    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw|jog|gazebo-jog|waypoints|gazebo-waypoints|gazebo-camera-api|model|sphere]"; exit 64 ;;
+    *) echo "usage: run_selftest [mock|gazebo|gazebo-camera|gazebo-perception|gazebo-scene|gazebo-skills|gazebo-viz|gazebo-cmd|gazebo-stop|gazebo-jobs|gazebo-agent|gazebo-integration|gazebo-tracking|hw|jog|gazebo-jog|waypoints|gazebo-waypoints|gazebo-camera-api|model|sphere|pathguard]"; exit 64 ;;
 esac
 echo "[mode] $MODE"
 
