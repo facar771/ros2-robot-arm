@@ -33,12 +33,12 @@ from tf2_ros import Buffer, TransformListener
 
 from robot_viz.stop_check import (
     CREEP_RAD,
-    FAR_FROM_HOME,
     HOME_TOLERANCE,
     LABELS,
     WAIT_S,
     Api,
     Sampler,
+    far_and_inside,
     wait_for,
 )
 from robot_viz.viz_check import tool_from_tf
@@ -63,8 +63,7 @@ def start_far(api: Api, buffer: Buffer, tip: str, home_ref, command='demo_scenar
     t0 = time.monotonic()
     answer = api.post('/api/jobs', {'command': command, **extra}, timeout=30.0)
     took = time.monotonic() - t0
-    away = wait_for(lambda: (lambda p: p and math.dist(p, home_ref) > FAR_FROM_HOME)(
-        tool_from_tf(buffer, tip)), 120.0, 0.1)
+    away = wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 120.0, 0.1)
     return answer, took, bool(away)
 
 

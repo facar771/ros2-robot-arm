@@ -43,6 +43,21 @@ WINDOW_S = 0.1
 CREEP_RAD = 0.01            # the arm may not move more than this after the stop returned
 HOME_TOLERANCE = 0.03       # m
 FAR_FROM_HOME = 0.10        # m: stop only once the tool is this far from home
+
+
+def far_and_inside(api, buffer, tip, home_ref) -> bool:
+    """True once the tool is > FAR_FROM_HOME from home AND inside the safe box.
+
+    F4b (B'): a task motion from home starts with the park transit, whose first part is OUTSIDE
+    the box. An e-stop there leaves the arm at a pose no task motion may start from (F4c adds the
+    recovery); these checks stop the arm once it is inside the box, where every later check can
+    still move it. ``guard_check`` (E/G) measures the outside-the-box case explicitly."""
+    box = (((api.robot() or {}).get('safety') or {}).get('zone') or {}).get('box')
+    pos = tool_from_tf(buffer, tip)
+    if not pos or not box or not home_ref:
+        return False
+    return math.dist(pos, home_ref) > FAR_FROM_HOME and all(
+        box[a][0] <= v <= box[a][1] for a, v in zip('xyz', pos))
 JSON = {'Content-Type': 'application/json'}
 LABELS = {'red', 'green', 'blue'}
 
@@ -170,8 +185,7 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
 
     # 2. stop in the middle of a long motion --------------------------------------------------
     thread, holder = start_async(api, 'demo_scenario')
-    away = wait_for(lambda: (lambda p: p and home_ref and math.dist(p, home_ref) > FAR_FROM_HOME)(
-        tool_from_tf(buffer, config.tip_link)), 120.0, 0.1)
+    away = wait_for(lambda: far_and_inside(api, buffer, config.tip_link, home_ref), 120.0, 0.1)
     mid = api.robot()
     record('demo_scenario çalışıyor: state busy, moving true, current_job var',
            bool(away) and mid['state'] == 'busy' and mid['moving'] is True

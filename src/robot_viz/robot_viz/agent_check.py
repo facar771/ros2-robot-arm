@@ -44,12 +44,12 @@ from tf2_ros import Buffer, TransformListener
 from robot_viz.cmd_check import joint_snapshot, moved
 from robot_viz.stop_check import (
     CREEP_RAD,
-    FAR_FROM_HOME,
     HOME_TOLERANCE,
     LABELS,
     WAIT_S,
     Api,
     Sampler,
+    far_and_inside,
     wait_for,
 )
 from robot_viz.viz_check import tool_from_tf
@@ -180,8 +180,7 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     box = []
     worker = threading.Thread(target=lambda: box.append(runner.run('demo çalıştır')))
     worker.start()
-    away = wait_for(lambda: (lambda p: p and math.dist(p, home_ref) > FAR_FROM_HOME)(
-        tool_from_tf(buffer, tip)), 120.0, 0.1)
+    away = wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 120.0, 0.1)
     t_stop = time.monotonic()
     status, _, stop = api.post('/api/stop', {'reason': 'agent_check insan'}, timeout=30.0)
     t_back = time.monotonic()
@@ -229,8 +228,7 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     proc = subprocess.Popen([sys.executable, '-m', 'robot_agent.cli', '--url', base, '--offline',
                              '--yes', 'demo senaryosunu çalıştır'], stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True)
-    away = wait_for(lambda: (lambda p: p and math.dist(p, home_ref) > FAR_FROM_HOME)(
-        tool_from_tf(buffer, tip)), 120.0, 0.1)
+    away = wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 120.0, 0.1)
     t_int = time.monotonic()
     proc.send_signal(signal.SIGINT)
     try:
