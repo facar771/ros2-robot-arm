@@ -8,11 +8,22 @@ import sys
 
 from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 
-# LLM ajanı (A3): robot_agent + robot_core (yalnızca saf-Python alt kümesi; numpy YOK, ROS YOK) depo kaynağından
-# gömülür. robot_plugins gömülmez (ajan eklenti köprüsü boş katalogla kapalı açılır).
+# LLM ajanı (A3): robot_agent + robot_core (ROS'suz alt küme) depo kaynağından gömülür. robot_plugins gömülmez
+# (ajan eklenti köprüsü boş katalogla kapalı açılır).
+# N7a: robot_core.webcmd artık robot_core.waypoints'i içe aktarıyor (O2) ve o numpy ister (frames/kinematics/se3
+# de). Bu yüzden numpy GÖMÜLÜR (eskiden dışlanmıştı) ve zincirin tamamı CORE_MODULES'te açıkça sayılır. Yeni bir
+# robot_core modülü webcmd zincirine girerse hub-exe.yml artık src/robot_core/** değişince de koşar ve ajan öz
+# sınamasının "ajan etkin" adımında yakalar.
 AGENT_PATHS = ['../../src/robot_agent', '../../src/robot_core']
-CORE_MODULES = ['config', 'errors', 'interpreter', 'models', 'ports', 'safezone', 'scenario', 'skills',
-                'supervisor', 'targets', 'webcmd']
+CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'kinematics', 'models', 'ports', 'profile',
+                'safezone', 'scenario', 'se3', 'skills', 'supervisor', 'targets', 'waypointapi', 'waypoints',
+                'webcmd']
+
+try:
+    import numpy  # noqa: F401  (derleme ortamında yoksa .exe sessizce eksik çıkmasın)
+except ImportError as exc:
+    raise SystemExit('hub.spec: numpy kurulu değil; .exe ajanı (robot_core.waypoints) numpy ister: '
+                     'pip install numpy') from exc
 
 hidden = (
     collect_submodules('uvicorn')            # protokol/loop modülleri dinamik import edilir
@@ -24,7 +35,7 @@ hidden = (
     # anahtar deposu: keyring arka uçlarını entry point (importlib.metadata) ile bulur -> dist-info gömülür,
     # Windows Credential Manager arka ucu (WinVaultKeyring) pywin32-ctypes (win32ctypes) ile çalışır
     + collect_submodules('keyring') + collect_submodules('win32ctypes')
-    + ['yaml', 'segno', 'h11', 'anyio._backends._asyncio', 'tkinter', 'tkinter.ttk', 'tkinter.messagebox']
+    + ['numpy', 'yaml', 'segno', 'h11', 'anyio._backends._asyncio', 'tkinter', 'tkinter.ttk', 'tkinter.messagebox']
 )
 
 a = Analysis(
@@ -32,7 +43,7 @@ a = Analysis(
     pathex=['.'] + AGENT_PATHS,
     datas=[('control_hub/web', 'control_hub/web'), ('config', 'config')] + copy_metadata('keyring'),
     hiddenimports=hidden,
-    excludes=['numpy', 'PIL', 'pytest', 'matplotlib', 'IPython'],
+    excludes=['PIL', 'pytest', 'matplotlib', 'IPython'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

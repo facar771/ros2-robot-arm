@@ -1,16 +1,22 @@
 name: Hub .exe
 
 # Control Hub'ı tek dosya Windows .exe olarak derler, açılışını dener, artifact olarak yükler.
-# Ayrı bir workflow: mevcut ci.yml / nightly.yml'e dokunmaz. Yalnızca Hub dosyaları değişince koşar.
+# Ayrı bir workflow: mevcut ci.yml / nightly.yml'e dokunmaz. Hub dosyaları VE .exe'nin içine paketlenen
+# kaynaklar (src/robot_core, src/robot_agent) değişince koşar: N7a öncesi robot_core'a numpy bağımlılığı eklenince
+# .exe sessizce kırıldı (yol filtresi koşuyu atlamıştı). Artık bu kaynaklardaki değişiklik .exe'yi yeniden dener.
 on:
   pull_request:
     paths:
       - 'apps/control_hub/**'
+      - 'src/robot_core/**'
+      - 'src/robot_agent/**'
       - '.github/workflows/hub-exe.yml'
   push:
     branches: [main]
     paths:
       - 'apps/control_hub/**'
+      - 'src/robot_core/**'
+      - 'src/robot_agent/**'
       - '.github/workflows/hub-exe.yml'
   workflow_dispatch:
 
@@ -43,7 +49,7 @@ jobs:
       - name: Bağımlılıklar (Hub + PyInstaller)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt pyinstaller
+          pip install -r requirements-dev.txt numpy pyinstaller
 
       # Tk bu runner'da açılıyor mu? (pencere testleri ve --gui-selftest buna bağlı). Bilgi amaçlı; tam hata
       # metnini annotation'a yazar, çünkü CI log'u okunamıyor.
