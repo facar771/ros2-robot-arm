@@ -5,6 +5,12 @@
 Aynalananlar: kiralama (tek istemci, 409), sunucu TTL'i (50-500 ms, varsayılan 250), ``ttl_ms: 0`` bırakır,
 acil dur 423, artımlı/basılı-tut ayrımı (403), iş çalışırken 409, çerçeve doğrulaması (400) ve jog etkinken
 çerçeve yazma 409. Çerçeveler **bellekte** tutulur: dosyaya hiçbir şey yazılmaz.
+
+L8 (küresel çerçeve) aynası: ``GET /api/frames`` ``types``/``spheres``/``max_spheres`` taşır; ``PUT``
+gövdesinde ``spheres`` YOKSA küreler korunur, bilinmeyen ``type`` 400 ile adlandırılır;
+``POST /api/frames/reach`` küre için erişim aralığı döndürür. Erişim hesabı SAHTEDİR (başlangıç
+pozundan bağımsız basit bir halka zarfı); gerçek IK/kutu/tekillik hesabı değildir.
+``sphere_support=False`` küreyi bilmeyen eski robotu taklit eder.
 """
 from __future__ import annotations
 
@@ -19,6 +25,11 @@ LEASE_RE = re.compile(r'^[A-Za-z0-9_-]{8,64}$')
 AMOUNTS = (0.1, 1.0, 10.0)
 LEASE_HOLD_S = 2.0
 MAX_FRAMES = 10
+MAX_SPHERES = 10
+SPHERE_MIN_R, SPHERE_MAX_R, MAX_COORD = 0.05, 2.0, 5.0     # frames.py ile aynı sınırlar
+TOOL_AXES = ('x', 'y', 'z', '-x', '-y', '-z')
+NAME_RE = re.compile(r'[A-Za-z][A-Za-z0-9_-]{0,23}')
+FAKE_REACH_M = (0.20, 0.75)            # sahte erişim halkası: tabandan uzaklık (min, max)
 MAX_V = 0.05                                   # m/s (sahte tavan; gerçek robotta hız tavanı sunucudadır)
 Reply = Tuple[int, Dict[str, Any]]
 
@@ -35,7 +46,8 @@ class FakeJog:
     def __init__(self, *, get_tool: Callable[[], Tuple[float, float, float]],
                  set_tool: Callable[[Tuple[float, float, float]], None],
                  is_halted: Callable[[], bool], is_busy: Callable[[], bool],
-                 hold_enabled: bool = True, clock: Callable[[], float] = time.monotonic):
+                 hold_enabled: bool = True, clock: Callable[[], float] = time.monotonic,
+                 sphere_support: bool = True):
         self._get, self._set, self._halted, self._busy = get_tool, set_tool, is_halted, is_busy
         self.hold_enabled, self._clock = hold_enabled, clock
         self._lock = threading.Lock()
@@ -47,6 +59,8 @@ class FakeJog:
         self._v = (0.0, 0.0, 0.0)
         self._rot = [0.0, 0.0, 0.0]
         self.frames: List[Dict[str, Any]] = []
+        self.spheres: List[Dict[str, Any]] = []
+        self.sphere_support = sphere_support
 
     # --- zaman içinde ilerleme (basılı-tut): TTL dolunca hız sıfır ------------------------------
     def _advance(self, now: float) -> None:
@@ -171,18 +185,35 @@ class FakeJog:
 
     # --- çerçeveler (bellekte) -----------------------------------------------------------------
     def frames_doc(self) -> Dict[str, Any]:
-        return {'builtin': ['World', 'Tool'], 'max_frames': MAX_FRAMES, 'frames': list(self.frames)}
+        doc: Dict[str, Any] = {'builtin': ['World', 'Tool'], 'max_frames': MAX_FRAMES,
+                               'frames': [{'type': 'user', **f} for f in self.frames]}
+        if self.sphere_support:
+            doc.update(types=['user', 'sphere'], spheres=[dict(sp) for sp in self.spheres],
+                       max_spheres=MAX_SPHERES)
+        return doc
 
     def frames_put(self, body: Any) -> Reply:
-        if not isinstance(body, dict) or set(body) != {'frames'} or not isinstance(body['frames'], list):
-            return _err(400, 'gövde {"frames": [{"name", "points": {"origin", "x", "xy"}}, ...]} olmalı')
+        keys = {'frames', 'spheres'} if self.sphere_support else {'frames'}
+        if not (isinstance(body, dict) and {'frames'} <= set(body) <= keys
+                and isinstance(body['frames'], list)):
+            return _err(400, 'gövde {"frames": [{"name", "points": {"origin", "x", "xy"}}, ...]'
+                             + (', "spheres": [...] (isteğe bağlı)' if self.sphere_support else '')
+                             + '} olmalı')
         if len(body['frames']) > MAX_FRAMES:
             return _err(400, f'en çok {MAX_FRAMES} çerçeve')
         out, names = [], set()
-        for f in body['frames']:
+        for i, f in enumerate(body['frames']):
+            kind = f.get('type', 'user') if isinstance(f, dict) else 'user'
+            if kind != 'user':
+                if kind == 'sphere' and self.sphere_support:
+                    return _err(400, f'frames[{i}]: küre çerçeveleri "spheres" listesinde '
+                                     'gönderilir, "frames"te değil')
+                known = ", ".join(self.frames_doc().get("types", ["user"]))
+                return _err(400, f'frames[{i}]: bilinmeyen çerçeve türü {kind!r} (desteklenen: {known}); '
+                                 'sessizce atlanmaz')
             name = f.get('name') if isinstance(f, dict) else None
             pts = f.get('points') if isinstance(f, dict) else None
-            if not (isinstance(name, str) and re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,23}', name)) \
+            if not (isinstance(name, str) and NAME_RE.fullmatch(name)) \
                     or name in ('World', 'Tool') or name in names:
                 return _err(400, f'çerçeve adı geçersiz ya da yinelenmiş: {name!r}')
             if not (isinstance(pts, dict) and set(pts) == {'origin', 'x', 'xy'} and all(
@@ -205,8 +236,121 @@ class FakeJog:
             names.add(name)
             out.append({'name': name, 'points': pts, 'pose': {'position': pts['origin']},
                         'wpr_deg': [0.0, 0.0, 0.0], 'warnings': ['sahte robot: dönüş hesaplanmaz']})
+        new_spheres: Optional[List[Dict[str, Any]]] = None
+        if 'spheres' in body:                      # YOKSA mevcut küreler korunur (eski Hub'ın PUT'u)
+            parsed = self._parse_spheres(body['spheres'])
+            if isinstance(parsed, tuple):
+                return parsed
+            new_spheres = parsed
+        kept = self.spheres if new_spheres is None else new_spheres
+        clash = {n.lower() for n in names} & {sp['name'].lower() for sp in kept}
+        if clash:
+            return _err(400, f'çerçeve adı hem kullanıcı hem küre olamaz: {", ".join(sorted(clash))}')
         with self._lock:
             if self._lease is not None and self._clock() - self._last_cmd < LEASE_HOLD_S:
                 return _err(409, 'jog etkinken çerçeve listesi değiştirilemez')
             self.frames = out
+            if new_spheres is not None:
+                self.spheres = new_spheres
         return 200, self.frames_doc()
+
+    @staticmethod
+    def _sphere_geometry(entry: Dict[str, Any]) -> Optional[str]:
+        """Geçerliyse ``None``, değilse neden (robotun ``sphere_frame`` doğrulamasının aynası)."""
+        c, r, axis = entry.get('center'), entry.get('radius'), entry.get('tool_axis', 'z')
+        if not (isinstance(c, list) and len(c) == 3 and all(
+                isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in c)):
+            return 'küre merkezi 3 sonlu sayı olmalı [x, y, z] (metre)'
+        if max(abs(v) for v in c) > MAX_COORD:
+            return f'küre merkezi {list(c)} m: {MAX_COORD:g} m dışında (birim mm mi?)'
+        if (isinstance(r, bool) or not isinstance(r, (int, float)) or not math.isfinite(r)
+                or not SPHERE_MIN_R <= r <= SPHERE_MAX_R):
+            return f'yarıçap [{SPHERE_MIN_R:g}, {SPHERE_MAX_R:g}] m aralığında olmalı, bulunan: {r!r}'
+        if axis not in TOOL_AXES:
+            return f'takım ekseni {sorted(TOOL_AXES)} içinden biri olmalı: {axis!r}'
+        return None
+
+    def _parse_spheres(self, entries: Any) -> Any:
+        if not self.sphere_support:
+            return _err(400, 'küre çerçeveleri bu sunucuda kullanılamıyor')
+        if not isinstance(entries, list):
+            return _err(400, 'spheres: liste olmalı')
+        if len(entries) > MAX_SPHERES:
+            return _err(400, f'en çok {MAX_SPHERES} küre çerçevesi')
+        out: List[Dict[str, Any]] = []
+        for i, e in enumerate(entries):
+            where = f'spheres[{i}]'
+            if not isinstance(e, dict):
+                return _err(400, f'{where}: {{"type": "sphere", "name", "center", "radius"}} olmalı')
+            kind = e.get('type', 'sphere')
+            if kind != 'sphere':
+                return _err(400, f'{where}: bilinmeyen çerçeve türü {kind!r} '
+                                 '(desteklenen: user, sphere); sessizce atlanmaz')
+            extra = set(e) - {'type', 'name', 'center', 'radius', 'tool_axis'}
+            missing = {'name', 'center', 'radius'} - set(e)
+            if extra or missing:
+                return _err(400, f'{where}: bilinmeyen {sorted(extra) or "-"}, '
+                                 f'eksik {sorted(missing) or "-"}')
+            name = e['name']
+            if not (isinstance(name, str) and NAME_RE.fullmatch(name)) or name in ('World', 'Tool'):
+                return _err(400, f'{where}: ad geçersiz: {name!r}')
+            bad = self._sphere_geometry(e)
+            if bad:
+                return _err(400, f'{where}: {bad}')
+            if name.lower() in {o['name'].lower() for o in out}:
+                return _err(400, f'{where}: ad tekrar ediyor: {name!r}')
+            out.append({'type': 'sphere', 'name': name, 'center': [float(v) for v in e['center']],
+                        'radius': float(e['radius']), 'tool_axis': e.get('tool_axis', 'z')})
+        return out
+
+    # --- POST /api/frames/reach (SAHTE hesap: tabandan uzaklık halkası) ---------------------------
+    def frames_reach(self, body: Any) -> Reply:
+        if not self.sphere_support:
+            return _err(403, 'küre çerçevesi bu sunucuda kapalı')
+        if not (isinstance(body, dict)
+                and {'center', 'radius'} <= set(body) <= {'center', 'radius', 'tool_axis'}):
+            return _err(400, 'gövde {"center": [x,y,z], "radius": r, "tool_axis"?} olmalı')
+        bad = self._sphere_geometry(body)
+        if bad:
+            return _err(400, bad)
+        if self._halted():
+            return _err(423, 'ACİL DUR kilidi açık: önce kilidi aç', state='estopped')
+        with self._lock:
+            if (self._lease is not None and self._clock() - self._last_cmd < LEASE_HOLD_S) or self._busy():
+                return _err(409, 'jog ya da iş sürerken erişim aralığı hesaplanmaz', state='busy')
+        cx, cy, cz = (float(v) for v in body['center'])
+        r = float(body['radius'])
+        azs = [float(a) for a in range(0, 360, 15)]
+        els = [float(e) for e in range(-80, 81, 10)]
+        cells = []
+        for el_ in els:
+            row = []
+            for az in azs:
+                d = (math.cos(math.radians(el_)) * math.cos(math.radians(az)),
+                     math.cos(math.radians(el_)) * math.sin(math.radians(az)), math.sin(math.radians(el_)))
+                p = (cx + r * d[0], cy + r * d[1], cz + r * d[2])
+                dist = math.sqrt(sum(v * v for v in p))
+                row.append(FAKE_REACH_M[0] <= dist <= FAKE_REACH_M[1] and p[2] >= 0.05)
+            cells.append(row)
+        rows = []
+        for el_, row in zip(els, cells):
+            if any(row):
+                runs, start = [], None
+                for i, ok in enumerate(row + [False]):
+                    if ok and start is None:
+                        start = i
+                    elif not ok and start is not None:
+                        runs.append([azs[start], azs[i - 1]])
+                        start = None
+                rows.append({'elevation_deg': el_, 'azimuth_intervals_deg': runs})
+        reached = [r_['elevation_deg'] for r_ in rows]
+        rng = [min(reached), max(reached)] if reached else None
+        return 200, {
+            'ok': True, 'center': [cx, cy, cz], 'radius': r, 'tool_axis': body.get('tool_axis', 'z'),
+            'reachable': bool(reached), 'elevation_range_deg': rng, 'rows': rows,
+            'grid': {'azimuth_deg': azs, 'elevation_deg': els,
+                     'cells': [''.join('1' if c else '0' for c in row) for row in cells]},
+            'summary': (f'Yükselme {rng[0]:g}° … {rng[1]:g}° erişilebilir (SAHTE robot hesabı)' if rng
+                        else 'Bu küreye erişilemiyor (SAHTE robot hesabı)'),
+            'note': 'SAHTE robot: tabandan uzaklık halkası; gerçek IK, güvenli kutu, eklem limiti ve '
+                    'tekillik hesaplanmaz. Izgara kaba (15° azimut, 10° yükselme).'}

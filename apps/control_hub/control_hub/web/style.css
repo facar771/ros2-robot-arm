@@ -171,3 +171,10 @@ button.reset:disabled { opacity: .4; cursor: not-allowed; }
 .rv-band { background: #5c1a17; color: #ffd8d5; border: 2px solid #f85149; border-radius: 10px; padding: 10px; font-weight: 600; margin: 8px 0; }
 .rv-tag { font-size: .7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); vertical-align: middle; }
 .rv-tag.est { background: #5a4310; color: #ffd98a; }
+
+/* L8: küresel çerçeve sihirbazı */
+.sw-center { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sw-f input { width: 100%; box-sizing: border-box; font: inherit; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.sw-grid, .sw-rows { font-family: ui-monospace, Consolas, monospace; font-size: .75rem; line-height: 1.25; overflow-x: auto; margin: 6px 0; }
+.sw-rows { max-height: 12em; overflow-y: auto; }
+#sw-reach-lines .bad { color: #ffb4b0; }
