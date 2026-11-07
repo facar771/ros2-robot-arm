@@ -45,7 +45,7 @@ from robot_viz.viz_check import tool_from_tf
 
 CANCEL_DEADLINE_S = 2.5     # cancel / timeout -> arm quiet (own measurement)
 ACCEPT_DEADLINE_S = 1.5     # POST /api/jobs must answer this fast
-TIMEOUT_S = 6
+TIMEOUT_S = 30    # F4b: > the park transit (~10 s) + planning, so the job times out INSIDE the box
 
 
 def job(api: Api, job_id: str):
