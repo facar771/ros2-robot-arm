@@ -151,7 +151,7 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer) -> list:
         # stage 2, so either the arm did not move at all, or it stands at 'ready' and the message
         # says exactly that (park transit done, task motion not made).
         now = joint_snapshot(state, names)
-        at_ready = max(abs(a - b) for a, b in zip(now, READY_POSE)) <= 0.02
+        at_ready = max(abs(now[n] - r) for n, r in zip(names, READY_POSE)) <= 0.02
         unmoved = bool(body['message']) and 'Robot hareket etmedi' in body['message'] \
             and moved(before, after) < 0.01
         parked = bool(body['message']) and "'ready' pozunda" in body['message'] \

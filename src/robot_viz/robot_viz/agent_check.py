@@ -148,7 +148,7 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     # F4b (B'): from home the task motion is two stages; MoveIt refuses stage 2, so the arm either
     # did not move ("Robot hareket etmedi") or stands at 'ready' and the message says exactly that
     now = joint_snapshot(state, names)
-    at_ready = max(abs(a - b) for a, b in zip(now, READY_POSE)) <= 0.02
+    at_ready = max(abs(now[n] - r) for n, r in zip(names, READY_POSE)) <= 0.02
     parked = "'ready' pozunda" in status.message and 'görev hareketi yapılmadı' in status.message
     record('MoveIt\'in ulaşamadığı hedef: araç failed, neden açık ("Robot hareket etmedi" ya da '
            "park geçişi sonrası 'ready' pozunda)",
