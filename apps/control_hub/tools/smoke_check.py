@@ -3,7 +3,8 @@
     python -m tools.smoke_check --url http://127.0.0.1:8765 --pin 123456
 
 Kontroller: /health, arayüz dosyaları (gömülü web), PIN'siz erişim reddi (401), yanlış PIN, giriş, durum,
-WebSocket'ten ilk durum mesajı, bir senaryo (`home`) ve ACİL DUR + kilit + sıfırlama. Çıkış kodu 0 = geçti.
+küre çerçevesi yolu (L8), WebSocket'ten ilk durum mesajı, bir senaryo (`home`) ve
+ACİL DUR + kilit + sıfırlama. Çıkış kodu 0 = geçti.
 """
 from __future__ import annotations
 
@@ -89,7 +90,8 @@ def main() -> int:
     _, doc, _ = c.request('GET', '/health')
     check('sahte robot', doc.get('backend') == 'fake', str(doc))
     for path, needle in (('/', 'Robot Kontrol Merkezi'), ('/app.js', 'WebSocket'),
-                         ('/style.css', '--accent'), ('/manifest.webmanifest', 'standalone')):
+                         ('/style.css', '--accent'), ('/manifest.webmanifest', 'standalone'),
+                         ('/sphere.js', 'FrameTypes'), ('/frames.js', 'FrameWizard')):
         st, body, _ = c.request('GET', path)
         check(f'gömülü dosya {path}', st == 200 and needle in str(body), f'HTTP {st}')
     check('PIN\'siz durum reddedilir', c.request('GET', '/api/state')[0] == 401)
@@ -99,6 +101,21 @@ def main() -> int:
         return 1
     st, state, _ = c.request('GET', '/api/state')
     check('durum', st == 200 and state['robot']['connected'], f'HTTP {st}')
+    # L8: küre çerçevesi yolu (sahte robot): tür bildirimi, erişim aralığı, toplu PUT'ta diğer türler korunur
+    st, frames, _ = c.request('GET', '/api/frames')
+    check('çerçeveler: sphere türü bildirilir',
+          st == 200 and 'sphere' in (frames.get('types') or []), f'HTTP {st}')
+    st, reach, _ = c.request('POST', '/api/frames/reach', {'center': [0.0, 0.0, 0.3], 'radius': 0.3})
+    check('küre erişim aralığı', st == 200 and reach.get('reachable') is True, f'HTTP {st}')
+    sphere = {'type': 'sphere', 'name': 'SmokeKure', 'center': [0.0, 0.0, 0.3], 'radius': 0.3,
+              'tool_axis': 'z'}
+    st, put, _ = c.request('PUT', '/api/frames', {'frames': [], 'spheres': [sphere]})
+    check('küre kaydı', st == 200 and [x['name'] for x in put.get('spheres', [])] == ['SmokeKure'],
+          f'HTTP {st}')
+    st, put, _ = c.request('PUT', '/api/frames', {'frames': []})
+    check('yalnız frames yazınca küre korunur', st == 200 and len(put.get('spheres', [])) == 1, f'HTTP {st}')
+    st, _, _ = c.request('PUT', '/api/frames', {'frames': [], 'spheres': []})
+    check('küre silindi (temizlik)', st == 200, f'HTTP {st}')
     try:
         first = asyncio.run(ws_first_message(c.host, c.port, c.cookie or ''))
         check('WebSocket ilk mesaj', first == 'state', first)

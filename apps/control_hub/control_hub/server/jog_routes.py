@@ -3,7 +3,8 @@
 * ``POST /api/jog``: komut = heartbeat. Hub TTL'i uzatmaz, kiralamayı kendisi tutmaz; yalnızca iletir.
   Hub'ın kendi eklediği tek şey **daha dar** kurallardır: ACİL DUR kilidinde ``423`` (robota sormadan),
   basılı-tut (``twist``) yalnızca bu bilgisayardan (telefon artımlı kalır).
-* ``GET /api/jog`` durum; ``GET/PUT /api/frames`` çerçeve listesi. **Hub frames.yaml'a yazmaz**: PUT robota
+* ``GET /api/jog`` durum; ``GET/PUT /api/frames`` çerçeve listesi; ``POST /api/frames/reach`` küre erişim
+  aralığı (L8, yalnızca geçirilir). **Hub frames.yaml'a yazmaz**: PUT robota
   gider,
   dosyayı robot (veri dizini) yazar.
 * Ağ hatası ``502``: komut ulaşmadıysa robot TTL'i dolunca kendiliğinden durur (sunucu tarafı dead-man).
@@ -102,3 +103,12 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
         if bad is not None:
             return bad
         return await call('frames_put', body)
+
+    @app.post('/api/frames/reach')
+    async def frames_reach(request: Request):
+        """Küre sihirbazı (L8): erişim aralığı. Hub yalnızca geçirir; hesap ve 409/423/403 robottadır."""
+        need_control(request)
+        body, bad = await body_of(request)
+        if bad is not None:
+            return bad
+        return await call('frames_reach', body)
