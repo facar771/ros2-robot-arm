@@ -292,8 +292,11 @@ def run(base: str, port: int) -> list:
         # not a park pose, so stand at 'ready' first (raw bridge goal, below the API guard);
         # 'home' then runs ready -> home as the verified park transit through the same bridge.
         ok_goal, code, text, _ = node.send(node.goal(READY_POSE, 4.0, start=FAR))
-        record("5 ön koşul: kol ready'ye (kutu içi) getirildi (ham köprü hedefi)",
-               ok_goal and code == 0, text)
+        record(
+            "5 ön koşul: kol ready'ye (kutu içi) getirildi (ham köprü hedefi)",
+            ok_goal and code == 0,
+            text,
+        )
         status, _, body = api.post("/api/jobs", {"command": "home"}, timeout=30.0)
         done = wait_job(api, body["id"], "done", 90.0) if status == 202 else None
         time.sleep(0.5)
