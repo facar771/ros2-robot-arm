@@ -37,6 +37,7 @@ from robot_agent.executor import Policy, ToolExecutor
 from robot_agent.llm import LLMResponse, RuleLLM, ScriptedLLM, call
 from robot_controller.adapters import BackgroundSpinner, JointStateCache
 from robot_controller.config_loader import load_robot_config
+from robot_core.jogapi import READY_POSE
 from robot_core.ports import NullEventSink
 from tf2_ros import Buffer, TransformListener
 
@@ -144,11 +145,18 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     out = runner.run('kırmızının 25 cm üstüne git')
     time.sleep(1.0)
     status = out.calls[0][2]
-    record('MoveIt\'in ulaşamadığı hedef: araç failed, neden açık, "Robot hareket etmedi"',
-           status.status == 'failed' and 'Robot hareket etmedi' in status.message,
+    # F4b (B'): from home the task motion is two stages; MoveIt refuses stage 2, so the arm either
+    # did not move ("Robot hareket etmedi") or stands at 'ready' and the message says exactly that
+    now = joint_snapshot(state, names)
+    at_ready = max(abs(a - b) for a, b in zip(now, READY_POSE)) <= 0.02
+    parked = "'ready' pozunda" in status.message and 'görev hareketi yapılmadı' in status.message
+    record('MoveIt\'in ulaşamadığı hedef: araç failed, neden açık ("Robot hareket etmedi" ya da '
+           "park geçişi sonrası 'ready' pozunda)",
+           status.status == 'failed' and ('Robot hareket etmedi' in status.message
+                                          or (parked and at_ready)),
            f'({status.status}: {status.message[:90]})')
-    record('o hedefte kol oynamadı, robot idle', moved(before, joint_snapshot(state, names)) < 0.01
-           and api.robot()['state'] == 'idle')
+    record('o hedefte kol oynamadı (ya da yalnız ready\'ye park etti), robot idle',
+           (moved(before, now) < 0.01 or (parked and at_ready)) and api.robot()['state'] == 'idle')
 
     # 5. dry run ---------------------------------------------------------------------------
     before, jobs = joint_snapshot(state, names), job_count(api)
