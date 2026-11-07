@@ -250,11 +250,21 @@ def run(
     job_status = api.post('/api/jobs', {'command': 'home'}, timeout=10.0)[0]
     c.release()
     record('E ikinci istemci 409', s409 == 409)
-    record('E jog sürerken iş başlatma 409', job_status == 409)
+    record(
+        'E jog sürerken iş başlatma 409',
+        job_status == 409,
+        'yanıt yok (zaman aşımı/bağlantı)' if job_status is None else f'http={job_status}',
+    )
     status, _, body = api.post('/api/jobs', {'command': 'ready'}, timeout=10.0)
+    job_id = body.get('id') if status == 202 and isinstance(body, dict) else None
     s_job = other.post({'twist': [0.1, 0, 0, 0, 0, 0]})[0]
-    wait_job(api, body['id'], 'done', WAIT_S)
-    record('E iş sürerken jog 409', status == 202 and s_job == 409, f'http={s_job}')
+    if job_id is not None:
+        wait_job(api, job_id, 'done', WAIT_S)
+    record(
+        'E iş sürerken jog 409',
+        job_id is not None and s_job == 409,
+        f'iş http={status} jog http={s_job}' + ('' if job_id else ' (iş başlamadı)'),
+    )
     other.release()
 
     # ---- F. emergency stop mid-jog

@@ -116,11 +116,18 @@ class JobManager:
     # ---- submit / cancel ----------------------------------------------------------------------
     def submit(self, command: Command, timeout_s: Optional[float] = None) -> Job:
         timeout = timeout_s if timeout_s is not None else DEFAULT_TIMEOUTS.get(command.verb, 120.0)
+        # N6: the jog gate takes the jog lock, and the jog tick/command hold it while they ask
+        # ``is_running`` (= this manager's lock). Asking the gate while holding ``self._lock`` made
+        # the two orders cross (ABBA deadlock: /api/jobs hung while jogging). So the gate is asked
+        # first, without our lock. A jog that starts in the gap is cancelled by the jog tick, which
+        # sees the job as busy ('bir iş başladı: jog iptal') - jog never outlives a running job.
+        if self._estop is not None and self._estop.is_set:
+            raise EStopped(ESTOP_MESSAGE)  # E-stop outranks 'jog active' (423, not 409)
+        if self.jog_gate is not None and self.jog_gate():
+            raise Busy('jog etkin: jog ve işler birbirini dışlar (önce jog kiralamasını bırak)')
         with self._lock:
             if self._estop is not None and self._estop.is_set:
                 raise EStopped(ESTOP_MESSAGE)
-            if self.jog_gate is not None and self.jog_gate():
-                raise Busy('jog etkin: jog ve işler birbirini dışlar (önce jog kiralamasını bırak)')
             if self._active is not None:
                 raise JobBusy(f'başka bir iş çalışıyor: {self._active.id} '
                               f'({self._active.command.line})', self._active.id)

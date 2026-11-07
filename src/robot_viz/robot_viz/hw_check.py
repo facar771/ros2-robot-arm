@@ -375,7 +375,10 @@ def run(base: str, port: int) -> list:
 
         # ---- 8. telemetry lost: TCP dropped mid-motion
         node.send(node.goal(FAR, 5.0, start=[a.homing.position for a in hw.axes]), wait=False)
-        wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+        moving = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+        # N6: an idle MCU (drivers off) is not latched by the watchdog, so a drop without motion
+        # says nothing; fail with the real reason instead of a misleading '3.02 s'.
+        record("8 ön koşul: kol hareket ediyordu (hat koparılmadan önce)", bool(moving))
         t_drop = time.monotonic()
         server.drop_client()
         mcu_stop = wait_for(
