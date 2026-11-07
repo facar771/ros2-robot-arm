@@ -40,7 +40,8 @@ class FakeBackend:
     name = 'fake'
     can_interrupt = True
 
-    def __init__(self, time_scale: float = 1.0, tool_speed_m_s: float = 0.25, tick_s: float = 0.05):
+    def __init__(self, time_scale: float = 1.0, tool_speed_m_s: float = 0.25, tick_s: float = 0.05,
+                 sphere_support: bool = True):
         self.time_scale = time_scale
         self.tool_speed = tool_speed_m_s
         self.tick_s = tick_s
@@ -53,7 +54,8 @@ class FakeBackend:
         self._failures: List[Tuple[str, str]] = []
         self.history: List[str] = []
         self.jog = FakeJog(get_tool=lambda: self._tool, set_tool=self._set_tool,
-                           is_halted=self._halt.is_set, is_busy=lambda: self._moving)
+                           is_halted=self._halt.is_set, is_busy=lambda: self._moving,
+                           sphere_support=sphere_support)
 
     # --- test/geliştirme kancaları -------------------------------------------------------------
     def inject_failure(self, substring: str, message: str = 'hedefe ulaşılamadı') -> None:
@@ -110,6 +112,9 @@ class FakeBackend:
 
     def frames_put(self, body: Any):
         return self.jog.frames_put(body)
+
+    def frames_reach(self, body: Any):
+        return self.jog.frames_reach(body)
 
     def emergency_stop(self) -> StopReport:
         self._halt.set()
