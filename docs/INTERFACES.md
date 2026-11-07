@@ -817,7 +817,7 @@ mevcut komutların reddetme nedenleri ve `home`'un anlamı (aşağıda) değişi
   EN KÜÇÜK uzaklığın en çok **2 mm** üstüne çıkabilir (`pathcheck.APPROACH_EPS`, kodda sabit; profil/yaml/API ile değişmez,
   birikmez). Kutu duvarına, iç kutuya ve park zarfına tolerans eklenmez: ilk içeri örnekten sonra yol sıkı biçimde içeride kalır.
 - **Park geçişi hızı:** `min(park.max_velocity_fraction, etkin velocity_scale)`; etkin ölçek `max_velocity_scale` tavanına zaten
-  kısıtlıdır, yani park geçişi hiçbir zaman başka bir harekettten hızlı değildir.
+  kısıtlıdır, yani park geçişi hiçbir zaman başka bir hareketten hızlı değildir.
 - **Kapsam ve sınırlar (açıkça):** kutu yalnız uç noktayı (TCP) sınırlar; dirsek ve bilek kutu dışına çıkabilir (ayrı karar).
   Denetim, plan noktaları arasının **düz eklem enterpolasyonu** olduğunu varsayar; yürütücünün gerçek spline'ı plan noktaları arasında
   (varsayılan ~0,1 s aralık) bundan sapabilir. Bu sapma `mock` selftest'te park geçişi için ölçüldü (TCP park zarfında), MoveIt
