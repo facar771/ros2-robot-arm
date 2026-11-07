@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import yaml
 
-from robot_core.hardware import HardwareError, HardwareProfile, load_hardware
+from robot_core.hardware import HardwareError, HardwareProfile, ServoAxis, load_hardware
 from robot_core.profile import Profile, ProfileError, _fail, _mapping, _name, load_profile
 
 QUALITY_VERSION = 1
@@ -50,6 +50,11 @@ JOINT_CRITICAL = ('limits.position', 'limits.effort')    # physical limit; effor
 AXIS_CRITICAL = ('motor.type', 'motor.steps_per_rev', 'driver.microstep', 'gear_ratio',
                  'limits.position', 'homing.position')   # homing.position = home/limit switch
 SERVO_CRITICAL = ('servo.pulse_range',)                  # instead of steps/gear/homing (K6)
+# K6a: what a REAL servo axis (ServoAxis) must also have measured: its software speed cap, the rest
+# angle it slowly approaches after PWM-on, and the pose the operator confirms for manual_zero.
+# (limits.position, the angle limit, is already in AXIS_CRITICAL.) Only enforced on a ServoAxis, so
+# the older J5 stand-in (a step Axis relabelled hobby_servo) still reports just pulse_range.
+SERVO_REAL_CRITICAL = ('servo.slew_limit', 'servo.rest_angle', 'reference.pose')
 STEP_ONLY = ('motor.steps_per_rev', 'driver.microstep', 'gear_ratio', 'homing.position')
 
 
@@ -79,7 +84,8 @@ def known_paths(profile: Profile) -> List[str]:
     paths = [f'links.{n.name}.{f}' for n in profile.links for f in LINK_CRITICAL]
     for j in profile.joints:
         paths += [f'joints.{j.name}.{f}' for f in JOINT_CRITICAL]
-        paths += [f'axes.{j.name}.{f}' for f in AXIS_CRITICAL + SERVO_CRITICAL]
+        paths += [f'axes.{j.name}.{f}'
+                  for f in AXIS_CRITICAL + SERVO_CRITICAL + SERVO_REAL_CRITICAL]
     return paths
 
 
@@ -137,6 +143,9 @@ def _axis_value(axis: Any, suffix: str) -> Any:
         'limits.position': lambda a: list(a.position_limits),
         'homing.position': lambda a: a.homing.position,
         'servo.pulse_range': lambda a: getattr(a, 'servo_pulse_range', None),
+        'servo.slew_limit': lambda a: getattr(a, 'slew_limit', None),
+        'servo.rest_angle': lambda a: getattr(getattr(a, 'rest', None), 'angle', None),
+        'reference.pose': lambda a: getattr(getattr(a, 'reference', None), 'pose', None),
     }
     return getters[suffix](axis)
 
@@ -244,7 +253,8 @@ def _critical_paths(profile: Profile, hardware: Optional[HardwareProfile]) -> Li
             if not (servo and f in STEP_ONLY):
                 paths.append(f'axes.{joint.name}.{f}')
         if servo:
-            paths += [f'axes.{joint.name}.{f}' for f in SERVO_CRITICAL]
+            extra = SERVO_REAL_CRITICAL if isinstance(axis, ServoAxis) else ()
+            paths += [f'axes.{joint.name}.{f}' for f in SERVO_CRITICAL + extra]
     return paths
 
 

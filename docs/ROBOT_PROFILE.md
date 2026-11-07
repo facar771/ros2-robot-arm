@@ -158,6 +158,54 @@ limitleri), `max_speed`, `max_accel`, `homing_speed`, `home_position`, `homing_b
 döngü kipi, adım limitleri, homing, uyarılar); **hiçbir şey yazmaz, istisna fırlatmaz** (`{'ok': False,
 'error': ...}`). Arayüzü Robot_4 yapar.
 
+### Aktüatör türü `hobby_servo` (K6a, `robot_core/hardware.py`)
+Eksen türü `motor.type`: `step` (bugünkü davranış, **değişmedi**) | `hobby_servo` (SG90 sınıfı). Karışık robotta **her eksen kendi
+türünde** yazılır. Bu aşamada yalnız **veri modeli + doğrulama**: servo protokolü/simülatör/`HARDWARE.md` K6b'de (Robot_4), firmware K3'te.
+Servo eksenli profil step'e özgü her yoldan **reddedilir** (kapalı-güvenli): `joints_to_steps`/`steps_to_joints` ve firmware başlığı üreticisi
+(`hardware_gen`, çıkış kodu 2) net bir hata verir; köprü servoyu K6b'ye kadar kullanamaz.
+
+```yaml
+joint_2:
+  motor: {type: hobby_servo, model: SG90}
+  servo:
+    pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.7, angle_at_max_us: 1.7}   # darbe (us) <-> açı (rad), doğrusal
+    slew_limit: 2.0                       # rad/s, yazılım hız sınırı
+    rest: {angle: 0.0, speed: 0.2}        # PWM açılınca yavaş yaklaşılan açı; speed yazılmazsa min(0.2, slew_limit)
+  reference: {mode: manual_zero, pose: 0.0}   # operatörün "burası sıfır" dediği poz (eklem açısı)
+  limits: {position: [-1.7, 1.7]}         # servoya komut verilebilen açı aralığı (rad)
+  margin: {position: 0.05, velocity: 0.05}    # isteğe bağlı, varsayılan dar
+```
+| Alan | Anlam / denetim |
+|---|---|
+| `servo.pulse_range` | `min_us ↔ angle_at_min_us`, `max_us ↔ angle_at_max_us`; açılar azalan olabilir (aynalı montaj). Darbe 300–3000 us (ms yazılmış mı?), en az 200 us açıklık, açı aralığı 0 < Δ ≤ 2π (derece mi?) |
+| `limits.position` | kalibre darbe aralığının açıları içinde olmalı (darbesi tanımsız açı komut edilemez); eklem (URDF) limiti ⊆ bu aralık − marj |
+| `servo.slew_limit` | eklem hızı ≤ `slew_limit` − marj; `ServoAxis.slew_step(şimdi, hedef, dt)` hızı aşmaz, hedefi aşmaz |
+| `servo.rest` | açı eklem ve servo limitleri içinde; hız ≤ `slew_limit`. Niyet: PWM önce `reference.pose` darbesiyle açılır (sıçrama yok), sonra `rest.angle`'a bu hızla yaklaşılır (K6b/K3 uygular, burada doğrulanmadı) |
+| `reference` | **zorunlu**; tek mod `manual_zero` (aşağıda); `pose` eklem ve servo limitleri içinde |
+| yasak | `encoder` ≠ `none` (geri besleme yok), `driver/direction/zero_offset/gear_ratio/homing`, `limits.velocity/acceleration`; hepsi açık hata verir |
+
+`ServoAxis.angle_to_pulse_us(açı)` limit dışı açıyı **kırpmaz, reddeder**. Servo konumu **her zaman `kestirim`**: `position_source == 'kestirim'`
+değiştirilemez (alan yok, nesne değişmez), `open_loop` her zaman doğru, uyarı (`HardwareProfile.warnings`, `describe_hardware`) "GERİ BESLEME YOK … kestirim" der.
+
+**`manual_zero` ve `HARDWARE.md` §7 kuralının AÇIKÇA genişletilmesi.** Kural: *"referanslanamayan eksen (encoder'sız **ve** home anahtarsız) asla
+HOMED olamaz, `HOME`/`ENABLE` → `NO_REFERENCE`"*. K6a bunu **tek bir durum için** genişletir; başka hiçbir durumda gevşetmez:
+1. Yalnız **`hobby_servo`** ekseninde ve yalnız `reference.mode: manual_zero` ile: operatör kolu bilinen mekanik duruşa (sert dayanak ya da işaretli poz)
+   koyar ve "burası sıfır" onayı verir. Servoda hata birikmez (konum her komutta mutlak darbedir); step'te adım kaybı birikir ve görünmez.
+2. Onay **her açılışta ve her ACİL DUR sonrası yeniden** şarttır; hatırlanmaz. Profil bunu kapatamaz/saklayamaz: `reconfirm`, `reconfirm_on`, `remember`, `persist`, `confirmed`
+   anahtarları reddedilir; `ManualZero.reconfirm_on == ('açılış', 'ACİL DUR')` sabittir (HARDWARE.md §4 kural 3 ile uyumlu: ACİL DUR sonrası referans düşer).
+3. Onaydan sonra da konum **`kestirim`** kalır; ölçüm gibi gösterilmez.
+4. **Step ekseninde `manual_zero` YOKTUR**: `homing.method: manual_zero` açık bir mesajla reddedilir; step kuralı (home/limit anahtarı ŞART) aynen geçerli.
+5. `HARDWARE.md` metni ve durum makinesi (onaylı servo eksenin durumu `HOMED` mı, ayrı bir durum mu; ACK/`NO_REFERENCE` kodları) **K6b**'nin işi; K6b gelene kadar
+   yukarıdaki kapalı-güvenli reddetmeler geçerli, servo eksenli bir profil donanım hattına giremez.
+
+**Açık karar (YAŞLI KURDA SORU, PR #K6a gövdesinde):** 2 step + SG90 karma robotta step eksenlerinde de limit anahtarı/encoder olmayabilir; bu eksenler için
+`manual_zero` istenirse bu, adım kaybı birikimi nedeniyle servodan **farklı ve daha riskli** bir kural gevşetmesidir. K6a bunu yapmaz; karar verilene kadar o eksenler `NO_REFERENCE` kalır.
+
+**Kalite etiketi (J5):** `axes.<eklem>.servo.pulse_range`, `.servo.slew_limit`, `.servo.rest_angle`, `.reference.pose` ve (mevcut) `.limits.position`
+servo eksende **donanıma hazır için `measured` olmalı** (step'e özgü `motor.steps_per_rev`, `driver.microstep`, `gear_ratio`, `homing.position` servo için aranmaz).
+Etiketsiz = `placeholder`; `measured → estimated` düşürmek olgunluğu geri düşürür, sabitlenmiş değer değişirse `stale` olur. SG90 tork/akım değerleri (`joints.<eklem>.limits.effort`,
+tork denetimi) datasheet'ten **doğrulanmadı**; K7'ye kalır.
+
 ### Yer tutucu değerler
 Bugünkü `hardware.profile.yaml` simüle edilen robot içindir: 200 adım/devir × 16, dişli 1, yön +1, limitler =
 eklem limitleri, marj 0, encoder yok, homing konumu 0 rad. **Gerçek bir robot için gerçek sürücü verisi, marj ve
@@ -184,7 +232,7 @@ kötü). `{tag: measured, value: 0.35}` değeri mühürler: profildeki sayı son
 Kritik alanlar: `links.<link>.length` ve `.mass` (kütle tork denetiminin girdisi), `joints.<eklem>.limits.position`
 ve `.limits.effort` (tork değeri), `axes.<eklem>.motor.type`, `motor.steps_per_rev`, `driver.microstep`,
 `gear_ratio`, `limits.position` (motor), `homing.position` (home/limit anahtarı); `hobby_servo` ekseninde adım/dişli/homing
-yerine `servo.pulse_range` (K6; donanım profilinde henüz saklanmıyor, o zamana kadar "eksik" görünür).
+yerine `servo.pulse_range`, `servo.slew_limit`, `servo.rest_angle`, `reference.pose` (K6a, yukarıdaki servo bölümü).
 **Tork denetimi:** her eklem için, o eklemden sonraki tüm kütleler geometrinin izin verdiği en uzak noktada
 (kol yatay, tam açık, eksen yönü ne olursa olsun) × g; `effort`'u aşarsa donanıma hazır değildir. Bilerek
 fazla tahmin eder, eksik tahmin edemez.
@@ -200,6 +248,7 @@ profille açılmaz (`maturity.F4B_DONE = False`; onu `True` yapmak F4b'yi bitire
 `mode: real`'e bağlamak ve Hub sihirbazı bu PR'da **yoktur**.
 
 ## Bu aşamada olmayanlar
+Servo protokolü/simülatörü/`HARDWARE.md` durum makinesi (K6b), servo firmware (K3), servo güç ve tork denetimi (K7), karma/tam step robot profilleri (K8), step eksende `manual_zero` (karar bekliyor);
 Takım kütüphanesi (Q2), Hub/Robot API'de takım seçimi ve çalışma zamanı değişimi (Q3), sensörlerin URDF/SDF/Gazebo'ya yazılması (P1), takım kütlesinin tork denetimine girmesi (K7);
 Paralel/kapalı çevrim, mimic, prizmatik eklem; IK çözücü seçimi; launch/RViz üretimi; firmware kaynak kodu ve
 ROS köprü düğümü (B2/B3), dönüşümün çalışma zamanında köprüye bağlanması; profilin çalışma zamanında okunması (`profile/` CMake ile kurulmuyor, ilk tüketici gelince);
