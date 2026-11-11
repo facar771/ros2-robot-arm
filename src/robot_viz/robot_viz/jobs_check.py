@@ -58,6 +58,17 @@ def wait_job(api: Api, job_id: str, state: str, timeout: float):
                     timeout, 0.1)
 
 
+def motion_timeline(sampler: Sampler, t0: float, t1: float, eps: float = 0.005):
+    """From the check's own joint samples: (seconds from t0 to the first sample that is more than
+    eps rad away from where the arm stood at t0, or None; the largest joint change in [t0, t1])."""
+    window = [(t, q) for t, q in sampler.samples if t0 <= t <= t1]
+    if len(window) < 2:
+        return None, float('nan')
+    q0 = window[0][1]
+    first = next((t for t, q in window if max(abs(a - b) for a, b in zip(q, q0)) > eps), None)
+    return (None if first is None else first - t0), sampler.displacement(t0, t1)
+
+
 def start_far(api: Api, buffer: Buffer, tip: str, home_ref, command='demo_scenario', **extra):
     """Submit a long job and wait until the tool is FAR_FROM_HOME away. Returns (answer, t)."""
     t0 = time.monotonic()
@@ -175,6 +186,10 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     jid = doc['id'] if doc else None
     failed = wait_job(api, jid, 'failed', 60.0) if jid else None
     t_failed = time.monotonic()
+    latency, _ = motion_timeline(sampler, t_start, t_failed)
+    print(f"ÖLÇÜM zaman aşımı: POST -> ilk hareket "
+          f"{'YOK' if latency is None else f'{latency:.2f} s'}; POST -> failed "
+          f"{t_failed - t_start:.2f} s (timeout_s={TIMEOUT_S})")
     record('zaman aşımı hareketin ORTASINDA doldu (kol kıpırdadı)',
            sampler.displacement(t_start, t_failed) > 0.02,
            f'(en büyük eklem değişimi {sampler.displacement(t_start, t_failed):.3f} rad)')
