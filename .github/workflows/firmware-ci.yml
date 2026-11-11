@@ -30,12 +30,15 @@ jobs:
       - run: PYTHONPATH=src/robot_hw_bridge python -m pytest firmware/host -q
 
   build:
-    name: PlatformIO derleme (${{ matrix.project }})
+    name: PlatformIO derleme (${{ matrix.project }}/${{ matrix.env }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        project: [uno, esp_relay]
+        include:
+          - {project: uno, env: uno}
+          - {project: uno, env: uno_bench}
+          - {project: esp_relay, env: nodemcuv2}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,11 +47,11 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-${{ matrix.project }}-${{ hashFiles('firmware/*/platformio.ini') }}
+          key: pio-${{ matrix.project }}-${{ matrix.env }}-${{ hashFiles('firmware/*/platformio.ini') }}
       - run: pip install platformio
       - name: Wi-Fi yapılandırması (yalnız CI, sahte değerler)
         if: matrix.project == 'esp_relay'
         run: cp firmware/esp_relay/include/wifi_config.example.h firmware/esp_relay/include/wifi_config.h
-      - run: pio run -d firmware/${{ matrix.project }}
+      - run: pio run -d firmware/${{ matrix.project }} -e ${{ matrix.env }}
       - name: Boyut (RAM/Flash)
-        run: pio run -d firmware/${{ matrix.project }} -t size
+        run: pio run -d firmware/${{ matrix.project }} -e ${{ matrix.env }} -t size
