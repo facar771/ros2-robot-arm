@@ -129,6 +129,18 @@ def test_configure_refuses_a_mcu_that_does_not_match_the_profile():
         r.close()
 
 
+def test_configure_refuses_a_servo_axis_until_the_bridge_knows_servos():
+    """K6b: köprü servo eksenini henüz bilmiyor (Faz 3) -> bağlantı reddedilir, sessizce step sanılmaz."""
+    axes = sim_axes()
+    axes[2] = SimAxis.servo()
+    r = Rig(axes=axes)
+    try:
+        ok, msg = r.bridge.configure()
+        assert not ok and 'servo' in msg and 'joint_3' in msg
+    finally:
+        r.close()
+
+
 def test_home_then_positions_follow_the_profile(rig):
     rig.homed()
     assert rig.bridge.homed and rig.sim.state == State.HOMED
