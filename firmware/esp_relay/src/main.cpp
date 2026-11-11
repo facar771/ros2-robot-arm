@@ -28,7 +28,7 @@ void setup() {
 
 void loop() {
   // Tek istemci: ikinci bağlantı reddedilir (HARDWARE.md §9 ile aynı kural)
-  WiFiClient incoming = server.available();
+  WiFiClient incoming = server.accept();
   if (incoming) {
     if (client && client.connected()) {
       incoming.stop();
