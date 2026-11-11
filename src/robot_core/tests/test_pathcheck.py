@@ -183,3 +183,30 @@ def test_malformed_input_raises_path_error(profile):
         with pytest.raises(PathError):
             check_path([READY, READY], profile, **kwargs)
     assert math.isfinite(check_path([READY, READY], profile).max_chord_bound)
+
+
+def test_approach_has_no_tolerance_a_tenth_of_a_millimetre_outward_is_rejected(profile,
+                                                                               monkeypatch):
+    """B' decision: the approach rule is strict (no epsilon). TCP = first three joint values."""
+    from robot_core import pathcheck
+
+    class Linear:
+        dof = 6
+
+        def __init__(self, _):
+            pass
+
+        def fk(self, q):
+            t = np.eye(4)
+            t[:3, 3] = np.asarray(q, float)[:3]
+            return t
+
+    monkeypatch.setattr(pathcheck, 'Chain', Linear)
+    zone = SafeZone((0.05, -0.5, 0.02), (0.75, 0.5, 0.7), 'world')
+
+    def run(*xs):
+        return check_path([[x, 0.0, 0.3, 0, 0, 0] for x in xs], profile, zone)
+
+    assert run(-0.30, -0.20, 0.30).ok
+    bump = run(-0.30, -0.3001, 0.30)
+    assert not bump.ok and bump.violation.side == 'approach'

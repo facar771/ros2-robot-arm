@@ -27,6 +27,8 @@ class MotionResult:
     code: Optional[int] = None
     code_name: str = ''
     message: str = ''
+    # F4b: stages that RAN, e.g. ('park_gecisi', 'hareket'); () = a single stage
+    steps: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -81,3 +83,15 @@ class SkillResult:
     message: str = ''           # human/LLM readable: what happened or why it failed
     code_name: str = ''         # MoveIt error code name when the motion layer was involved
     data: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class PlanResult:
+    """A planned (NOT yet executed) joint trajectory. ``path`` are the trajectory points in chain
+    joint order (rad); ``plan`` is the executor's own object, opaque to the core (and not
+    compared or printed)."""
+    ok: bool
+    path: Tuple[Tuple[float, ...], ...] = ()
+    code_name: str = ''
+    message: str = ''
+    plan: Any = field(default=None, compare=False, repr=False)

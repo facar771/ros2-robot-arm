@@ -34,6 +34,7 @@ from robot_controller.adapters import (
     TfToolPosition,
 )
 from robot_controller.config_loader import load_robot_config, load_safety_config
+from robot_controller.guard_setup import build_path_guard
 from robot_core.cameraapi import CameraApi, CameraStop
 from robot_core.frames import FrameStore
 from robot_core.jobs import JobManager
@@ -133,7 +134,10 @@ class WebViewNode(Node):
             estop, cancel = EStop(), CancelFlag()
             motion = MoveItMotion(self, config, estop=estop, cancel=cancel,
                                   max_velocity_scale=safety.max_velocity_scale)
-            guarded = GuardedMotion(motion, estop, cancel)   # no new goals while latched/cancelling
+            # F4b: every goal is planned, checked along its path against the safe box, then run
+            path_guard = build_path_guard(motion, self._joints, config, safety, self.events,
+                                          self.get_logger().error)
+            guarded = GuardedMotion(motion, estop, cancel, path_guard)   # + e-stop / cancel
             skills = Skills(config, guarded, guarded, PlanningSceneReader(self), self.events,
                             zone=safety.zone)
             self.runner = CommandRunner(

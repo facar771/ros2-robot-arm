@@ -28,6 +28,7 @@ import rclpy
 from rclpy.node import Node
 from robot_controller.adapters import BackgroundSpinner, JointStateCache
 from robot_controller.config_loader import load_robot_config
+from robot_core.jogapi import READY_POSE
 from robot_core.webcmd import USAGE
 from tf2_ros import Buffer, TransformListener
 
@@ -146,10 +147,20 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer) -> list:
     time.sleep(1.0)
     after = joint_snapshot(state, names)
     if status == 422:
-        record('above red 0: robot yapamadı -> 422, nedeni açık, robot hareket etmedi',
-               bool(body['message']) and 'Robot hareket etmedi' in body['message']
-               and moved(before, after) < 0.01,
-               f"(-> {body['message']}; eklem değişimi {moved(before, after):.4f} rad)")
+        # F4b (B'): from home a task motion is two stages. The target is refused by MoveIt in
+        # stage 2, so either the arm did not move at all, or it stands at 'ready' and the message
+        # says exactly that (park transit done, task motion not made).
+        now = joint_snapshot(state, names)
+        at_ready = max(abs(now[n] - r) for n, r in zip(names, READY_POSE)) <= 0.02
+        unmoved = bool(body['message']) and 'Robot hareket etmedi' in body['message'] \
+            and moved(before, after) < 0.01
+        parked = bool(body['message']) and "'ready' pozunda" in body['message'] \
+            and 'görev hareketi yapılmadı' in body['message'] and at_ready
+        record('above red 0: robot yapamadı -> 422, nedeni açık; kol ya hiç kıpırdamadı ya da '
+               "mesajın söylediği gibi 'ready' pozunda",
+               unmoved or parked,
+               f"(-> {body['message']}; eklem değişimi {moved(before, after):.4f} rad, "
+               f'ready\'de={at_ready})')
     else:    # reaching it is allowed; the invariant is "at the target or an explicit refusal"
         tool = tool_from_tf(buffer, config.tip_link)
         err = math.dist(tool, body['data']['target']) if status == 200 and tool else float('inf')

@@ -27,8 +27,8 @@ def good_positions():
 def test_all_four_steps_pass_and_are_narrated_in_turkish():
     result, skills, lines, slept, sink = run(good_positions())
     assert result.ok and len(result.steps) == 4 and all(s.ok for s in result.steps)
-    assert skills.calls == [('go_to_named_pose', 'home'), ('go_above', 'green', 0.25),
-                            ('go_above', 'red', 0.35), ('go_to_named_pose', 'home')]
+    assert skills.calls == [('return_home',), ('go_above', 'green', 0.25),
+                            ('go_above', 'red', 0.35), ('return_home',)]
     assert [line[:5] for line in lines if line.startswith('[')][:4] == [
         '[1/4]', '[2/4]', '[3/4]', '[4/4]']
     text = '\n'.join(lines)

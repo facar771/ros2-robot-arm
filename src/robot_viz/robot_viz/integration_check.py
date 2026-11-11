@@ -47,11 +47,11 @@ from tf2_ros import Buffer, TransformListener
 
 from robot_viz.stop_check import (
     CREEP_RAD,
-    FAR_FROM_HOME,
     HOME_TOLERANCE,
     WAIT_S,
     Api,
     Sampler,
+    far_and_inside,
     wait_for,
 )
 from robot_viz.viz_check import tool_from_tf
@@ -227,8 +227,7 @@ def run(base: str, hub_dir: str, config, state: JointStateCache, buffer: Buffer,
 
         # 5. one job at a time across clients; looking is allowed; Hub e-stop ----------
         hub.run_scenario('demo_tour')
-        away = wait_for(lambda: (lambda p: p and math.dist(p, home_ref) > FAR_FROM_HOME)(
-            tool_from_tf(buffer, tip)), 120.0, 0.1)
+        away = wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 120.0, 0.1)
         busy = agent.execute('run_plugin', {'plugin': 'follow_color', 'tool': 'follow_color',
                                             'arguments': {'color': 'red', 'duration_s': 3}})
         looking = find(agent, 'green')
@@ -303,7 +302,10 @@ def run(base: str, hub_dir: str, config, state: JointStateCache, buffer: Buffer,
             'arguments': {'color': 'red', 'duration_s': 60}})))
         worker.start()
         moving = wait_for(lambda: backend.snapshot().get('moving') is True, 60.0, 0.1)
-        time.sleep(0.5)
+        # F4b (B'): stop once the tool is inside the box (the park transit's first part is outside;
+        # an e-stop there needs the F4c recovery before the next task motion)
+        wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 60.0, 0.1)
+        time.sleep(0.3)
         t_stop = time.monotonic()
         agent.request_stop('integration Ctrl-C')
         t_back = time.monotonic()

@@ -144,6 +144,8 @@ jobs:
         run: docker run --rm ros2-robot-arm:ci run_selftest gazebo-waypoints
       - name: "Selftest - sphere frames over the Robot API (reach, PUT rules, az/el/r jog, align, e-stop)"
         run: docker run --rm ros2-robot-arm:ci run_selftest sphere
+      - name: "Selftest - path guard, mock (park transit home<->ready at the speed cap, box ALONG the planned path, Eve dön, e-stop mid park move)"
+        run: docker run --rm ros2-robot-arm:ci run_selftest pathguard
       - name: "Selftest - GET /api/model (view model, joint names, no path leak, e-stop, bad file = 503)"
         run: docker run --rm ros2-robot-arm:ci run_selftest model
       - name: "Selftest - camera platform on the Robot API (goto/step/jog dead-man, refusals, frames, e-stop)"

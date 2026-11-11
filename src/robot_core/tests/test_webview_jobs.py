@@ -82,7 +82,7 @@ def test_post_answers_202_at_once_with_the_job_document(rig):
     status, headers, doc = rig.submit('above green 0.25')
     assert time.monotonic() - started < 2.0 and status == 202
     assert doc['state'] == 'running' and doc['command'] == 'above green 0.25'
-    assert headers['Location'] == f"/api/jobs/{doc['id']}" and doc['timeout_s'] == 120.0
+    assert headers['Location'] == f"/api/jobs/{doc['id']}" and doc['timeout_s'] == 150.0
     assert rig.skills.entered.wait(5)
     rig.skills.release.set()
     done = rig.wait(doc['id'], 'done')

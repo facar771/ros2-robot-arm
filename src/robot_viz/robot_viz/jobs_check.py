@@ -33,19 +33,19 @@ from tf2_ros import Buffer, TransformListener
 
 from robot_viz.stop_check import (
     CREEP_RAD,
-    FAR_FROM_HOME,
     HOME_TOLERANCE,
     LABELS,
     WAIT_S,
     Api,
     Sampler,
+    far_and_inside,
     wait_for,
 )
 from robot_viz.viz_check import tool_from_tf
 
 CANCEL_DEADLINE_S = 2.5     # cancel / timeout -> arm quiet (own measurement)
 ACCEPT_DEADLINE_S = 1.5     # POST /api/jobs must answer this fast
-TIMEOUT_S = 6
+TIMEOUT_S = 1     # the shortest allowed: it must land in the middle of a motion INSIDE the box
 
 
 def job(api: Api, job_id: str):
@@ -63,8 +63,7 @@ def start_far(api: Api, buffer: Buffer, tip: str, home_ref, command='demo_scenar
     t0 = time.monotonic()
     answer = api.post('/api/jobs', {'command': command, **extra}, timeout=30.0)
     took = time.monotonic() - t0
-    away = wait_for(lambda: (lambda p: p and math.dist(p, home_ref) > FAR_FROM_HOME)(
-        tool_from_tf(buffer, tip)), 120.0, 0.1)
+    away = wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 120.0, 0.1)
     return answer, took, bool(away)
 
 
@@ -164,10 +163,21 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     record('bitmiş işi tekrar iptal: 409', status == 409 and body['job']['state'] == 'cancelled')
 
     # 3. timeout ------------------------------------------------------------------------------
-    (status, _, doc), took, away = start_far(api, buffer, tip, home_ref, timeout_s=TIMEOUT_S)
+    # F4b (B'): the timeout must hit a motion INSIDE the box (a job cancelled in the first,
+    # outside part of the home -> ready park transit leaves the arm where no task motion may start;
+    # F4c adds that recovery). So: first stand above green (two stages, no timeout), then time
+    # out the green -> red move (one stage).
+    api.post('/api/jobs', {'command': 'above green 0.25'})
+    time.sleep(0.5)
+    wait_for(lambda: api.robot()['state'] == 'idle', 120.0, 0.2)
+    t_start = time.monotonic()
+    status, _, doc = api.post('/api/jobs', {'command': 'above red 0.35', 'timeout_s': TIMEOUT_S})
     jid = doc['id'] if doc else None
     failed = wait_job(api, jid, 'failed', 60.0) if jid else None
     t_failed = time.monotonic()
+    record('zaman aşımı hareketin ORTASINDA doldu (kol kıpırdadı)',
+           sampler.displacement(t_start, t_failed) > 0.02,
+           f'(en büyük eklem değişimi {sampler.displacement(t_start, t_failed):.3f} rad)')
     record(f'timeout_s={TIMEOUT_S}: iş failed, timed_out true, neden "zaman aşımı"',
            status == 202 and bool(failed) and failed['timed_out'] and 'zaman aşımı'
            in failed['error'], f'({failed and failed["error"]})')

@@ -10,8 +10,9 @@ import time
 from typing import Dict, Mapping, Optional
 
 import rclpy
+from builtin_interfaces.msg import Duration as DurationMsg
 from geometry_msgs.msg import Pose
-from moveit_msgs.action import MoveGroup
+from moveit_msgs.action import ExecuteTrajectory, MoveGroup
 from moveit_msgs.msg import (
     CollisionObject,
     Constraints,
@@ -21,18 +22,21 @@ from moveit_msgs.msg import (
     PlanningScene,
     PlanningSceneComponents,
     PositionConstraint,
+    RobotState,
+    RobotTrajectory,
 )
-from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene
+from moveit_msgs.srv import ApplyPlanningScene, GetPlanningScene, GetStateValidity
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from robot_core.models import ObjectInfo, PoseTarget
+from robot_core.models import ObjectInfo, PlanResult, PoseTarget
 from robot_core.safezone import effective_velocity_scale
 from sensor_msgs.msg import JointState
 from shape_msgs.msg import SolidPrimitive
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from robot_core import BoxObstacle, JointTarget, MotionResult, RobotConfig
 
@@ -187,8 +191,13 @@ class MoveItMotion:
         self._config = config
         self._timeout = execution_timeout
         self._client = ActionClient(node, MoveGroup, 'move_action')
+        self._exec_client = ActionClient(node, ExecuteTrajectory, 'execute_trajectory')
+        self._validity = node.create_client(GetStateValidity, '/check_state_validity')
 
     def move_to(self, target: JointTarget) -> MotionResult:
+        return self._plan_and_execute(self._joint_constraints(target))
+
+    def _joint_constraints(self, target: JointTarget) -> Constraints:
         constraints = Constraints()
         for name, value in zip(self._config.joint_names, target.values):
             joint = JointConstraint()
@@ -198,10 +207,13 @@ class MoveItMotion:
             joint.tolerance_below = 0.01
             joint.weight = 1.0
             constraints.joint_constraints.append(joint)
-        return self._plan_and_execute(constraints)
+        return constraints
 
     def move_to_pose(self, target: PoseTarget) -> MotionResult:
         """Cartesian goal for the tool link; MoveIt solves the inverse kinematics (KDL)."""
+        return self._plan_and_execute(self._pose_constraints(target))
+
+    def _pose_constraints(self, target: PoseTarget) -> Constraints:
         constraints = Constraints()
         position = PositionConstraint()
         position.header.frame_id = target.frame
@@ -227,7 +239,7 @@ class MoveItMotion:
             orientation.absolute_z_axis_tolerance = math.pi     # rotation about the tool axis: free
             orientation.weight = 1.0
             constraints.orientation_constraints.append(orientation)
-        return self._plan_and_execute(constraints)
+        return constraints
 
     def _plan_and_execute(self, constraints: Constraints) -> MotionResult:
         if not self._client.wait_for_server(timeout_sec=self._discovery_timeout):
@@ -259,6 +271,117 @@ class MoveItMotion:
                 self._handle = None
         code = result_future.result().result.error_code.val
         return MotionResult(code == MoveItErrorCodes.SUCCESS, code, error_name(code))
+
+    # ---- F4b: plan and execute as two steps (robot_core.pathguard.PathGuard) ------------------
+    def plan_joint(self, target: JointTarget) -> PlanResult:
+        """Plan only (nothing moves): the joint-space path MoveIt WOULD execute."""
+        return self._plan_only(self._joint_constraints(target))
+
+    def plan_pose(self, target: PoseTarget) -> PlanResult:
+        return self._plan_only(self._pose_constraints(target))
+
+    def _plan_only(self, constraints: Constraints) -> PlanResult:
+        if not self._client.wait_for_server(timeout_sec=self._discovery_timeout):
+            return PlanResult(False, message="MoveIt 'move_action' sunucusu bulunamadı "
+                                             '(demo.launch.py çalışıyor mu?)')
+        goal = MoveGroup.Goal()
+        goal.request.group_name = self._config.planning_group
+        goal.request.allowed_planning_time = 5.0
+        goal.request.num_planning_attempts = 10
+        goal.request.max_velocity_scaling_factor = self.velocity_scale
+        goal.request.max_acceleration_scaling_factor = self.velocity_scale
+        goal.planning_options.plan_only = True
+        goal.request.goal_constraints.append(constraints)
+        send_future = self._client.send_goal_async(goal)
+        if not wait_future(send_future, 10.0):
+            return PlanResult(False, message='Hedef gönderimi zaman aşımı')
+        handle = send_future.result()
+        if not handle.accepted:
+            return PlanResult(False, message='Hedef MoveIt tarafından reddedildi')
+        with self._handle_lock:
+            self._handle = handle
+        try:
+            result_future = handle.get_result_async()
+            if not self._wait_result(result_future, handle):
+                return PlanResult(False, message='Planlama zaman aşımı')
+        finally:
+            with self._handle_lock:
+                self._handle = None
+        result = result_future.result().result
+        code = result.error_code.val
+        if code != MoveItErrorCodes.SUCCESS:
+            return PlanResult(False, code_name=error_name(code))
+        trajectory = result.planned_trajectory
+        names = list(trajectory.joint_trajectory.joint_names)
+        if not trajectory.joint_trajectory.points or any(
+                n not in names for n in self._config.joint_names):
+            return PlanResult(False, code_name='NO_TRAJECTORY',
+                              message='MoveIt boş ya da eksik eklemli bir plan döndürdü')
+        order = [names.index(n) for n in self._config.joint_names]
+        path = tuple(tuple(float(pt.positions[i]) for i in order)
+                     for pt in trajectory.joint_trajectory.points)
+        return PlanResult(True, path, plan=trajectory)
+
+    def execute_plan(self, plan: PlanResult) -> MotionResult:
+        """Execute exactly the trajectory ``plan_*`` returned (no new planning)."""
+        return self._execute(plan.plan)
+
+    def execute_timed(self, times, positions, velocities) -> MotionResult:
+        """Execute a time-parameterised joint trajectory (chain order) exactly as given."""
+        trajectory = RobotTrajectory()
+        jt = trajectory.joint_trajectory = JointTrajectory()
+        jt.joint_names = list(self._config.joint_names)
+        for t, pos, vel in zip(times, positions, velocities):
+            point = JointTrajectoryPoint()
+            point.positions = [float(x) for x in pos]
+            point.velocities = [float(x) for x in vel]
+            whole = int(t)
+            point.time_from_start = DurationMsg(sec=whole, nanosec=int(round((t - whole) * 1e9)))
+            jt.points.append(point)
+        return self._execute(trajectory)
+
+    def _execute(self, trajectory: RobotTrajectory) -> MotionResult:
+        if not self._exec_client.wait_for_server(timeout_sec=self._discovery_timeout):
+            return MotionResult(False, message="MoveIt 'execute_trajectory' sunucusu bulunamadı")
+        goal = ExecuteTrajectory.Goal()
+        goal.trajectory = trajectory
+        send_future = self._exec_client.send_goal_async(goal)
+        if not wait_future(send_future, 10.0):
+            return MotionResult(False, message='Yürütme hedefi gönderimi zaman aşımı')
+        handle = send_future.result()
+        if not handle.accepted:
+            return MotionResult(False, message='Yürütme MoveIt tarafından reddedildi')
+        with self._handle_lock:
+            self._handle = handle
+        try:
+            result_future = handle.get_result_async()
+            if not self._wait_result(result_future, handle):
+                return MotionResult(False, message='Yürütme zaman aşımı')
+        finally:
+            with self._handle_lock:
+                self._handle = None
+        code = result_future.result().result.error_code.val
+        return MotionResult(code == MoveItErrorCodes.SUCCESS, code, error_name(code))
+
+    def states_valid(self, states) -> Optional[str]:
+        """Collision check of joint states against the current planning scene (None: all valid).
+        Fails closed: an unreachable service is a reason, not a pass."""
+        if not self._validity.wait_for_service(timeout_sec=self._discovery_timeout):
+            return '/check_state_validity bulunamadı (move_group çalışıyor mu?)'
+        for i, state in enumerate(states):
+            request = GetStateValidity.Request()
+            request.group_name = self._config.planning_group
+            request.robot_state = RobotState()
+            request.robot_state.joint_state.name = list(self._config.joint_names)
+            request.robot_state.joint_state.position = [float(x) for x in state]
+            future = self._validity.call_async(request)
+            if not wait_future(future, 5.0) or future.result() is None:
+                return 'çarpışma denetimi yanıt vermedi'
+            if not future.result().valid:
+                percent = 100 * i / max(len(states) - 1, 1)
+                return (f'yolun %{percent:.0f} noktasında robot bir engelle ya da kendisiyle '
+                        'çarpışıyor')
+        return None
 
     def _wait_result(self, result_future, handle) -> bool:
         """Poll for the result; while the e-stop is latched or the job is being cancelled keep

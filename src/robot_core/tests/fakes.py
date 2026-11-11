@@ -111,6 +111,10 @@ class FakeSkills:
         self.calls.append(('go_to_named_pose', name))
         return self._result('go_to_named_pose', {'pose': name})
 
+    def return_home(self):
+        self.calls.append(('return_home',))
+        return self._result('return_home', {'pose': 'home'})
+
     def go_above(self, object_name, height=0.10):
         self.calls.append(('go_above', object_name, height))
         if self.entered is not None:
