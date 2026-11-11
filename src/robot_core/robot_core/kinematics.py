@@ -28,6 +28,9 @@ class Chain:
         self.lower = np.array([j.lower for j in profile.joints])
         self.upper = np.array([j.upper for j in profile.joints])
         self.velocity = np.array([j.velocity for j in profile.joints])
+        # jog: locked (K8, e.g. a gripper): the joint stays in the chain (FK, MoveIt) but its
+        # Jacobian column is zero, so the Cartesian jog (DLS) can never command it.
+        self.jog_locked = np.array([j.jog == 'locked' for j in profile.joints])
         self.tcp = profile.tcp.transform if tcp is None else np.asarray(tcp, float)
         self.tip_link = profile.tip_link
 
@@ -64,4 +67,5 @@ class Chain:
         for i, (z, p) in enumerate(zip(axes, points)):
             jac[:3, i] = np.cross(z, tip - p)
             jac[3:, i] = z
+        jac[:, self.jog_locked] = 0.0
         return pose, jac

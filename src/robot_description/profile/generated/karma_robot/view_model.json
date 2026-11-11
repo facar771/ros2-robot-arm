@@ -1,0 +1,387 @@
+{
+  "_generated": "ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen --profile src/robot_description/profile/karma_robot/karma_robot.yaml` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).",
+  "view_model_version": 1,
+  "robot": "karma_robot",
+  "units": {
+    "length": "m",
+    "angle": "rad"
+  },
+  "frames": "world == base_link (fixed mount, no offset); serial chain; in the zero configuration every frame is aligned with the base. Child frame = parent frame * Translate(joint.origin) * Rotate(joint.axis, q). Link geometry sits in its own link frame at `origin`; cylinders and the box z axis run along the link z axis.",
+  "root": "base_link",
+  "joints": [
+    {
+      "name": "joint_1",
+      "parent": "base_link",
+      "child": "link_1",
+      "origin": [
+        0.0,
+        0.0,
+        0.03
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "limit": {
+        "lower": -3.0,
+        "upper": 3.0,
+        "velocity": 0.5
+      }
+    },
+    {
+      "name": "joint_2",
+      "parent": "link_1",
+      "child": "link_2",
+      "origin": [
+        0.0,
+        0.0,
+        0.07
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "limit": {
+        "lower": -1.4,
+        "upper": 1.4,
+        "velocity": 0.5
+      }
+    },
+    {
+      "name": "joint_3",
+      "parent": "link_2",
+      "child": "link_3",
+      "origin": [
+        0.0,
+        0.0,
+        0.1
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "limit": {
+        "lower": -1.5,
+        "upper": 1.5,
+        "velocity": 1.0
+      }
+    },
+    {
+      "name": "joint_4",
+      "parent": "link_3",
+      "child": "link_4",
+      "origin": [
+        0.0,
+        0.0,
+        0.09
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "limit": {
+        "lower": -1.5,
+        "upper": 1.5,
+        "velocity": 1.0
+      }
+    },
+    {
+      "name": "joint_5",
+      "parent": "link_4",
+      "child": "link_5",
+      "origin": [
+        0.0,
+        0.0,
+        0.03
+      ],
+      "axis": [
+        0.0,
+        0.0,
+        1.0
+      ],
+      "limit": {
+        "lower": -1.5,
+        "upper": 1.5,
+        "velocity": 1.0
+      }
+    },
+    {
+      "name": "joint_6",
+      "parent": "link_5",
+      "child": "link_6",
+      "origin": [
+        0.0,
+        0.0,
+        0.03
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "limit": {
+        "lower": -1.5,
+        "upper": 1.5,
+        "velocity": 1.0
+      }
+    },
+    {
+      "name": "joint_7",
+      "parent": "link_6",
+      "child": "link_7",
+      "origin": [
+        0.0,
+        0.0,
+        0.05
+      ],
+      "axis": [
+        0.0,
+        1.0,
+        0.0
+      ],
+      "limit": {
+        "lower": 0.0,
+        "upper": 0.8,
+        "velocity": 0.5
+      }
+    }
+  ],
+  "links": [
+    {
+      "name": "base_link",
+      "joint": null,
+      "shape": {
+        "type": "cylinder",
+        "radius": 0.05,
+        "length": 0.06
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "material": "gray",
+      "color": [
+        0.5,
+        0.5,
+        0.5,
+        1.0
+      ]
+    },
+    {
+      "name": "link_1",
+      "joint": "joint_1",
+      "shape": {
+        "type": "cylinder",
+        "radius": 0.025,
+        "length": 0.07
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.035
+      ],
+      "material": "orange",
+      "color": [
+        1.0,
+        0.5,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "link_2",
+      "joint": "joint_2",
+      "shape": {
+        "type": "box",
+        "size": [
+          0.03,
+          0.03,
+          0.1
+        ]
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.05
+      ],
+      "material": "gray",
+      "color": [
+        0.5,
+        0.5,
+        0.5,
+        1.0
+      ]
+    },
+    {
+      "name": "link_3",
+      "joint": "joint_3",
+      "shape": {
+        "type": "box",
+        "size": [
+          0.025,
+          0.025,
+          0.09
+        ]
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.045
+      ],
+      "material": "orange",
+      "color": [
+        1.0,
+        0.5,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "link_4",
+      "joint": "joint_4",
+      "shape": {
+        "type": "cylinder",
+        "radius": 0.015,
+        "length": 0.03
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.015
+      ],
+      "material": "blue",
+      "color": [
+        0.0,
+        0.5,
+        1.0,
+        1.0
+      ]
+    },
+    {
+      "name": "link_5",
+      "joint": "joint_5",
+      "shape": {
+        "type": "box",
+        "size": [
+          0.02,
+          0.02,
+          0.03
+        ]
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.015
+      ],
+      "material": "gray",
+      "color": [
+        0.5,
+        0.5,
+        0.5,
+        1.0
+      ]
+    },
+    {
+      "name": "link_6",
+      "joint": "joint_6",
+      "shape": {
+        "type": "box",
+        "size": [
+          0.03,
+          0.02,
+          0.05
+        ]
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.025
+      ],
+      "material": "orange",
+      "color": [
+        1.0,
+        0.5,
+        0.0,
+        1.0
+      ]
+    },
+    {
+      "name": "link_7",
+      "joint": "joint_7",
+      "shape": {
+        "type": "box",
+        "size": [
+          0.008,
+          0.012,
+          0.04
+        ]
+      },
+      "origin": [
+        0.0,
+        0.0,
+        0.02
+      ],
+      "material": "blue",
+      "color": [
+        0.0,
+        0.5,
+        1.0,
+        1.0
+      ]
+    }
+  ],
+  "tcp": {
+    "offset": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "wpr": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "frame": "link_7"
+  },
+  "tool": null,
+  "safe_box": {
+    "frame": "world",
+    "x": [
+      0.06,
+      0.2
+    ],
+    "y": [
+      -0.12,
+      0.12
+    ],
+    "z": [
+      0.02,
+      0.26
+    ]
+  },
+  "named_poses": {
+    "home": [
+      0.0,
+      0.0,
+      0.8,
+      0.8,
+      0.0,
+      0.7,
+      0.1
+    ],
+    "ready": [
+      0.0,
+      0.6,
+      1.0,
+      1.0,
+      0.8,
+      1.0,
+      0.1
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+# ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen --profile src/robot_description/profile/karma_robot/karma_robot.yaml` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).
+# Initial positions of the ros2_control fake/sim system
+initial_positions:
+  joint_1: 0.0
+  joint_2: 0.0
+  joint_3: 0.8
+  joint_4: 0.8
+  joint_5: 0.0
+  joint_6: 0.7
+  joint_7: 0.1

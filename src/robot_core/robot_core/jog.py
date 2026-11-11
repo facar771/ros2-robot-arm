@@ -176,7 +176,7 @@ class DlsJogEngine:
 
         pose, jac = chain.fk_and_jacobian(q)
         p, rot = pose[:3, 3], pose[:3, :3]
-        u, sing, vt = np.linalg.svd(jac)
+        u, sing, vt = np.linalg.svd(jac, full_matrices=False)   # 7+ joints: vt is 6 x dof
         sigma = float(sing[-1])
         tcp = (float(p[0]), float(p[1]), float(p[2]))
         messages = []
