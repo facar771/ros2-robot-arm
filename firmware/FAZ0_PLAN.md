@@ -1,127 +1,124 @@
 # K9 Faz 0: karma robot firmware planı (YALNIZ DOKÜMAN, kod yok)
 
-Durum: **ONAY BEKLİYOR (Ferhat).** Onaylanmadan firmware kodu yazılmaz. Yol haritası: K9 / K3. Sahibi: Robot_9.
-Hiçbir şey gerçek donanımda denenmedi; aşağıdaki her donanım iddiası "öneri" ya da "kaynak koddan okundu"dur.
+Durum: **ONAY BEKLİYOR (Ferhat; bağlantı sorusu için Robot_1).** Pin tablosu onaylanmadan firmware kodu yazılmaz.
+Yol haritası: K9 / K3. Hiçbir şey gerçek donanımda denenmedi; her donanım iddiası "öneri"dir.
 
-## 1. Ferhat'ın mevcut kodu (kaynak: yüklediği tek dosya, 400 satır)
+## 0. Kapsam (11 Kasım güncellemesi)
 
-**Bulgu 1: bu kod ESP32 içindir, ESP8266 NodeMCU için değil.** `analogReadResolution(12)`, `analogSetPinAttenuation`,
-`Wire.begin(21, 22)`, `Serial.printf` ve GPIO 32/34/35 yalnız ESP32'de var; ESP8266'nın tek ADC'si ve bu pinleri yok.
-(Derlemeyi denemedim; çıkarım kaynak kodundan.) Bu belgede kart "ESP32 paneli" diye anılır. Yanlışsa Soru 1.
+- Ferhat'ın eski ekran/joystick/LCD kodu **kapsam dışı**; repoya alınmaz, korunması gerekmez.
+- Robot **telefondan** kontrol edilir. Hat: telefon tarayıcısı → Control Hub (PC) → köprü → önce **USB-seri 115200**, sonra **Wi-Fi** → Uno.
+- İki firmware: **Uno** (tüm hareket, protokol, watchdog) ve **ESP/NodeMCU aktarıcısı** (şeffaf bayt aktarımı).
+- ESP **kalp atışı üretmez**, çerçeve yorumlamaz, komut enjekte etmez (Robot_1, 7 Kasım). Uno watchdog'u (300 ms) yalnız **PC'den gelen geçerli** çerçeveleri sayar.
+- Faz 2 (motor) Robot_1'in "tezgâh modu" kararına kadar KAPALI.
 
-**Bulgu 2: Uno koduna ve motor koduna sahip değiliz.** Dosyada Wi-Fi, motor ve Uno ile konuşma kodu yok.
-`ROBOT_MODE` yalnız "Robot Bekleniyor" yazar; robot sürmez.
+## 1. Ferhat'ın donanımı (kendi anlatımı, 11 Kasım; doğrulanmadı)
 
-| Konu | İçerik |
-|---|---|
-| Ne yapıyor | 2 eksen joystick (X, Y) + 1 pot (Z) ile kartezyen mm hedefi (0–400) üretir; LCD'de gösterir; uzun basış: Robot → Manuel → Ayar → Robot. Mod 1: sapmayla konum, Mod 2: uçta sabit hızla ilerle. Ayar sayfasında adım (mm/100 ham) ve hız ayarlanır. |
-| Pinler | LCD I2C 0x27: SDA 21, SCL 22 · buton 23 (INPUT_PULLUP) · joystick X 34, Y 35 · Z pot 32 (11 dB, 12 bit) |
-| Kütüphaneler | `Arduino.h`, `Wire.h`, `LiquidCrystal_I2C` |
-| Seri | `Serial` 115200, **her 500 ms'de bir hata ayıklama satırı yazar** (aşağıdaki UART planı için önemli) |
-| RAM/CPU | Büyük yapı yok (~1 KB global); ESP32'de 520 KB RAM, sorun değil. `loop()` sonunda `delay(20)`, her eksende 16 örnekli ADC okuma, LCD I2C yazımı 200 ms'de bir (bloklayıcı). Bu, **röle döngüsünü geciktirir** (bkz. §4). |
-| Üretilen çıktı | Mm cinsinden X/Y/Z hedefi. Eklem açısı ya da adım değil; robota hiçbir yere gönderilmiyor. |
+Bir Arduino Uno + bir NodeMCU, TX/RX ile bağlı. Uno'da 6 servo + A4988 ile sürülen 1 step motor; 2× 28BYJ-48 (ULN2003) var.
+**Motor sırası (tabandan uca):**
+
+| Eksen | Mekanik | Motor | Not |
+|---|---|---|---|
+| 1 | taban | 28BYJ-48 #1 (ULN2003 #1) | step |
+| 2 | ana kol | 28BYJ-48 #2 (ULN2003 #2) | step |
+| 3 | bir üst | **2× SG90** birlikte (tek biri yetmez), **ters yönlü** | servo çifti |
+| 4 | bir üst | **2× SG90** birlikte | servo çifti |
+| 5 | bir üst | 1× SG90 | servo |
+| 6 | bir üst | 1× SG90 | servo |
+| 7 | uç, kıskaç | A4988 ile step | step; yol haritası profilindeki `joint_1..6`'da yok, K8 (Robot_2) kararı |
+
+Toplam: **3 step** (2× 28BYJ-48 + 1 A4988), **6 SG90** (eksen 3 ve 4 çift). 7 eyleyici eksen, protokolde `eksen_sayısı = 7`.
+(Bu, yol haritasındaki "2 step SBT0811" bilgisini geçersiz kılar; SBT0811 son listede yok.)
 
 ## 2. Pin ve bağlantı tablosu (ONAY BEKLİYOR)
 
-Yol haritasındaki iki çelişen bilgi:
-- Karar satırı: 2 step (SBT0811) + 6 SG90, servolar A0–A5, step D2–D9.
-- Ferhat'ın son listesi: 2× 28BYJ-48 + ULN2003, **1 motor** A4988 (STEP/DIR), 6 SG90, joystick+buton, pot, 16x2 I2C LCD.
+**Varsayılan öneri: tüm motorlar Uno'ya bağlı.** Uno tek hareket denetleyicisi olur, ESP saf aktarıcı kalır.
 
-Bu belge **son listeyi** esas alır (daha yeni). SBT0811 son listede yok. **Soru 2: toplam kaç step motor var (2 mi, 3 mü)?**
-"2× 28BYJ-48 + 1 A4988 motoru" 3 motor eder; "2 step motor" ise biri fazla. Aşağıdaki tablo 3 motor varsayar.
-
-**Uno (öneri, hepsi ONAY BEKLİYOR):**
-
-| Uno pini | Bağlantı | Not |
+| Uno pini | Bağlantı | Eksen |
 |---|---|---|
-| D0 (RX), D1 (TX) | ESP32 Serial2 (bkz. §3) | USB ile aynı UART; yükleme sırasında bu iki tel sökülür |
-| D2–D5 | ULN2003 #1 IN1–IN4 → 28BYJ-48 (A) | AccelStepper `HALF4WIRE` için IN1,IN3,IN2,IN4 sırası Faz 2'de doğrulanır |
-| D6–D9 | ULN2003 #2 IN1–IN4 → 28BYJ-48 (B) | aynı |
-| D10 | A4988 STEP | |
-| D11 | A4988 DIR | |
-| D12 | A4988 EN (aktif düşük) | **Donanımda çekme direnciyle varsayılan KAPALI** olmalı (HARDWARE.md §6: `EN_etkin = NC_kapalı AND firmware_izin`) |
-| D13 | boş (yerleşik LED, durum göstergesi) | |
-| A0–A5 | SG90 servo sinyalleri (dijital olarak) | **Faz 2'de kullanılmaz**; servo K6b/K7'ye kadar bekler. `Servo` kütüphanesi Timer1'i alır. |
+| D0 (RX), D1 (TX) | ESP/NodeMCU UART'ı (bkz. §3) | – |
+| D2–D5 | ULN2003 #1 IN1–IN4 → 28BYJ-48 | 1 |
+| D6–D9 | ULN2003 #2 IN1–IN4 → 28BYJ-48 | 2 |
+| A0, A1 | SG90 çifti sinyalleri (iki AYRI pin) | 3 |
+| A2, A3 | SG90 çifti sinyalleri (iki AYRI pin) | 4 |
+| A4 | SG90 | 5 |
+| A5 | SG90 | 6 |
+| D10 / D11 / D12 | A4988 STEP / DIR / EN (aktif düşük) | 7 |
+| D13 | boş (durum LED'i) | – |
 
-**Eksen eşlemesi (hangi motor hangi eklem):** bilinmiyor. **Soru 3.** Profilde `joint_1..joint_6` var; K8 karma profili Robot_2'nin işi.
-Faz 2 için yalnız "firmware motor 0/1/2 = şu fiziksel motor" yeterlidir; eklem eşlemesi profil/Faz 3'tür.
+- **Servo çifti:** iki servo aynı sinyal pinine paralel BAĞLANMAZ. Ters yön ve çift akım yüzünden iki ayrı pin; ikinci servoya `toplam − θ` aynalı açı yazılır (kalibrasyon K6b/K7). Servolar Faz 2'de **kullanılmaz**.
+- `EN` hattı donanımda çekme direnciyle **varsayılan KAPALI** olmalı (HARDWARE.md §6: `EN_etkin = NC_kapalı AND firmware_izin`).
+- Motor ve servo gücü Uno'nun 5 V'undan ALINMAZ; ayrı besleme, ortak GND. NC acil dur butonu motor gücünü/EN hattını yazılımdan bağımsız keser (§6). Servo besleme kesimi K7.
+- AccelStepper `HALF4WIRE` için ULN2003 pin sırası (IN1,IN3,IN2,IN4) Faz 2'de doğrulanır.
 
-**Güç ve acil dur (Faz 2'den önce Ferhat'ın bilmesi gerekenler, HARDWARE.md §6 / K7):**
-- Motor ve servo gücü Uno'nun 5 V'undan ALINMAZ. 28BYJ-48 ve A4988 için ayrı besleme, ortak GND.
-- NC acil dur butonu motor gücünü/A4988 EN hattını yazılımdan bağımsız keser. Servo hattı için K7 kuralı gelene kadar servo gücü bağlanmaz.
-- Yazılım acil dur ve watchdog donanım acil durdurmanın yerine geçmez.
+### Çelişki: 28BYJ-48'lerin NodeMCU'ya bağlanması (YAŞLI KURDA SORU, aşağıda)
+Ferhat 28BYJ-48 sürücülerinin 8 pinini **NodeMCU'ya** bağlamayı düşünüyor. Bu, "ESP yalnız şeffaf aktarıcı" kararıyla çakışır:
+ESP step üretirse kendi durum makinesi, watchdog'u ve Uno ile ikinci bir iç protokol gerekir; Uno watchdog'u o eksenleri durdurmaz.
+Pratik not: ESP8266 NodeMCU'da kullanılabilir GPIO az (yaklaşık 9) ve bazıları açılış pinidir; 8 sürücü pini + Uno UART'ı zor sığar. Uno'nun D2–D9'u ise boş.
 
-**ESP32 paneli:** mevcut pinler (21, 22, 23, 32, 34, 35) DEĞİŞMEZ. Uno bağlantısı için **GPIO16 (RX2) ve GPIO17 (TX2)** önerilir; mevcut kod bunları kullanmıyor.
+## 3. UART: Uno'nun tek donanım UART'ı
 
-| Hat | Bağlantı |
-|---|---|
-| ESP32 GPIO17 (TX2) → Uno D0 (RX) | doğrudan (3,3 V mantık, Uno VIH ≈ 3 V: sınırda, denenmedi) |
-| Uno D1 (TX) → ESP32 GPIO16 (RX2) | **5 V → 3,3 V: gerilim bölücü şart** (örn. 1 kΩ + 2 kΩ) ya da seviye çevirici. ESP32 pini 5 V'u kaldırmaz. |
-| GND – GND | ortak |
+D0/D1 hem USB-seri çipine hem ESP'ye bağlanamaz (aynı anda iki sürücü). **Uno 921600 baud taşıyamaz**
+(donanım UART'ı 16 MHz'de 250000 tam, 115200 ≈ %0,8 hata; SoftwareSerial yaklaşık 38400'ü geçmez). Baud ayarlanabilir
+(Hub köprüsünde `--serial-baud` var): **protokol değişmez, yalnız parametre.**
 
-## 3. Uno'nun tek donanım UART'ı: seçenekler
-
-Uno'da donanım UART'ı yalnız bir tane (D0/D1) ve USB-seri çipi de ona bağlı. HARDWARE.md 921600 baud varsayıyor; **Uno 921600'ü taşıyamaz**
-(donanım UART'ında 16 MHz'de 250000 tam, 115200 ≈ %0,8 hata; SoftwareSerial 921600 değil, ~38400 civarı güvenli). Baud ayarlanabilir
-(`--serial-baud` Hub köprüsünde var), yani **protokol değişmez**; yalnız parametre.
-
-| Seçenek | PC kablosu | ESP32 hattı | Artı | Eksi |
+| Seçenek | PC kablosu | ESP hattı | Artı | Eksi |
 |---|---|---|---|---|
-| **A** PC↔Uno USB, ESP32↔Uno SoftwareSerial | Uno'nun USB'si | D8/D9 gibi pinlerde SoftwareSerial | Kablo yolu doğrudan | SoftwareSerial alırken kesmeleri uzun süre kapatır → step darbesi aksar; ~38400'ü geçmez; D2–D9 pin planı bozulur; USB'yle ESP32 aynı anda çalışabilir ama iki ayrı kanal, iki ayrı test |
-| **B** (öneri) ESP32 tek geçit: PC↔ESP32 (USB) ve Wi-Fi↔ESP32, ESP32 Serial2 ↔ Uno donanım UART'ı | ESP32'nin USB'si | Uno D0/D1, donanım UART | Kablo ve Wi-Fi AYNI yoldan (Uno'ya tek tip bayt akışı); Uno'da SoftwareSerial yok; Uno USB'si yalnız yükleme/hata ayıklama | ESP32 çalışmazsa kablo yolu da yok (güvenli yön: Uno watchdog'u durdurur); Uno'ya yazarken D0/D1 telleri sökülmeli; ESP32 USB seri portu açılırken DTR/RTS ile ESP32'yi resetleyebilir (köprü `dtr=False, rts=False` ile açmalı; DENENMEDİ) |
-| **C** Yalnız USB, ESP32 sonra | Uno'nun USB'si | yok | En basit ilk hareket | Wi-Fi yolu (K5) için sonra B'ye geçiş gerekir, iki kez iş |
+| **B (öneri)** ESP tek geçit: PC USB→ESP, Wi-Fi→ESP, ESP↔Uno D0/D1 donanım UART | ESP'nin USB'si | Uno D0/D1 | Kablo ve Wi-Fi aynı yoldan; Uno'da SoftwareSerial yok | ESP çökerse yol kesilir (güvenli yön: Uno watchdog'u durdurur); Uno'ya yazarken D0/D1 telleri sökülür; USB-seri açılırken DTR/RTS ESP'yi resetleyebilir (köprü `dtr=False, rts=False` açmalı; DENENMEDİ) |
+| C: ilk hareket için PC USB→Uno doğrudan, ESP sonra | Uno'nun USB'si | yok | ESP olmadan en hızlı ilk hareket | Wi-Fi'ye geçerken D0/D1 ESP'ye taşınır; kablo yolu değişir, iki kez test |
+| A: SoftwareSerial ile ESP | Uno USB | yazılım seri | – | Alma sırasında kesmeleri kapatır → step darbesi aksar; D0/D1 yine USB'ye bağlı. **Önerilmez** |
 
-**Öneri: B**, baud **115200** ile başla (Uno'da en sağlam; 250000 sonra denenir). Hesap: MOVE çerçevesi ≈ 27 bayt ≈ 2,4 ms; 50 ms'de bir STATUS (~40 bayt) hattın ~%7'si. 115200 yeter.
-Karşılığı: ESP32'deki mevcut `Serial.printf` günlüğü (500 ms'de bir) PC kablosu röle modundayken **kapatılmalı** (protokol akışını bozar); Faz 1'de derleme bayrağı ile.
+**Öneri: B, 115200.** MOVE çerçevesi ≈ 27 bayt ≈ 2,4 ms; 50 ms'de bir STATUS (7 eksenle ≈ 80 bayt ≈ 7 ms) hattın ~%14'ü. 115200 yeter.
+ESP tarafı: **ESP32** ise `Serial2` (örn. GPIO16/17); **ESP8266** ise UART0'ı `Serial.swap()` ile GPIO13/15'e alıp (NodeMCU D7/D8; GPIO15 açılışta düşük olmalı) USB'yi UART0'dan ayırmak gerekir, kolay değil.
+Seviye: Uno TX (5 V) → ESP RX (3,3 V) arası **gerilim bölücü şart**; ESP TX → Uno RX doğrudan (VIH sınırda, denenmedi).
 
-## 4. Uno / ESP32 görev paylaşımı
+## 4. Görev paylaşımı
 
-| ESP32 paneli | Uno |
+| ESP/NodeMCU aktarıcısı | Uno firmware'i |
 |---|---|
-| LCD, joystick, buton, pot (mevcut, değişmez) | Çerçeve ayrıştırma (COBS+CRC-16+seq, HARDWARE.md §2–§5), durum makinesi, `MOVE/STOP/ESTOP/ENABLE/HOME/CONFIG`, adım üretimi, gömülü limitler, watchdog |
-| USB-seri ve Wi-Fi'den gelen baytları **olduğu gibi** Uno'ya, Uno'dan gelenleri PC'ye taşır (şeffaf röle) | STATUS/ACK/FAULT üretir |
-| **Kalp atışı ÜRETMEZ**, çerçeve yorumlamaz, komut enjekte etmez (Robot_1, 7 Kasım) | Watchdog 300 ms yalnız **PC'den gelen geçerli** çerçeveleri sayar |
-| Kendi Wi-Fi kopma izlemesi ayrıdır | Açılışta hareketsiz, geçersiz çerçeve düşer |
+| USB-seriden ve Wi-Fi'den (TCP) gelen baytları **olduğu gibi** Uno'ya, Uno'dan gelenleri geri taşır | Çerçeve ayrıştırma (COBS+CRC-16+seq, HARDWARE.md §2–§5), durum makinesi, `MOVE/STOP/ESTOP/ENABLE/HOME/CONFIG` |
+| **Kalp atışı ÜRETMEZ**, çerçeve yorumlamaz, komut enjekte etmez | Adım üretimi, gömülü eksen limitleri ve azami hız (derleme sabiti) |
+| Kendi Wi-Fi kopma izlemesi ayrı (bağlantıyı kapatır, bayt üretmez) | Watchdog 300 ms: yalnız PC çerçeveleri; açılışta hareketsiz; geçersiz çerçeve düşer |
+| Wi-Fi şifresi/token: gitignore'lu ayrı yapılandırma dosyası, kodda ve günlükte yok | STATUS/ACK/FAULT üretir |
 
-Röle zamanlaması: mevcut `loop()` `delay(20)` ve bloklayıcı LCD yazımı içeriyor. Röle bu döngüye konursa gecikme +20–30 ms olur ve 300 ms
-watchdog payını yer. Öneri: röle ayrı bir FreeRTOS görevinde (ya da `delay` kaldırılıp seri bayt döngüsü her turda boşaltılarak). Faz 1'de ölçülür; şimdi iddia yok.
+Röle döngüsü bloklayıcı işlem içermemeli (LCD yok, uzun `delay` yok); gecikme Faz 1'de ölçülür, şimdi iddia yok.
 
 ## 5. Uno bellek bütçesi (2 KB RAM; tahmin, derlenmedi)
 
 | Kalem | Tahmin |
 |---|---|
-| Alma tamponu (derleme zamanı `MAX_FRAME`) | HARDWARE.md azami yükü 200 B der; Uno için sınır **96 B yük** önerilir (en büyük gerçek mesaj STATUS: 8 eksenle ~83 B). Daha uzun çerçeve düşer (`BAD_LEN` sayacı). ≈ 112 B |
+| Alma tamponu (derleme zamanı `MAX_FRAME`) | HARDWARE.md azami yük 200 B der; Uno için **96 B yük** sınırı önerilir (7 eksenli STATUS ≈ 74 B). Fazlası düşer. ≈ 112 B |
 | Gönderme tamponu | ≈ 112 B |
-| `cmd_id` önbelleği (son 32, `cmd_id u16`+sonuç) | ≈ 128 B |
-| 3 `AccelStepper` + 6 `Servo` durumu | ≈ 150–250 B (kütüphane sürümüne göre; ölçülecek) |
-| Hareket tamponu | **yok**: eksen başına tek hedef + hız/ivme (komut `MOVE` tek hedef taşır) |
-| Yığın ve `Serial` tamponları | ≈ 150–200 B |
-| Toplam | ≈ 800–950 B < 2048 B. Faz 1'de `avr-size` ile gerçek değer yazılır |
+| `cmd_id` önbelleği (son 32) | ≈ 128 B |
+| 3 `AccelStepper` + 6 `Servo` durumu | ≈ 150–250 B (ölçülecek) |
+| Hareket tamponu | yok: eksen başına tek hedef + hız/ivme |
+| Yığın + `Serial` tamponları | ≈ 150–200 B |
+| Toplam | ≈ 800–950 B < 2048 B; Faz 1'de `avr-size` ile gerçek değer |
 
-CPU: `AccelStepper.run()` Uno'da toplam ~4 kHz civarı; 28BYJ-48 yarım adımda en çok ~500–700 adım/sn, A4988 düşük hızda yeterli. Faz 2'de **azami hız
-derleme zamanı sabiti ve düşük** olur (ör. 28BYJ-48 için 200 adım/sn); ölçülecek. I2C/LCD Uno'da YOK (ESP32'de), yani "I2C yazımı adım üretimini bozar" riski bu mimaride oluşmaz.
-Servo (Faz 2'de kapalı) `Servo` Timer1'i kullanır ve kesmeyi kısa süre kapatır; step darbesine etkisi servo fazında ölçülür.
+CPU: `AccelStepper.run()` Uno'da toplam ~4 kHz civarı; Faz 2'de eksen başına **azami hız derleme sabiti ve düşük** (örn. 28BYJ-48 için 200 adım/sn; ölçülecek).
+I2C/LCD Uno'da YOK (PCA9685 yok), yani "I2C yazımı adım üretimini bozar" riski oluşmaz. `Servo` Timer1'i alır ve kesmeyi kısa süre kapatır; step darbesine etkisi servo fazında ölçülür.
 
 ## 6. Faz 1–3 planı
 
-- **Faz 1 (hareketsiz, ayrı PR):** `firmware/uno/` PlatformIO (`uno`), `firmware/esp32_panel/` Ferhat'ın mevcut kodu **aynen taşınır** (`env:esp32dev`, derlemesi bozulmaz), COBS+CRC-16+seq (HARDWARE.md §2–§5), röle (bayrakla, varsayılan kapalı), yeni workflow `firmware-ci.yml` (`pio run` her iki hedef; `ci.yml` Robot_3'ün, dokunulmaz). Hareket kodu `-DK9_MOTION=0` ile KAPALI.
-- **Faz 2 (YALNIZ Robot_1 "tezgâh modu" kararından sonra):** step hareketi, gömülü dar limit ve düşük hız, watchdog; `tools/bench/` (ROS'suz, operatör her oturumda "motorlar yükten ayrık" yazar).
-- **Faz 3:** ROS yolu (Robot_2/Robot_3/Robot_4 işleri; bana ait değil).
+- **Faz 1 (hareketsiz, ayrı PR):** `firmware/uno/` PlatformIO (`uno`) iskeleti; `firmware/esp_relay/` (ESP aktarıcısı, kartı Ferhat'ın cevabına göre); COBS+CRC-16+seq; hareket kodu `-DK9_MOTION=0` ile KAPALI; yeni `firmware-ci.yml` (`pio run`; `ci.yml` Robot_3'ün, dokunulmaz).
+- **Faz 2 (YALNIZ Robot_1 "tezgâh modu" kararından sonra):** 3 step için hareket, gömülü dar limit/düşük hız, watchdog; `tools/bench/` (ROS'suz, her oturumda operatör "motorlar yükten ayrık" yazar). Servo K6b'ye kadar bekler.
+- **Faz 3:** ROS yolu, Hub, telefon, karma robot profili (Robot_2/3/4); bana ait değil.
 
-## 7. Sorular (Ferhat; hepsi bir arada ama kısa)
+## 7. Sorular (Ferhat'a, tek mesaj)
 
-1. Elindeki kart ESP32 mi (kodundaki pinler öyle diyor), yoksa gerçekten ESP8266 NodeMCU mu?
-2. Toplam kaç step motor var: 2× 28BYJ-48 **ve** 1 A4988 motoru (3 motor) mu, yoksa 2 motor mu?
-3. Hangi motor hangi mekanik eksen (taban, omuz, dirsek...)? Şimdilik motor 0/1/2 sıralaması yeter.
-4. Uno'da şu an yüklü bir kod var mı (varsa gönder), yoksa Uno boş mu?
-5. UART planı B (ESP32 tek geçit, Uno D0/D1) uygun mu? Alternatif: A veya C (§3).
+1. Kartın **ESP32 mi, ESP8266 NodeMCU mu**? (Yazıyı kart üzerinde ya da satın aldığın sayfada gör.)
+2. 28BYJ-48 sürücülerini **Uno D2–D9'a** bağlayabilir misin? (Öneri evet; NodeMCU'ya bağlamak aktarıcı kararıyla çakışıyor, Robot_1'e sorulacak.)
+3. Uç kıskaç A4988 ile step olduğuna göre toplam **3 step** doğru mu? (Cevabına göre evet kabul ettim.)
+4. Hangi UART yolu: **B** (ESP tek geçit) mi, ilk hareket için **C** (Uno'ya doğrudan USB) mu?
 
 ## Yol haritasına öneri
 
-- `HARDWARE.md` §2 "921600 baud" Uno hedefi için geçerli değil; Robot_4 yalnız not düşebilir (Uno hedefi 115200). Protokol değişmez.
-- `HARDWARE.md` bulgusu (B3): `HELLO_REQ` alınınca MCU `rx` seq izleyicisini sıfırlamalı; Uno firmware'i Faz 1'de bunu uygulayacak, protokole eklemeli öneri olarak Robot_4/Robot_1 onayı beklenir.
+- K9 satırındaki "Ferhat'ın mevcut kodu bozulmaz" ifadesi artık geçersiz (eski panel kodu kapsam dışı). Sahip adı: yol haritası Robot_9 diyor, görev Robot_10'a verildi; müdür günceller.
+- Bağlantı çelişkisi: "2 step SBT0811" bilgisi geçersiz; gerçek liste 3 step + 6 SG90 (eksen 3 ve 4 servo çifti).
+- `HARDWARE.md` §2: 921600 baud Uno hedefinde geçerli değil (Uno 115200; Robot_4 not düşebilir). Protokol değişmez.
+- B3 bulgusu (`HELLO_REQ` seq sıfırlama) Uno firmware'inde Faz 1'de uygulanır; protokole eklemeli öneri Robot_4/Robot_1 onayına bağlı.
+- Çift servo ve kıskaç (eksen 7) için profil/protokol kararı K6b (Robot_4) ve K8 (Robot_2) işi.
 
 ## Denenmeyenler
 
-Gerçek donanım (Uno, ESP32, Wi-Fi, motor, sürücü, ULN2003, A4988, servo) hiç denenmedi. Kod derlenmedi (bu PR'da kod yok). Pin tablosu, gerilim bölücü,
-baud seçimi, DTR/RTS reseti, röle gecikmesi, bellek ve hız rakamları tahmindir. ESP32 tespiti yalnız kaynak kodundan.
+Gerçek donanım (Uno, ESP32/ESP8266, Wi-Fi, motor, sürücü, ULN2003, A4988, servo) hiç denenmedi. Derleme yok (kod yok). Pin tablosu, gerilim bölücü, baud,
+DTR/RTS reseti, röle gecikmesi, bellek ve hız rakamları tahmindir. Motor/eksen bilgisi Ferhat'ın sözlü anlatımıdır, doğrulanmadı. ESP kartı türü bilinmiyor.
