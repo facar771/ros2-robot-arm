@@ -22,10 +22,10 @@ jobs:
           load: true
           tags: ros2-robot-arm:ci
           cache-from: type=gha
-      - name: gazebo-integration x3 (keep logs of failures)
+      - name: gazebo-integration x8 (keep logs of failures)
         run: |
           mode=gazebo-integration
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5 6 7 8; do
             rc=0
             docker run --rm -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro" \
               -v "$PWD/plugins:/workspace/plugins:ro" ros2-robot-arm:ci run_selftest $mode > /tmp/$mode-$i.log 2>&1 || rc=$?
