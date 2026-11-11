@@ -184,6 +184,8 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer) -> list:
         target = body and body.get('data', {}).get('target')
         print(f'       {line}: TF uç konum {tool}, hedef {target}, hata {err * 100:.2f} cm; '
               f'görünüm-TF farkı {verr * 100:.2f} cm')
+        if status != 200:     # N8: say WHY (status, message, where the arm stands), not just "inf"
+            print(f"       {line}: durum {status}, mesaj: {body and body.get('message')}")
         record(f'{line} -> 200 ve TF ile ölçülen uç konum hedefe <= {TOOL_TOLERANCE * 100:.1f} cm',
                status == 200 and err <= TOOL_TOLERANCE)
         record(f'{line}: sayfadaki uç konum TF ile tutarlı', verr <= TOOL_TOLERANCE)
