@@ -76,6 +76,9 @@ class Link:
     inertia: Tuple[float, float, float]   # ixx, iyy, izz (products are zero)
 
 
+JOG_MODES = ('free', 'locked')
+
+
 @dataclass(frozen=True)
 class Joint:
     name: str
@@ -88,6 +91,7 @@ class Joint:
     velocity: float
     acceleration: float
     effort: float
+    jog: str = 'free'                # 'locked': the Cartesian jog never moves this joint (K8)
 
 
 @dataclass(frozen=True)
@@ -353,8 +357,12 @@ def _parse_link(name: str, data: Any, materials: Mapping) -> Link:
 
 def _parse_joint(name: str, data: Any, parent_link: Link) -> Joint:
     where = f'joints.{name}'
-    d = _mapping(data, where, ('type', 'parent', 'child', 'axis', 'offset', 'limits'),
+    d = _mapping(data, where, ('type', 'parent', 'child', 'axis', 'offset', 'limits', 'jog'),
                  ('type', 'parent', 'child', 'axis', 'limits'))
+    jog = d.get('jog', 'free')
+    if jog not in JOG_MODES:
+        raise _fail(f'{where}.jog',
+                    f'{list(JOG_MODES)} değerlerinden biri olmalı (bulunan: {jog!r})')
     if d['type'] != 'revolute':
         raise _fail(f'{where}.type', f"yalnızca 'revolute' destekleniyor (bulunan: {d['type']!r}); "
                                      'prizmatik/paralel/mimic eklemler kapsam dışı')
@@ -377,7 +385,8 @@ def _parse_joint(name: str, data: Any, parent_link: Link) -> Joint:
         _number(limits.get('acceleration', DEFAULT_ACCELERATION), f'{where}.limits.acceleration',
                 positive=True, hi=MAX_ACCEL),
         _number(limits.get('effort', DEFAULT_EFFORT), f'{where}.limits.effort', positive=True,
-                hi=MAX_EFFORT))
+                hi=MAX_EFFORT),
+        jog)
 
 
 # ---- tools (Q1) -------------------------------------------------------------------------------

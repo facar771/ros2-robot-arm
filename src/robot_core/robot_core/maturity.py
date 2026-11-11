@@ -55,6 +55,8 @@ SERVO_CRITICAL = ('servo.pulse_range',)                  # instead of steps/gear
 # (limits.position, the angle limit, is already in AXIS_CRITICAL.) Only enforced on a ServoAxis, so
 # the older J5 stand-in (a step Axis relabelled hobby_servo) still reports just pulse_range.
 SERVO_REAL_CRITICAL = ('servo.slew_limit', 'servo.rest_angle', 'reference.pose')
+# K8: the second servo of a mirrored pair is a separate calibration; critical only where it exists.
+SERVO_MIRROR_CRITICAL = ('servo.mirror_pulse_range',)
 STEP_ONLY = ('motor.steps_per_rev', 'driver.microstep', 'gear_ratio', 'homing.position')
 
 
@@ -85,7 +87,8 @@ def known_paths(profile: Profile) -> List[str]:
     for j in profile.joints:
         paths += [f'joints.{j.name}.{f}' for f in JOINT_CRITICAL]
         paths += [f'axes.{j.name}.{f}'
-                  for f in AXIS_CRITICAL + SERVO_CRITICAL + SERVO_REAL_CRITICAL]
+                  for f in AXIS_CRITICAL + SERVO_CRITICAL + SERVO_REAL_CRITICAL
+                  + SERVO_MIRROR_CRITICAL]
     return paths
 
 
@@ -134,6 +137,11 @@ def load_quality(path: Union[str, Path, None], profile: Profile) -> Quality:
 
 
 # ---- field values -----------------------------------------------------------------------------
+def _mirror_range(axis: Any) -> Any:
+    m = getattr(axis, 'mirror', None)
+    return None if m is None else (m.min_us, m.max_us, m.angle_at_min, m.angle_at_max)
+
+
 def _axis_value(axis: Any, suffix: str) -> Any:
     getters = {
         'motor.type': lambda a: a.motor_type,
@@ -143,6 +151,7 @@ def _axis_value(axis: Any, suffix: str) -> Any:
         'limits.position': lambda a: list(a.position_limits),
         'homing.position': lambda a: a.homing.position,
         'servo.pulse_range': lambda a: getattr(a, 'servo_pulse_range', None),
+        'servo.mirror_pulse_range': lambda a: _mirror_range(a),
         'servo.slew_limit': lambda a: getattr(a, 'slew_limit', None),
         'servo.rest_angle': lambda a: getattr(getattr(a, 'rest', None), 'angle', None),
         'reference.pose': lambda a: getattr(getattr(a, 'reference', None), 'pose', None),
@@ -254,6 +263,8 @@ def _critical_paths(profile: Profile, hardware: Optional[HardwareProfile]) -> Li
                 paths.append(f'axes.{joint.name}.{f}')
         if servo:
             extra = SERVO_REAL_CRITICAL if isinstance(axis, ServoAxis) else ()
+            if getattr(axis, 'mirror', None) is not None:
+                extra += SERVO_MIRROR_CRITICAL
             paths += [f'axes.{joint.name}.{f}' for f in SERVO_CRITICAL + extra]
     return paths
 

@@ -1,0 +1,12 @@
+# ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen --profile src/robot_description/profile/karma_robot/karma_robot.yaml` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).
+# Safe working box for tool-tip goals + speed cap (read by robot_core.safezone, used by
+# Skills and the MoveIt adapter). A Cartesian goal whose target is outside the box is
+# refused with an explicit error and the robot does not move. Only the *target* is
+# checked; the path is MoveIt's collision checking. Named joint poses (home) are not
+# checked.
+frame: world
+box:               # metres, world frame
+  x: [0.06, 0.2]
+  y: [-0.12, 0.12]
+  z: [0.02, 0.26]
+max_velocity_scale: 0.3   # upper bound for MoveIt velocity/acceleration scaling, 0 < scale <= 1

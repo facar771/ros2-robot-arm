@@ -1,0 +1,151 @@
+# Robot profile v3 of the KARMA robot (K8): 7 axes, a small desktop arm built from mixed actuators.
+#   joint_1  base yaw          28BYJ-48 (step, open loop)
+#   joint_2  shoulder pitch    28BYJ-48 (step, open loop)
+#   joint_3  elbow pitch       2 x SG90, mirrored pair, one joint
+#   joint_4  wrist pitch       2 x SG90, mirrored pair, one joint
+#   joint_5  wrist roll        SG90
+#   joint_6  wrist bend        SG90
+#   joint_7  gripper jaw       A4988 step (open loop); in the chain, but `jog: locked`
+# The mechanical/electrical data lives in karma_robot/hardware.profile.yaml; the quality tags in
+# karma_robot/quality.profile.yaml. Generated files: robot_description/profile/generated/karma_robot/
+#   python3 -m robot_core.profile_gen --profile ../robot_description/profile/karma_robot/karma_robot.yaml
+# Same schema and rules as six_axis_robot.yaml (comments there); only what differs is explained here.
+#
+# !! EVERY number below is a PLACEHOLDER or an ESTIMATE of a robot that has not been built or
+# !! measured (tags: quality.profile.yaml). Nothing here is `measured`. Lengths are design guesses
+# !! for a ~35 cm desktop arm, masses are stand-ins, effort is a stand-in. Replace with real values
+# !! (CAD / scale / ruler) and re-tag before anything depends on them.
+profile_version: 3
+robot: karma_robot
+
+materials:
+  gray:   [0.5, 0.5, 0.5, 1.0]
+  orange: [1.0, 0.5, 0.0, 1.0]
+  blue:   [0.0, 0.5, 1.0, 1.0]
+
+mount:
+  name: masa
+  parent: world
+  child: base_link
+
+# ---- kinematics (m) ---------------------------------------------------------------------------
+links:
+  base_link:
+    length: 0.03
+    shape: {type: cylinder, radius: 0.05, length: 0.06}
+    origin: [0.0, 0.0, 0.0]
+    material: gray
+    mass: 0.3                   # PLACEHOLDER
+  link_1:                       # shoulder column
+    length: 0.07
+    shape: {type: cylinder, radius: 0.025}
+    material: orange
+    mass: 0.15                  # PLACEHOLDER
+  link_2:                       # upper arm
+    length: 0.10
+    shape: {type: box, size: [0.03, 0.03]}
+    material: gray
+    mass: 0.1                   # PLACEHOLDER
+  link_3:                       # forearm
+    length: 0.09
+    shape: {type: box, size: [0.025, 0.025]}
+    material: orange
+    mass: 0.08                  # PLACEHOLDER
+  link_4:                       # wrist
+    length: 0.03
+    shape: {type: cylinder, radius: 0.015}
+    material: blue
+    mass: 0.04                  # PLACEHOLDER
+  link_5:
+    length: 0.03
+    shape: {type: box, size: [0.02, 0.02]}
+    material: gray
+    mass: 0.03                  # PLACEHOLDER
+  link_6:                       # gripper body (fixed jaw)
+    length: 0.05
+    shape: {type: box, size: [0.03, 0.02]}
+    material: orange
+    mass: 0.05                  # PLACEHOLDER
+  link_7:                       # moving jaw = the flange / tip link
+    length: 0.04
+    shape: {type: box, size: [0.008, 0.012]}
+    material: blue
+    mass: 0.01                  # PLACEHOLDER
+
+joints:
+  joint_1:
+    type: revolute
+    parent: base_link
+    child: link_1
+    axis: [0, 0, 1]
+    limits: {position: [-3.0, 3.0], velocity: 0.5, acceleration: 0.5, effort: 1.0}
+  joint_2:
+    type: revolute
+    parent: link_1
+    child: link_2
+    axis: [0, 1, 0]
+    limits: {position: [-1.4, 1.4], velocity: 0.5, acceleration: 0.5, effort: 1.0}
+  joint_3:
+    type: revolute
+    parent: link_2
+    child: link_3
+    axis: [0, 1, 0]
+    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 1.0}
+  joint_4:
+    type: revolute
+    parent: link_3
+    child: link_4
+    axis: [0, 1, 0]
+    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 1.0}
+  joint_5:
+    type: revolute
+    parent: link_4
+    child: link_5
+    axis: [0, 0, 1]
+    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 0.5}
+  joint_6:
+    type: revolute
+    parent: link_5
+    child: link_6
+    axis: [0, 1, 0]
+    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 0.5}
+  joint_7:                      # gripper jaw: opens/closes, never moved by the Cartesian jog
+    type: revolute
+    parent: link_6
+    child: link_7
+    axis: [0, 1, 0]
+    jog: locked
+    limits: {position: [0.0, 0.8], velocity: 0.5, acceleration: 0.5, effort: 0.5}
+
+# ---- MoveIt -----------------------------------------------------------------------------------
+moveit:
+  planning_group: robot_arm
+  default_velocity_scaling: 0.3
+  default_acceleration_scaling: 0.3
+  initial_positions: {joint_1: 0.0, joint_2: 0.0, joint_3: 0.8, joint_4: 0.8, joint_5: 0.0, joint_6: 0.7, joint_7: 0.1}   # = home
+  named_poses:                  # joint values in chain order [joint_1 .. joint_7]
+    # home: INSIDE the safe box (tip ~[0.16, 0, 0.23]), >= 0.7 rad from every arm joint limit. Wrist
+    # roll (joint_5) is 0 on purpose: an easy physical reference. Three parallel pitch axes + roll 0
+    # = singular for the Cartesian jog: use `ready` (joint_5 != 0) to start a jog.
+    home: [0.0, 0.0, 0.8, 0.8, 0.0, 0.7, 0.1]
+    # ready: inside the box (tip ~[0.17, 0.03, 0.09]), >= 0.5 rad from the arm joint limits,
+    # sigma_min ~0.036 (small arm: below jog sigma_slow 0.06 -> the jog runs slowed; scale effect).
+    ready: [0.0, 0.6, 1.0, 1.0, 0.8, 1.0, 0.1]
+  collision:
+    allow_extra: []
+
+tcp:
+  offset: [0.0, 0.0, 0.0]
+  wpr: [0.0, 0.0, 0.0]
+
+# Tool library (Q2) goes here; `tools: {}` = the bare flange.
+tools: {}
+
+# ---- safety -----------------------------------------------------------------------------------
+safety:
+  frame: world
+  box:                          # m; small on purpose (placeholder); must lie inside the reach
+    x: [0.06, 0.20]
+    y: [-0.12, 0.12]
+    z: [0.02, 0.26]
+  max_velocity_scale: 0.3

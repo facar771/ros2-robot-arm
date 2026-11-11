@@ -1,0 +1,88 @@
+# Quality tags of the KARMA robot's physical values (K8). Format and rules: see
+# ../quality.profile.yaml (six-axis robot) and docs/ROBOT_PROFILE.md. Read by robot_core.maturity
+# ONLY; it changes no generated file.
+#
+# NOTHING below is `measured`: the robot is not built and no value was ever measured.
+#   placeholder = a stand-in (all masses, all efforts, ALL hardware/axes data incl. pulse ranges,
+#                 slew limits, rest/reference poses, the switch positions of the step axes)
+#   estimated   = design number of the not-yet-built robot (link lengths, joint position limits);
+#                 NOT verified on any real part. Uncertain -> `estimated`, never `measured`.
+# Hardware readiness stays closed (it needs every critical field `measured` + the torque check;
+# the 28BYJ-48 shoulder and the SG90 pairs are expected to fail that check).
+quality_version: 1
+robot: karma_robot
+fields:
+  links.base_link.length: estimated
+  links.base_link.mass: placeholder
+  links.link_1.length: estimated
+  links.link_1.mass: placeholder
+  links.link_2.length: estimated
+  links.link_2.mass: placeholder
+  links.link_3.length: estimated
+  links.link_3.mass: placeholder
+  links.link_4.length: estimated
+  links.link_4.mass: placeholder
+  links.link_5.length: estimated
+  links.link_5.mass: placeholder
+  links.link_6.length: estimated
+  links.link_6.mass: placeholder
+  links.link_7.length: estimated
+  links.link_7.mass: placeholder
+  joints.joint_1.limits.position: estimated
+  joints.joint_1.limits.effort: placeholder
+  axes.joint_1.motor.type: placeholder
+  axes.joint_1.motor.steps_per_rev: placeholder
+  axes.joint_1.driver.microstep: placeholder
+  axes.joint_1.gear_ratio: placeholder
+  axes.joint_1.limits.position: placeholder
+  axes.joint_1.homing.position: placeholder
+  joints.joint_2.limits.position: estimated
+  joints.joint_2.limits.effort: placeholder
+  axes.joint_2.motor.type: placeholder
+  axes.joint_2.motor.steps_per_rev: placeholder
+  axes.joint_2.driver.microstep: placeholder
+  axes.joint_2.gear_ratio: placeholder
+  axes.joint_2.limits.position: placeholder
+  axes.joint_2.homing.position: placeholder
+  joints.joint_3.limits.position: estimated
+  joints.joint_3.limits.effort: placeholder
+  axes.joint_3.motor.type: placeholder
+  axes.joint_3.limits.position: placeholder
+  axes.joint_3.servo.pulse_range: placeholder
+  axes.joint_3.servo.slew_limit: placeholder
+  axes.joint_3.servo.rest_angle: placeholder
+  axes.joint_3.reference.pose: placeholder
+  axes.joint_3.servo.mirror_pulse_range: placeholder
+  joints.joint_4.limits.position: estimated
+  joints.joint_4.limits.effort: placeholder
+  axes.joint_4.motor.type: placeholder
+  axes.joint_4.limits.position: placeholder
+  axes.joint_4.servo.pulse_range: placeholder
+  axes.joint_4.servo.slew_limit: placeholder
+  axes.joint_4.servo.rest_angle: placeholder
+  axes.joint_4.reference.pose: placeholder
+  axes.joint_4.servo.mirror_pulse_range: placeholder
+  joints.joint_5.limits.position: estimated
+  joints.joint_5.limits.effort: placeholder
+  axes.joint_5.motor.type: placeholder
+  axes.joint_5.limits.position: placeholder
+  axes.joint_5.servo.pulse_range: placeholder
+  axes.joint_5.servo.slew_limit: placeholder
+  axes.joint_5.servo.rest_angle: placeholder
+  axes.joint_5.reference.pose: placeholder
+  joints.joint_6.limits.position: estimated
+  joints.joint_6.limits.effort: placeholder
+  axes.joint_6.motor.type: placeholder
+  axes.joint_6.limits.position: placeholder
+  axes.joint_6.servo.pulse_range: placeholder
+  axes.joint_6.servo.slew_limit: placeholder
+  axes.joint_6.servo.rest_angle: placeholder
+  axes.joint_6.reference.pose: placeholder
+  joints.joint_7.limits.position: estimated
+  joints.joint_7.limits.effort: placeholder
+  axes.joint_7.motor.type: placeholder
+  axes.joint_7.motor.steps_per_rev: placeholder
+  axes.joint_7.driver.microstep: placeholder
+  axes.joint_7.gear_ratio: placeholder
+  axes.joint_7.limits.position: placeholder
+  axes.joint_7.homing.position: placeholder

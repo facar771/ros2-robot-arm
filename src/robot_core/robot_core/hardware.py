@@ -200,6 +200,7 @@ class ServoAxis:
     reference: ManualZero
     margin_position: float
     margin_velocity: float
+    mirror: Optional[PulseRange] = None   # K8: 2nd servo of a mirrored pair (same joint angle)
 
     @property
     def open_loop(self) -> bool:
@@ -233,6 +234,16 @@ class ServoAxis:
 
     def angle_to_pulse_us_int(self, angle: float) -> int:
         return round(self.angle_to_pulse_us(angle))
+
+    def mirror_pulse_us(self, angle: float) -> float:
+        """Pulse width (us) of the SECOND servo of a mirrored pair for the same joint angle."""
+        if self.mirror is None:
+            raise HardwareError(f'{self.joint}: aynalı çift tanımlı değil (servo.mirror yok)')
+        self._check_angle(angle)
+        return self.mirror.angle_to_us(angle)
+
+    def mirror_pulse_us_int(self, angle: float) -> int:
+        return round(self.mirror_pulse_us(angle))
 
     def pulse_us_to_angle(self, pulse_us: float) -> float:
         p = self.pulse_range
@@ -301,6 +312,13 @@ class HardwareProfile:
         self._same_length(positions)
         return {a.joint: a.angle_to_pulse_us_int(q)
                 for a, q in zip(self.axes, positions) if isinstance(a, ServoAxis)}
+
+    def servo_mirror_pulses_us(self, positions: Sequence[float]) -> Dict[str, int]:
+        """Mirrored pairs only: pulse width (us) of the SECOND servo, per joint that has one."""
+        self._same_length(positions)
+        return {a.joint: a.mirror_pulse_us_int(q)
+                for a, q in zip(self.axes, positions)
+                if isinstance(a, ServoAxis) and a.mirror is not None}
 
     def _same_length(self, values: Sequence[float]) -> None:
         if len(values) != len(self.axes):
@@ -504,9 +522,19 @@ def _parse_servo_axis(name: str, data: Any, joint) -> ServoAxis:
         raise _fail(f'{where}.encoder', "hobby_servo geri besleme taşımaz: 'none' olmalı (konum = "
                                         f'komut, {ESTIMATE_LABEL}), bulunan: {encoder!r}')
 
-    skeys = ('pulse_range', 'slew_limit', 'rest')
+    skeys = ('pulse_range', 'slew_limit', 'rest', 'mirror')
     servo = _mapping(d['servo'], f'{where}.servo', skeys, ('pulse_range', 'slew_limit', 'rest'))
     pulse = _parse_pulse_range(f'{where}.servo.pulse_range', servo['pulse_range'])
+    mirror = None
+    if 'mirror' in servo:
+        mirror_in = _mapping(servo['mirror'], f'{where}.servo.mirror', ('pulse_range',),
+                             ('pulse_range',))
+        mirror = _parse_pulse_range(f'{where}.servo.mirror.pulse_range', mirror_in['pulse_range'])
+        if (pulse.angle_at_max - pulse.angle_at_min) * (mirror.angle_at_max
+                                                        - mirror.angle_at_min) >= 0:
+            raise _fail(f'{where}.servo.mirror.pulse_range',
+                        'aynalı çiftte ikinci servonun açısı darbe artarken AZALMALI (birincinin '
+                        'tersi): aynı yönlü iki servo birbirine karşı çalışır, zorlanır/ısınır')
     slew = _number(servo['slew_limit'], f'{where}.servo.slew_limit', positive=True, hi=MAX_SPEED)
 
     limits_in = d['limits']
@@ -522,6 +550,12 @@ def _parse_servo_axis(name: str, data: Any, joint) -> ServoAxis:
     if not pos[0] < pos[1]:
         raise _fail(f'{where}.limits.position', f'alt sınır üstten küçük olmalı: {list(pos)}')
     span_lo, span_hi = pulse.angle_span
+    if mirror is not None:
+        m_lo, m_hi = mirror.angle_span
+        if pos[0] < m_lo - 1e-12 or pos[1] > m_hi + 1e-12:
+            raise _fail(f'{where}.limits.position',
+                        f'[{pos[0]:g}, {pos[1]:g}] aynalı servonun kalibre açılarının '
+                        f'[{m_lo:g}, {m_hi:g}] dışında')
     if pos[0] < span_lo - 1e-12 or pos[1] > span_hi + 1e-12:
         raise _fail(f'{where}.limits.position',
                     f'[{pos[0]:g}, {pos[1]:g}] kalibre darbe aralığının açılarının '
@@ -575,7 +609,8 @@ def _parse_servo_axis(name: str, data: Any, joint) -> ServoAxis:
     return ServoAxis(
         joint=name, motor_type=SERVO, motor_model=str(motor.get('model', '')), pulse_range=pulse,
         position_limits=(pos[0], pos[1]), slew_limit=slew, rest=Rest(rest_angle, rest_speed),
-        reference=ManualZero(pose=pose), margin_position=margin_pos, margin_velocity=margin_vel)
+        reference=ManualZero(pose=pose), margin_position=margin_pos, margin_velocity=margin_vel,
+        mirror=mirror)
 
 
 def _parse_any_axis(name: str, data: Any, joint) -> AnyAxis:
@@ -655,7 +690,11 @@ def _describe_servo(a: ServoAxis) -> Dict[str, Any]:
                                   'angle_at_min_us': p.angle_at_min,
                                   'angle_at_max_us': p.angle_at_max},
                   'slew_limit': a.slew_limit,
-                  'rest': {'angle': a.rest.angle, 'speed': a.rest.speed}},
+                  'rest': {'angle': a.rest.angle, 'speed': a.rest.speed},
+                  **({'mirror': {'pulse_range': {
+                      'min_us': a.mirror.min_us, 'max_us': a.mirror.max_us,
+                      'angle_at_min_us': a.mirror.angle_at_min,
+                      'angle_at_max_us': a.mirror.angle_at_max}}} if a.mirror else {})},
         'motor_limits': {'position': list(a.position_limits),
                          'margin_position': a.margin_position,
                          'margin_velocity': a.margin_velocity},
