@@ -247,6 +247,11 @@ class HwBridge:
         if len(hello.axes) != len(self.hw.axes):
             return False, f'eksen sayısı uyuşmuyor: ESP32 {len(hello.axes)}, profil {len(self.hw.axes)}'
         for ax, info in zip(self.hw.axes, hello.axes):
+            if info.is_servo:
+                # KAPALI-GÜVENLİ (K6b): servo ekseninde konum/hedef us'dir, bu köprü ise step varsayar
+                # (rad -> adım); us'yi adım sanmak yanlış ölçekli hareket demek. Servo: Faz 3.
+                return False, (f'{ax.joint}: ESP32 bu ekseni servo ({info.kind.name}) bildiriyor; bu köprü '
+                               'sürümü servo eksenini bilmiyor (yalnız step). Bağlantı reddedildi.')
             if info.encoder != _ENCODER[ax.encoder]:
                 return False, (f'{ax.joint}: encoder uyuşmuyor (profil {ax.encoder}, '
                                f'ESP32 {info.encoder.name})')

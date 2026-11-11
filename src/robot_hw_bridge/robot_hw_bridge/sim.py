@@ -16,12 +16,17 @@ from typing import Callable, Dict, List, Optional, Sequence
 from robot_hw_bridge.codec import Frame, FrameDecoder, SeqTracker, encode_frame
 from robot_hw_bridge.protocol import (
     CMD_TYPES,
+    HELLO_PROTO_SERVO,
+    HELLO_PROTO_STEP,
+    SERVO_US_ABS_MAX,
+    SERVO_US_ABS_MIN,
     WATCHDOG_DEFAULT_MS,
     WATCHDOG_MAX_MS,
     WATCHDOG_MIN_MS,
     Ack,
     AxisFlag,
     AxisInfo,
+    AxisKind,
     AxisStatus,
     ConfigKey,
     EncoderMode,
@@ -55,9 +60,21 @@ class SimAxis:
     home_pos: float = 0.0             # home anahtarının fiziksel konumu
     follow_err_steps: int = 200
     follow_err_ms: int = 100
+    kind: AxisKind = AxisKind.STEP
+    hard_min_us: int = 500            # yalnız servo: "derlenmiş" darbe aralığı (K6b, HARDWARE.md §7a)
+    hard_max_us: int = 2400
+    max_slew_us_s: int = 4000
+
+    @classmethod
+    def servo(cls, mirrored: bool = False, **kw) -> 'SimAxis':
+        kind = AxisKind.SERVO_MIRRORED if mirrored else AxisKind.SERVO
+        return cls(EncoderMode.NONE, False, kind=kind, **kw)
 
     @property
     def info(self) -> AxisInfo:
+        if self.kind != AxisKind.STEP:
+            return AxisInfo(EncoderMode.NONE, False, False, False, self.kind, self.hard_min_us,
+                            self.hard_max_us, self.max_slew_us_s)
         return AxisInfo(self.encoder, self.has_home_switch, True, True)
 
 
@@ -76,6 +93,13 @@ class _Axis:
         self.homed = False
         self.soft_min = 0
         self.soft_max = int(cfg.phys_max - cfg.home_pos - 100)
+        self.servo = cfg.kind != AxisKind.STEP
+        self.pwm = False                       # servo: darbe çıkışı açık mı (yalnız ENABLED'da)
+        self.pulse = 0.0                       # servo: komut edilen darbe (us); geri besleme yok -> kestirim
+        self.ref_us: Optional[int] = None      # servo: operatörün "burası sıfır" duruşunun darbesi
+        self.sum_us: Optional[int] = None      # SERVO_MIRRORED: eş darbe = sum_us - pulse
+        if self.servo:
+            self.soft_min, self.soft_max = cfg.hard_min_us, cfg.hard_max_us
         self.follow_steps = cfg.follow_err_steps
         self.follow_ms = cfg.follow_err_ms
         self.follow_since: Optional[float] = None
@@ -143,6 +167,14 @@ class Esp32Sim:
         self.axes[axis].loss += steps
         self.axes[axis].phys -= steps
 
+    def servo_pulses(self, axis: int) -> Optional[tuple]:
+        """Servo ekseninin ŞU AN çıkışa verdiği darbeler (birincil, eş|None); PWM kapalıysa ``None``."""
+        ax = self.axes[axis]
+        if not ax.servo or not ax.pwm:
+            return None
+        partner = (ax.sum_us - ax.pulse) if ax.cfg.kind == AxisKind.SERVO_MIRRORED and ax.sum_us else None
+        return ax.pulse, partner
+
     def true_position(self, axis: int) -> float:
         """Gerçek (fiziksel) mantıksal konum: testlerde açık döngü hatasını göstermek için."""
         return self.axes[axis].measured()
@@ -186,7 +218,8 @@ class Esp32Sim:
         self._tx_seq = (self._tx_seq + 1) & 0xFFFF
 
     def _hello(self) -> Hello:
-        return Hello(1, self.fw[0], self.fw[1], self.boot_count, self.device_id,
+        proto = HELLO_PROTO_SERVO if any(a.servo for a in self.axes) else HELLO_PROTO_STEP
+        return Hello(proto, self.fw[0], self.fw[1], self.boot_count, self.device_id,
                      tuple(a.cfg.info for a in self.axes))
 
     def _status(self) -> Status:
@@ -209,7 +242,8 @@ class Esp32Sim:
             f |= AxisFlag.LIMIT_MAX if a.limit_max else 0
             f |= AxisFlag.OPEN_LOOP if a.cfg.encoder == EncoderMode.NONE else 0
             enc = 0 if a.cfg.encoder == EncoderMode.NONE else int(round(a.measured()))
-            axes.append(AxisStatus(int(round(a.cmd)), enc, f))
+            pos = (int(round(a.pulse)) if a.homed else 0) if a.servo else int(round(a.cmd))
+            axes.append(AxisStatus(pos, enc, f))
         up = int((self._clock() - self._t0) * 1000) & 0xFFFFFFFF
         return Status(self.state, self.reason, flags, up, self.watchdog_ms, tuple(axes))
 
@@ -273,7 +307,9 @@ class Esp32Sim:
         if t == MsgType.CMD_STOP:
             for i in axes_in_mask(a['mask'], len(self.axes)):
                 ax = self.axes[i]
-                if ax.mode in ('move', 'homing'):
+                if ax.servo:
+                    ax.mode, ax.target = 'idle', None        # servo: durdur = bulunduğu darbede TUT
+                elif ax.mode in ('move', 'homing'):
                     ax.mode, ax.target = 'stop', None
             return Result.OK
         if t == MsgType.CMD_CONFIG:
@@ -289,6 +325,14 @@ class Esp32Sim:
                 return Result.BAD_STATE
             if not self.hw_loop_closed:
                 return Result.HW_LOOP_OPEN
+            for ax in self.axes:
+                if ax.servo:
+                    bad = self._servo_ref_check(ax)
+                    if bad != Result.OK:
+                        return Result.BAD_ARG if bad == Result.NO_REFERENCE else bad
+            for ax in self.axes:
+                if ax.servo:
+                    ax.pwm = True                  # ilk darbe = onaylı referans (kestirim): SIÇRAMA YOK
             self.state = State.ENABLED
             return Result.OK
         if t == MsgType.CMD_DISABLE:
@@ -296,7 +340,10 @@ class Esp32Sim:
                 return Result.OK if self.state == State.HOMED else Result.BAD_STATE
             if any(x.moving for x in self.axes):
                 return Result.BUSY
-            self.state = State.HOMED
+            for ax in self.axes:
+                if ax.servo:
+                    ax.pwm, ax.homed = False, False       # PWM kesilince kol serbest: onay düşer (§7a)
+            self.state = State.HOMED if all(a.homed for a in self.axes) else State.UNHOMED
             return Result.OK
         if t == MsgType.CMD_MOVE:
             return self._move(a)
@@ -310,11 +357,20 @@ class Esp32Sim:
             return Result.BAD_ARG
         if any(not self.axes[i].cfg.info.referenceable for i in idx):
             return Result.NO_REFERENCE            # anahtarsız+encoder'sız eksen güvenli referanslanamaz
+        for i in idx:
+            if self.axes[i].servo:
+                bad = self._servo_ref_check(self.axes[i])
+                if bad != Result.OK:
+                    return bad
         if not self.hw_loop_closed:
             return Result.HW_LOOP_OPEN
         for i in idx:
             ax = self.axes[i]
             ax.homed = False
+            if ax.servo:
+                # HOME = operatör onayı ("burası sıfır"): HAREKET YOK, PWM YOK; kestirim referansa kurulur
+                ax.pulse, ax.homed, ax.mode = float(ax.ref_us), True, 'idle'
+                continue
             if ax.cfg.encoder == EncoderMode.ABSOLUTE and not ax.cfg.has_home_switch:
                 ax.origin, ax.cmd, ax.homed = ax.cfg.home_pos, 0.0, True    # mutlak encoder: anında
                 ax.phys = ax.origin
@@ -322,6 +378,20 @@ class Esp32Sim:
                 ax.mode = 'homing'
         self.state = State.HOMING
         self._maybe_finish_homing()
+        return Result.OK
+
+    def _servo_ref_check(self, ax: _Axis) -> Result:
+        """Servo referans onayının önkoşulları (HOME ve ENABLE'da): kalibrasyon yazılı ve tutarlı mı?"""
+        if ax.ref_us is None or (ax.cfg.kind == AxisKind.SERVO_MIRRORED and ax.sum_us is None):
+            return Result.NO_REFERENCE            # referans darbesi (aynalıda toplam) CONFIG ile yazılmamış
+        info = ax.cfg.info
+        if not info.hard_min_us <= ax.soft_min < ax.soft_max <= info.hard_max_us:
+            return Result.BAD_ARG
+        if not ax.soft_min <= ax.ref_us <= ax.soft_max:
+            return Result.BAD_ARG
+        if ax.cfg.kind == AxisKind.SERVO_MIRRORED and not (
+                info.hard_min_us <= ax.sum_us - ax.soft_max and ax.sum_us - ax.soft_min <= info.hard_max_us):
+            return Result.BAD_ARG                 # eş servo aralığın bir ucunda derleme sınırı dışına çıkar
         return Result.OK
 
     def _maybe_finish_homing(self) -> None:
@@ -335,6 +405,8 @@ class Esp32Sim:
         if i >= len(self.axes):
             return Result.BAD_ARG
         ax = self.axes[i]
+        if ax.servo:
+            return self._move_servo(ax, a)
         if not 0 < a['vmax'] <= MAX_SPEED or not 0 < a['accel'] <= 1_000_000:
             return Result.BAD_ARG
         if not ax.soft_min <= a['target'] <= ax.soft_max:
@@ -345,12 +417,54 @@ class Esp32Sim:
             float(a['accel']), 'move'
         return Result.OK
 
+    def _move_servo(self, ax: _Axis, a: dict) -> Result:
+        """Servo MOVE: hedef us, vmax us/sn, ivme 0 olmalı (adım değeri sızmasın diye); doğrusal rampa."""
+        info = ax.cfg.info
+        if a['accel'] != 0 or not 0 < a['vmax'] <= info.max_slew_us_s:
+            return Result.BAD_ARG
+        t = a['target']
+        if not ax.soft_min <= t <= ax.soft_max:
+            return Result.LIMIT
+        mirrored = ax.cfg.kind == AxisKind.SERVO_MIRRORED
+        if mirrored and not info.hard_min_us <= ax.sum_us - t <= info.hard_max_us:
+            return Result.LIMIT
+        ax.target, ax.vmax, ax.mode = float(t), float(a['vmax']), 'move'
+        return Result.OK
+
+    def _config_servo(self, ax: _Axis, key: ConfigKey, v: int) -> Result:
+        info = ax.cfg.info
+        if key in (ConfigKey.SOFT_MIN, ConfigKey.SOFT_MAX):
+            if not info.hard_min_us <= v <= info.hard_max_us:
+                return Result.BAD_ARG             # CONFIG yalnız DARALTIR: derleme sınırının dışına çıkamaz
+            if key == ConfigKey.SOFT_MIN:
+                ax.soft_min = v
+            else:
+                ax.soft_max = v
+            return Result.OK
+        if key == ConfigKey.SERVO_REF_US:
+            if not info.hard_min_us <= v <= info.hard_max_us:
+                return Result.BAD_ARG
+            if v != ax.ref_us:
+                ax.ref_us, ax.homed = v, False    # başka duruşun onayı: eski onay geçersiz
+        elif key == ConfigKey.MIRROR_SUM_US:
+            ok = 2 * SERVO_US_ABS_MIN <= v <= 2 * SERVO_US_ABS_MAX
+            if ax.cfg.kind != AxisKind.SERVO_MIRRORED or not ok:
+                return Result.BAD_ARG
+            if v != ax.sum_us:
+                ax.sum_us, ax.homed = v, False
+        else:
+            return Result.BAD_ARG                 # FOLLOW_ERR_*: geri besleme yok
+        if self.state == State.HOMED and not ax.homed:
+            self.state = State.UNHOMED
+        return Result.OK
+
     def _config(self, a: dict) -> Result:
         try:
             key = ConfigKey(a['key'])
         except ValueError:
             return Result.BAD_ARG
-        if self.state == State.ENABLED and key in (ConfigKey.SOFT_MIN, ConfigKey.SOFT_MAX):
+        if self.state == State.ENABLED and key in (ConfigKey.SOFT_MIN, ConfigKey.SOFT_MAX,
+                                                   ConfigKey.SERVO_REF_US, ConfigKey.MIRROR_SUM_US):
             return Result.BAD_STATE
         v = a['value']
         if key == ConfigKey.WATCHDOG_MS:
@@ -361,6 +475,10 @@ class Esp32Sim:
         if a['axis'] >= len(self.axes):
             return Result.BAD_ARG
         ax = self.axes[a['axis']]
+        if ax.servo:
+            return self._config_servo(ax, key, v)
+        if key in (ConfigKey.SERVO_REF_US, ConfigKey.MIRROR_SUM_US):
+            return Result.BAD_ARG                 # servo anahtarları step eksende anlamsız
         if key == ConfigKey.SOFT_MIN:
             ax.soft_min = v
         elif key == ConfigKey.SOFT_MAX:
@@ -395,8 +513,8 @@ class Esp32Sim:
         self.state, self.reason = State.ESTOPPED, reason
         for ax in self.axes:
             ax.mode, ax.target, ax.vel = 'idle', None, 0.0       # sürücüler kesildi: ramp yok
-            if ax.cfg.encoder == EncoderMode.NONE:
-                pass                                              # konum bilgisi zaten tahmin
+            if ax.servo:
+                ax.pwm, ax.homed = False, False                   # PWM kesildi: kol serbest, onay düştü (§7a)
         if fault is not None:
             self._fault(fault, axis, detail)
         self._emit_status()
@@ -422,6 +540,14 @@ class Esp32Sim:
         if self.state == State.ESTOPPED:
             return
         for i, ax in enumerate(self.axes):
+            if ax.servo:                          # servo: doğrusal rampa (ivme, limit anahtarı, izleme yok)
+                if ax.mode == 'move' and ax.target is not None:
+                    d, step = ax.target - ax.pulse, ax.vmax * dt
+                    if abs(d) <= step:
+                        ax.pulse, ax.mode, ax.target = ax.target, 'idle', None
+                    else:
+                        ax.pulse += math.copysign(step, d)
+                continue
             if ax.mode == 'idle':
                 self._check_follow(i, ax, now)
                 continue

@@ -62,8 +62,8 @@ belirtimi `robot_hw_bridge.sim.Esp32Sim`'dir (firmware ile simülatör aynı dav
 | `0x10 HOME` / `0x14 STOP` | H→M | `cmd_id, eksen_maskesi u8` |
 | `0x11 ENABLE` / `0x12 DISABLE` / `0x15 ESTOP` / `0x16 CLEAR` | H→M | `cmd_id` |
 | `0x13 MOVE` | H→M | `cmd_id, eksen u8, hedef i32, vmax u32 (adım/sn), ivme u32 (adım/sn²)` |
-| `0x17 CONFIG` | H→M | `cmd_id, anahtar u8, eksen u8, değer i32` (`WATCHDOG_MS` 200-500, `SOFT_MIN/MAX`, `FOLLOW_ERR_STEPS/MS`) |
-| `0x81 HELLO` | M→H | `proto, fw_major, fw_minor, eksen_sayısı, boot_sayacı u16, cihaz_id[8]`, eksen başına `encoder_kipi u8, bayrak u8 (home/limit anahtarı)` |
+| `0x17 CONFIG` | H→M | `cmd_id, anahtar u8, eksen u8, değer i32` (`WATCHDOG_MS` 200-500, `SOFT_MIN/MAX`, `FOLLOW_ERR_STEPS/MS`; **proto 2 / servo:** `SERVO_REF_US=6`, `MIRROR_SUM_US=7`, bkz. §7a) |
+| `0x81 HELLO` | M→H | `proto, fw_major, fw_minor, eksen_sayısı, boot_sayacı u16, cihaz_id[8]`, eksen başına `encoder_kipi u8, bayrak u8 (home/limit anahtarı)`. **proto 2** (en az bir servo varsa): eksen başına 8 B, bkz. §7a |
 | `0x82 STATUS` | M→H | `durum u8, acil_dur_nedeni u8, bayraklar u16, çalışma_süresi_ms u32, watchdog_ms u16, n u8`; eksen başına `konum i32, encoder i32, bayrak u8` (her 50 ms ve her ACK'ten sonra) |
 | `0x83 ACK` | M→H | `cmd_id u16, sonuç u8, ayrıntı u8` |
 | `0x84 FAULT` | M→H | `kod u8, eksen u8, ayrıntı i32, çalışma_süresi_ms u32` |
@@ -157,14 +157,40 @@ Eksen başına `encoder: none | incremental | absolute` (HELLO'da bildirilir).
 * **Following error:** encoder'lı eksende `|komut − ölçüm| > FOLLOW_ERR_STEPS` süre `FOLLOW_ERR_MS`'i aşarsa `ESTOPPED/FOLLOWING_ERROR` (varsayılan 200 adım / 100 ms).
 * **Limit anahtarı** homing dışında tetiklenirse `ESTOPPED/LIMIT_VIOLATION`. Yazılım limitleri (`SOFT_MIN/MAX`) hedefi **hareketten önce** reddeder (`LIMIT`).
 
+## 7a. Servo ekseni (K6b, HELLO proto 2)
+
+Hobi servosu (PWM) ekseni için şema eklemesi. **Çerçeve sürümü 1 kalır**; yalnızca `HELLO.proto` 2 olabilir. Yalnız step bildiren MCU proto 1 ile **bayt-bayt aynı** HELLO'yu yollar
+(eski host/firmware etkilenmez). Proto 1'de servo bildirmek ya da bilinmeyen proto/ayrılmış bit/`kind=3` **çözücüde reddedilir**, tahmin edilmez.
+
+**Birim:** konum, hız ve sınırlar **µs darbe genişliği** (`MOVE.hedef` µs; `vmax` µs/sn; `ivme` **0 olmalı**, aksi `BAD_ARG`). Adım ve µs asla karıştırılmaz: köprü servo eksenini bilene
+kadar (Faz 3) `configure()` servo bildiren MCU'yu **reddeder**.
+
+**HELLO proto 2 eksen girdisi (8 B):** `encoder_kipi u8 (=none), bayrak u8 (bit0-2 home/limit/…; bit3-4 = kind), min_us u16, max_us u16, max_slew_us_s u16`.
+`kind`: `0 STEP`, `1 SERVO`, `2 SERVO_MIRRORED` (aynalı çift servo = **tek mantıksal eksen**; eş darbe = `MIRROR_SUM_US − birincil`), `3` ayrılmış. `min/max_us` **derleme-zamanı sert sınır**
+(300 ≤ min < max ≤ 3000), `max_slew_us_s` (1..65535) firmware hız tavanıdır; ikisini de MCU bildirir, host aşamaz. Servoda encoder, home ve limit anahtarı olmaz.
+Yük boyu: 16 + 8×N B (8 eksen = 80 B ≤ önerilen 96 B Uno yük sınırı; Robot_10 FAZ0_PLAN §5).
+
+**Referans = `manual_zero`:** servo geri besleme vermez, `HOME` **hareket etmez, PWM açmaz**: operatör "kol şu an bilinen duruşta (`SERVO_REF_US`)" onayıdır ve anında `homed` olur.
+Önkoşul: `SERVO_REF_US` (aynalıda ayrıca `MIRROR_SUM_US`) CONFIG ile yazılı → yoksa `NO_REFERENCE`; `hard_min ≤ soft_min < soft_max ≤ hard_max`, `ref` yumuşak aralıkta ve aynalıda her iki servo da
+aralıkta değilse `BAD_ARG`. `SERVO_REF_US`/`MIRROR_SUM_US` değişimi onayı **düşürür** (aynı değer düşürmez); ENABLED iken bu anahtarlar ve `SOFT_*` değişmez (`BAD_STATE`).
+`FOLLOW_ERR_*` servoda `BAD_ARG`; servo anahtarları step eksende `BAD_ARG`. `CONFIG` yalnızca **daraltır** (yumuşak sınır sert sınırı aşamaz).
+
+**Durumlar:** `ENABLE` PWM'yi **referans darbesinde** başlatır (sıçrama yok; aynalıda eş `SUM − ref`). `MOVE`: doğrusal µs rampası `vmax` hızında, taşma yok; yumuşak sınır dışı ya da eş servo sert
+aralık dışına çıkacaksa `LIMIT`. `STOP`: bulunduğu darbede tutar. **`DISABLE` ve ACİL DUR/watchdog PWM'yi keser ve onayı düşürür** (servo gücü kesilince kol düşmüş olabilir) →
+`CLEAR`/`DISABLE` sonrası yeniden `HOME` (operatör onayı) şart; step eksenin referansı kuralları §4/§7 gibi. `DISABLE` servo hareketteyken `BUSY`.
+**Konum her zaman kestirimdir** (`OPEN_LOOP` bayrağı yanar); gerçek servo konumu/torku ölçülmez.
+
 ## 8. Simülatör ve test kapsamı
 
 `robot_hw_bridge.sim.Esp32Sim`: saat enjekte edilebilir (testler gerçek zaman beklemez), karışık donanımlı 6 eksen (3 encoder'sız, 2 artımlı, 1 mutlak), NC döngüsü (`press_estop`/`release_estop`),
 adım kaybı enjeksiyonu. `HwLink` (host) ve `SimServer`/`SocketTransport` (TCP). Testler: CRC/COBS/HMAC/seq (her tek-bit bozulma reddedilir, gürültüde çözücü düşmez), durum makinesi,
 watchdog (MCU ve host yönü, 200-500 aralığı), seq kaybı/yineleme, yinelenen komut, COM kopması, bellek-içi ve TCP hat, gerçek `pyserial.Serial` (POSIX sözde-terminal).
 
+`SimAxis.servo(mirrored=…)` servo/aynalı servo ekseni ekler (`tests/test_servo_axis.py`: HELLO v1 baytları değişmez, v2 gidiş-dönüş ve reddi, HOME/ENABLE sıçramasız, hız/limit, aynalı eş, CONFIG kuralları, ACİL DUR/DISABLE/watchdog onay düşürme).
+Not: Uno hattı 115200 baud (ESP32 921600 değil); çerçeve şeması aynı.
+
 **Simülatörün DOĞRULAMADIĞI şeyler:** gerçek USB/CDC zamanlaması ve tampon davranışı, Windows sürücüleri, step darbesi dinamiği (rezonans, tork), EMI/kablo gürültüsü, ESP32 ISR/FreeRTOS
-zamanlaması, gerçek acil dur elektriği. Bunlar B3'te donanımla doğrulanacak.
+zamanlaması, gerçek acil dur elektriği; **servo için:** gerçek PWM jitter'ı, servo gücü/akım çekişi, kol düşmesi ve tork, servo ısınması, besleme dalgalanması. Bunlar B3'te donanımla doğrulanacak.
 
 ## 9. Hub köprüsü (Windows)
 

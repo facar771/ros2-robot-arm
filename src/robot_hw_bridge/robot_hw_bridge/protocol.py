@@ -1,5 +1,8 @@
 """ESP32 hattı mesaj şeması v1 (ayrıntı ve gerekçe: docs/HARDWARE.md). ROS'suz, yalnızca standart kütüphane.
 
+K6b: ``hobby_servo`` ekseni (konum birimi **mikrosaniye darbe**, aynalı çift servo = tek mantıksal eksen).
+Çerçeve sürümü 1 kalır; yalnız HELLO ``proto`` alanı 2 olabilir (servo eksenli MCU).
+
 Çerçeve (COBS ile kodlanır, ardından 0x00 ayracı):
     sürüm u8 | bayraklar u8 | tür u8 | uzunluk u8 | seq u16 | ack u16 | yük[uzunluk] | crc16 u16 [| hmac8]
 Tamsayılar little-endian. ``crc16`` ve ``hmac`` başlık+yük üzerindedir.
@@ -11,7 +14,9 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import List, Tuple
 
-PROTO_VERSION = 1
+PROTO_VERSION = 1                           # ÇERÇEVE sürümü (başlıktaki bayt); değişmedi
+HELLO_PROTO_STEP = 1                        # HELLO.proto: yalnız step eksenler (eksen başına 2 bayt)
+HELLO_PROTO_SERVO = 2                       # HELLO.proto: servo eksen olabilir (eksen başına 8 bayt)
 MAX_PAYLOAD = 200
 MAX_AXES = 8
 HEADER = struct.Struct('<BBBBHH')           # ver, flags, type, len, seq, ack
@@ -20,6 +25,9 @@ HEADER_LEN = HEADER.size                    # 8
 # Watchdog: iki yönlü, 200-500 ms (belge §5)
 WATCHDOG_MIN_MS, WATCHDOG_MAX_MS, WATCHDOG_DEFAULT_MS = 200, 500, 300
 HEARTBEAT_PERIOD_MS = 50
+
+# Servo darbe genişliği için protokol düzeyinde makullük aralığı (ROBOT_PROFILE.md ile aynı: 300-3000 us).
+SERVO_US_ABS_MIN, SERVO_US_ABS_MAX = 300, 3000
 
 
 class Flag:
@@ -95,12 +103,21 @@ class EncoderMode(IntEnum):
     ABSOLUTE = 2
 
 
+class AxisKind(IntEnum):
+    """Eksenin eyleyici türü (HELLO v2). Servo ekseninde konum/hedef **us darbe**, step'te adım."""
+    STEP = 0
+    SERVO = 1               # hobby servo (SG90): geri besleme yok, konum = komut (kestirim)
+    SERVO_MIRRORED = 2      # iki servo tek mantıksal eksen: eş servo = MIRROR_SUM_US - darbe
+
+
 class ConfigKey(IntEnum):
     WATCHDOG_MS = 1         # genel (eksen yok sayılır), 200-500
-    SOFT_MIN = 2            # eksen başına, adım
+    SOFT_MIN = 2            # eksen başına: step -> adım, servo -> us (yalnız daraltır, bkz. HARDWARE.md §7a)
     SOFT_MAX = 3
-    FOLLOW_ERR_STEPS = 4    # encoder'lı eksenlerde izin verilen sapma
-    FOLLOW_ERR_MS = 5       # sapmanın sürmesine izin verilen süre
+    FOLLOW_ERR_STEPS = 4    # encoder'lı eksenlerde izin verilen sapma (servo: BAD_ARG)
+    FOLLOW_ERR_MS = 5       # sapmanın sürmesine izin verilen süre (servo: BAD_ARG)
+    SERVO_REF_US = 6        # yalnız servo: operatörün "burası sıfır" dediği duruşun darbesi (us)
+    MIRROR_SUM_US = 7       # yalnız SERVO_MIRRORED: eş servo darbesi = toplam - birincil darbe (us)
 
 
 class StatusFlag:
@@ -131,11 +148,34 @@ class AxisInfo:
     has_home_switch: bool
     has_limit_min: bool = False
     has_limit_max: bool = False
+    kind: AxisKind = AxisKind.STEP
+    hard_min_us: int = 0           # yalnız servo: firmware'e DERLENMİŞ en dar darbe aralığı (CONFIG daraltır)
+    hard_max_us: int = 0
+    max_slew_us_s: int = 0         # yalnız servo: firmware'in izin verdiği en büyük hız (us/sn)
+
+    def __post_init__(self) -> None:
+        if self.kind == AxisKind.STEP:
+            if self.hard_min_us or self.hard_max_us or self.max_slew_us_s:
+                raise ProtocolError('step ekseninde servo alanları sıfır olmalı')
+            return
+        if self.encoder != EncoderMode.NONE or self.has_home_switch or self.has_limit_min \
+                or self.has_limit_max:
+            raise ProtocolError('servo ekseninde encoder/home/limit anahtarı olamaz (geri besleme yok)')
+        if not SERVO_US_ABS_MIN <= self.hard_min_us < self.hard_max_us <= SERVO_US_ABS_MAX:
+            raise ProtocolError(f'servo derleme sınırları geçersiz: {self.hard_min_us}..{self.hard_max_us} '
+                                f'us ({SERVO_US_ABS_MIN}-{SERVO_US_ABS_MAX} içinde, min < max olmalı)')
+        if not 0 < self.max_slew_us_s <= 0xFFFF:
+            raise ProtocolError('servo azami hızı 1..65535 us/sn olmalı')
+
+    @property
+    def is_servo(self) -> bool:
+        return self.kind != AxisKind.STEP
 
     @property
     def referenceable(self) -> bool:
-        """Eksen homing yapabilir mi? (anahtar ya da mutlak encoder). Yoksa güvenli çalıştırılamaz."""
-        return self.has_home_switch or self.encoder == EncoderMode.ABSOLUTE
+        """Eksen referanslanabilir mi? step: anahtar ya da mutlak encoder. Servo: yalnız operatör onayıyla
+        (``manual_zero``, HARDWARE.md §7a); "onaylanabilir" demektir, kendiliğinden HOMED yapmaz."""
+        return self.is_servo or self.has_home_switch or self.encoder == EncoderMode.ABSOLUTE
 
 
 @dataclass(frozen=True)
@@ -148,14 +188,23 @@ class Hello:
     axes: Tuple[AxisInfo, ...]
 
     _S = struct.Struct('<BBBBH8s')
+    _A2 = struct.Struct('<BBHHH')      # proto 2: encoder, bayrak, hard_min_us, hard_max_us, max_slew_us_s
 
     def pack(self) -> bytes:
+        if self.proto not in (HELLO_PROTO_STEP, HELLO_PROTO_SERVO):
+            raise ProtocolError(f'bilinmeyen HELLO proto {self.proto}')
+        if self.proto == HELLO_PROTO_STEP and any(a.is_servo for a in self.axes):
+            raise ProtocolError('servo ekseni HELLO proto 1 ile bildirilemez (proto 2 gerekir)')
         out = bytearray(self._S.pack(self.proto, self.fw_major, self.fw_minor, len(self.axes),
                                      self.boot_count, self.device_id.ljust(8, b'\0')[:8]))
         for a in self.axes:
             flags = (1 if a.has_home_switch else 0) | (2 if a.has_limit_min else 0) \
                 | (4 if a.has_limit_max else 0)
-            out += bytes([int(a.encoder), flags])
+            if self.proto == HELLO_PROTO_STEP:
+                out += bytes([int(a.encoder), flags])
+            else:
+                out += self._A2.pack(int(a.encoder), flags | (int(a.kind) << 3), a.hard_min_us,
+                                     a.hard_max_us, a.max_slew_us_s)
         return bytes(out)
 
     @classmethod
@@ -163,15 +212,29 @@ class Hello:
         if len(data) < cls._S.size:
             raise ProtocolError('HELLO çok kısa')
         proto, major, minor, n, boots, dev = cls._S.unpack_from(data)
-        if n > MAX_AXES or len(data) != cls._S.size + 2 * n:
+        if proto not in (HELLO_PROTO_STEP, HELLO_PROTO_SERVO):
+            raise ProtocolError(f'HELLO bilinmeyen proto {proto}: bu köprü yalnız 1 ve 2 bilir')
+        per = 2 if proto == HELLO_PROTO_STEP else cls._A2.size
+        if n > MAX_AXES or len(data) != cls._S.size + per * n:
             raise ProtocolError('HELLO eksen sayısı/uzunluk uyuşmuyor')
         axes = []
         for i in range(n):
-            enc, flags = data[cls._S.size + 2 * i], data[cls._S.size + 2 * i + 1]
+            at = cls._S.size + per * i
+            if proto == HELLO_PROTO_STEP:
+                enc, flags = data[at], data[at + 1]
+                lo = hi = slew = 0
+            else:
+                enc, flags, lo, hi, slew = cls._A2.unpack_from(data, at)
             if enc not in (0, 1, 2):
                 raise ProtocolError('HELLO bilinmeyen encoder kipi')
-            axes.append(AxisInfo(EncoderMode(enc), bool(flags & 1), bool(flags & 2),
-                                 bool(flags & 4)))
+            if flags & 0xE0:
+                raise ProtocolError('HELLO bilinmeyen eksen bayrağı (ayrılmış bitler sıfır olmalı)')
+            try:
+                kind = AxisKind((flags >> 3) & 0x03)
+            except ValueError as exc:
+                raise ProtocolError('HELLO bilinmeyen eksen türü') from exc
+            axes.append(AxisInfo(EncoderMode(enc), bool(flags & 1), bool(flags & 2), bool(flags & 4),
+                                 kind, lo, hi, slew))
         return cls(proto, major, minor, boots, dev.rstrip(b'\0'), tuple(axes))
 
 
