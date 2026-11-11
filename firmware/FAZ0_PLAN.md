@@ -1,6 +1,6 @@
 # K9 Faz 0: karma robot firmware planı (YALNIZ DOKÜMAN, kod yok)
 
-Durum: **ONAY BEKLİYOR (Ferhat; bağlantı sorusu için Robot_1).** Pin tablosu onaylanmadan firmware kodu yazılmaz.
+Durum: **Ferhat 11 Kasım'da yanıtladı** (ESP8266 NodeMCU; tüm motorlar Uno'da; NodeMCU yalnız Wi-Fi aktarıcı, aralarında yalnız TX/RX). Faz 1 kodu (hareketsiz) ayrı PR'da: #79. Motor pin numaraları Faz 2 öncesi son kez teyit edilir.
 Yol haritası: K9 / K3. Hiçbir şey gerçek donanımda denenmedi; her donanım iddiası "öneri"dir.
 
 ## 0. Kapsam (11 Kasım güncellemesi)
@@ -50,10 +50,9 @@ Toplam: **3 step** (2× 28BYJ-48 + 1 A4988), **6 SG90** (eksen 3 ve 4 çift). 7 
 - Motor ve servo gücü Uno'nun 5 V'undan ALINMAZ; ayrı besleme, ortak GND. NC acil dur butonu motor gücünü/EN hattını yazılımdan bağımsız keser (§6). Servo besleme kesimi K7.
 - AccelStepper `HALF4WIRE` için ULN2003 pin sırası (IN1,IN3,IN2,IN4) Faz 2'de doğrulanır.
 
-### Çelişki: 28BYJ-48'lerin NodeMCU'ya bağlanması (YAŞLI KURDA SORU, aşağıda)
-Ferhat 28BYJ-48 sürücülerinin 8 pinini **NodeMCU'ya** bağlamayı düşünüyor. Bu, "ESP yalnız şeffaf aktarıcı" kararıyla çakışır:
-ESP step üretirse kendi durum makinesi, watchdog'u ve Uno ile ikinci bir iç protokol gerekir; Uno watchdog'u o eksenleri durdurmaz.
-Pratik not: ESP8266 NodeMCU'da kullanılabilir GPIO az (yaklaşık 9) ve bazıları açılış pinidir; 8 sürücü pini + Uno UART'ı zor sığar. Uno'nun D2–D9'u ise boş.
+### Karar (Ferhat, 11 Kasım): tüm motorlar Uno'da
+Ferhat önce 28BYJ-48 sürücülerinin 8 pinini NodeMCU'ya bağlamayı düşünüyordu; "tüm motorlar Uno'ya sığıyorsa hepsini taşı" dedi. **Sığıyor** (D2–D9, D10–D12, A0–A5; D0/D1 UART). Böylece
+NodeMCU saf aktarıcı kalır (Robot_1, 7 Kasım kararı) ve Uno tek hareket denetleyicisidir. Bu çelişki kapandı.
 
 ## 3. UART: Uno'nun tek donanım UART'ı
 
@@ -63,13 +62,16 @@ D0/D1 hem USB-seri çipine hem ESP'ye bağlanamaz (aynı anda iki sürücü). **
 
 | Seçenek | PC kablosu | ESP hattı | Artı | Eksi |
 |---|---|---|---|---|
-| **B (öneri)** ESP tek geçit: PC USB→ESP, Wi-Fi→ESP, ESP↔Uno D0/D1 donanım UART | ESP'nin USB'si | Uno D0/D1 | Kablo ve Wi-Fi aynı yoldan; Uno'da SoftwareSerial yok | ESP çökerse yol kesilir (güvenli yön: Uno watchdog'u durdurur); Uno'ya yazarken D0/D1 telleri sökülür; USB-seri açılırken DTR/RTS ESP'yi resetleyebilir (köprü `dtr=False, rts=False` açmalı; DENENMEDİ) |
-| C: ilk hareket için PC USB→Uno doğrudan, ESP sonra | Uno'nun USB'si | yok | ESP olmadan en hızlı ilk hareket | Wi-Fi'ye geçerken D0/D1 ESP'ye taşınır; kablo yolu değişir, iki kez test |
+| B: ESP tek geçit (bırakıldı): PC USB→ESP, Wi-Fi→ESP, ESP↔Uno D0/D1 donanım UART | ESP'nin USB'si | Uno D0/D1 | Kablo ve Wi-Fi aynı yoldan; Uno'da SoftwareSerial yok | ESP çökerse yol kesilir (güvenli yön: Uno watchdog'u durdurur); Uno'ya yazarken D0/D1 telleri sökülür; USB-seri açılırken DTR/RTS ESP'yi resetleyebilir (köprü `dtr=False, rts=False` açmalı; DENENMEDİ) |
+| **C (seçildi, kablo yolu):** PC USB→Uno doğrudan; Wi-Fi için ESP tellerini D0/D1'e takıp USB'yi çek | Uno'nun USB'si | yok | ESP olmadan en hızlı ilk hareket | Wi-Fi'ye geçerken D0/D1 ESP'ye taşınır; kablo yolu değişir, iki kez test |
 | A: SoftwareSerial ile ESP | Uno USB | yazılım seri | – | Alma sırasında kesmeleri kapatır → step darbesi aksar; D0/D1 yine USB'ye bağlı. **Önerilmez** |
 
-**Öneri: B, 115200.** MOVE çerçevesi ≈ 27 bayt ≈ 2,4 ms; 50 ms'de bir STATUS (7 eksenle ≈ 80 bayt ≈ 7 ms) hattın ~%14'ü. 115200 yeter.
-ESP tarafı: **ESP32** ise `Serial2` (örn. GPIO16/17); **ESP8266** ise UART0'ı `Serial.swap()` ile GPIO13/15'e alıp (NodeMCU D7/D8; GPIO15 açılışta düşük olmalı) USB'yi UART0'dan ayırmak gerekir, kolay değil.
-Seviye: Uno TX (5 V) → ESP RX (3,3 V) arası **gerilim bölücü şart**; ESP TX → Uno RX doğrudan (VIH sınırda, denenmedi).
+**Karar (Ferhat'ın tasarımı: ESP yalnız Wi-Fi ve TX/RX): iki ayrı yol, AYNI ANDA değil.**
+- **Kablo:** PC USB → Uno USB (115200). ESP'nin TX/RX telleri Uno'dan sökülü.
+- **Wi-Fi:** ESP8266 TX (GPIO1) → Uno D0; Uno D1 → gerilim bölücü (1 kΩ + 2 kΩ) → ESP8266 RX (GPIO3); Uno harici beslemeden (USB çekili). ESP kalp atışı üretmez.
+- Baud 115200 her iki yolda. MOVE çerçevesi ≈ 27 bayt ≈ 2,4 ms; 7 eksenli STATUS (≈ 86 bayt ≈ 7,5 ms) 50 ms'de bir: hattın ~%15'i. Yeter.
+- ESP8266 notu: UART0'da açılışta 74880 baud'da çöp bayt çıkar (Uno çözücüsü düşürür); UART0'a günlük yazılmaz. ESP'yi yüklerken D0/D1 tellerini sök.
+- Eski öneri B (kablo da ESP'den geçer) bırakıldı: Ferhat'ın tasarımı ESP'yi yalnız Wi-Fi'ye ayırıyor.
 
 ## 4. Görev paylaşımı
 
@@ -99,16 +101,14 @@ I2C/LCD Uno'da YOK (PCA9685 yok), yani "I2C yazımı adım üretimini bozar" ris
 
 ## 6. Faz 1–3 planı
 
-- **Faz 1 (hareketsiz, ayrı PR):** `firmware/uno/` PlatformIO (`uno`) iskeleti; `firmware/esp_relay/` (ESP aktarıcısı, kartı Ferhat'ın cevabına göre); COBS+CRC-16+seq; hareket kodu `-DK9_MOTION=0` ile KAPALI; yeni `firmware-ci.yml` (`pio run`; `ci.yml` Robot_3'ün, dokunulmaz).
+- **Faz 1 (hareketsiz, PR #79):** `firmware/uno/` PlatformIO (`uno`) iskeleti; `firmware/esp_relay/` (ESP8266 aktarıcısı); COBS+CRC-16+seq; hareket kodu `-DK9_MOTION=0` ile KAPALI; yeni `firmware-ci.yml` (`pio run`; `ci.yml` Robot_3'ün, dokunulmaz).
 - **Faz 2 (YALNIZ Robot_1 "tezgâh modu" kararından sonra):** 3 step için hareket, gömülü dar limit/düşük hız, watchdog; `tools/bench/` (ROS'suz, her oturumda operatör "motorlar yükten ayrık" yazar). Servo K6b'ye kadar bekler.
 - **Faz 3:** ROS yolu, Hub, telefon, karma robot profili (Robot_2/3/4); bana ait değil.
 
-## 7. Sorular (Ferhat'a, tek mesaj)
+## 7. Sorular
 
-1. Kartın **ESP32 mi, ESP8266 NodeMCU mu**? (Yazıyı kart üzerinde ya da satın aldığın sayfada gör.)
-2. 28BYJ-48 sürücülerini **Uno D2–D9'a** bağlayabilir misin? (Öneri evet; NodeMCU'ya bağlamak aktarıcı kararıyla çakışıyor, Robot_1'e sorulacak.)
-3. Uç kıskaç A4988 ile step olduğuna göre toplam **3 step** doğru mu? (Cevabına göre evet kabul ettim.)
-4. Hangi UART yolu: **B** (ESP tek geçit) mi, ilk hareket için **C** (Uno'ya doğrudan USB) mu?
+Cevaplandı (Ferhat, 11 Kasım): kart **ESP8266 NodeMCU**; motorlar **Uno'da**; toplam **3 step** (2× 28BYJ-48 + A4988 kıskaç); UART: kablo=Uno USB, Wi-Fi=ESP TX/RX.
+Açık (Faz 2 öncesi, kod yazmayı bloklamaz): (1) D2–D12/A0–A5 pin numaraları son teyit; (2) NC acil dur döngüsünün Uno'da okunacağı pin; (3) switch'siz step eksenlerin referans kuralı (Robot_1, #79).
 
 ## Yol haritasına öneri
 
@@ -121,4 +121,4 @@ I2C/LCD Uno'da YOK (PCA9685 yok), yani "I2C yazımı adım üretimini bozar" ris
 ## Denenmeyenler
 
 Gerçek donanım (Uno, ESP32/ESP8266, Wi-Fi, motor, sürücü, ULN2003, A4988, servo) hiç denenmedi. Derleme yok (kod yok). Pin tablosu, gerilim bölücü, baud,
-DTR/RTS reseti, röle gecikmesi, bellek ve hız rakamları tahmindir. Motor/eksen bilgisi Ferhat'ın sözlü anlatımıdır, doğrulanmadı. ESP kartı türü bilinmiyor.
+DTR/RTS reseti, röle gecikmesi, bellek ve hız rakamları tahmindir. Motor/eksen bilgisi Ferhat'ın sözlü anlatımıdır, doğrulanmadı. ESP8266 ve Wi-Fi yolu hiç denenmedi.
