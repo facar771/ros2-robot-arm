@@ -1,9 +1,12 @@
 """Host test yardımcıları: Uno çekirdeğini (k9_host_driver) derler ve stdin/stdout ile sürer. Test dosyaları paylaşır."""
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from robot_hw_bridge.codec import Frame, FrameDecoder, encode_frame
 from robot_hw_bridge.protocol import Ack, MsgType, Status, pack_cmd
+from robot_hw_bridge.transport import TransportClosed
 
 HERE = Path(__file__).resolve().parent
 CORE = HERE.parent / 'uno' / 'lib' / 'k9core'
@@ -86,3 +89,49 @@ class Dev:
         self.p.stdin.flush()
         v = [int(x) for x in self.p.stdout.readline().split()[1:]]
         return [tuple(v[i * 5:i * 5 + 5]) for i in range(3)], v[15]
+
+
+class DriverTransport:
+    """HwLink'in Transport'u: gerçek zamanı sürücünün sanal saatine çevirir (seri hat gibi)."""
+
+    def __init__(self, binary, *args, steps_per_poll=0):
+        self.steps_per_poll = steps_per_poll  # K9_BENCH sürücüsü: her okumada sahte motorlar bu kadar adım ilerler
+        self.p = subprocess.Popen([str(binary), *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        self.lock = threading.Lock()
+        self.t0 = time.monotonic()
+        self.closed = False
+
+    def _ms(self):
+        return int((time.monotonic() - self.t0) * 1000)
+
+    def _io(self, line):
+        self.p.stdin.write(line + '\n')
+        self.p.stdin.flush()
+        return bytes.fromhex(self.p.stdout.readline().strip()[2:])
+
+    def send(self, data):
+        with self.lock:
+            if self.closed:
+                raise TransportClosed('kapalı')
+            self._io(f'N {self._ms()}')
+            self.pending = getattr(self, 'pending', b'') + self._io('F ' + data.hex())
+
+    def recv(self, max_bytes, timeout):
+        time.sleep(0.01)
+        with self.lock:
+            if self.closed:
+                raise TransportClosed('kapalı')
+            if self.steps_per_poll:
+                self._io(f'P {self.steps_per_poll}')
+            out = getattr(self, 'pending', b'') + self._io(f'T {self._ms()}')
+            self.pending = b''
+        return out[:max_bytes] if out else b''
+
+    def close(self):
+        with self.lock:
+            self.closed = True
+        try:
+            self.p.stdin.close()
+            self.p.wait(2)
+        except Exception:  # noqa: BLE001
+            pass

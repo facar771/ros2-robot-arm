@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from k9_hostlib import CORE, HERE, Dev, build  # noqa: F401
+from k9_hostlib import CORE, HERE, Dev, DriverTransport, build  # noqa: F401
 from robot_hw_bridge import cobs
 from robot_hw_bridge.codec import Frame, FrameDecoder, encode_frame
 from robot_hw_bridge.crc import crc16
@@ -246,49 +246,6 @@ import sys  # noqa: E402
 
 from robot_hw_bridge.host import HwLink  # noqa: E402
 from robot_hw_bridge.transport import TransportClosed  # noqa: E402
-
-
-class DriverTransport:
-    """HwLink'in Transport'u: gerçek zamanı sürücünün sanal saatine çevirir (seri hat gibi)."""
-
-    def __init__(self, binary):
-        self.p = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self.lock = threading.Lock()
-        self.t0 = time.monotonic()
-        self.closed = False
-
-    def _ms(self):
-        return int((time.monotonic() - self.t0) * 1000)
-
-    def _io(self, line):
-        self.p.stdin.write(line + '\n')
-        self.p.stdin.flush()
-        return bytes.fromhex(self.p.stdout.readline().strip()[2:])
-
-    def send(self, data):
-        with self.lock:
-            if self.closed:
-                raise TransportClosed('kapalı')
-            self._io(f'N {self._ms()}')
-            self.pending = getattr(self, 'pending', b'') + self._io('F ' + data.hex())
-
-    def recv(self, max_bytes, timeout):
-        time.sleep(0.01)
-        with self.lock:
-            if self.closed:
-                raise TransportClosed('kapalı')
-            out = getattr(self, 'pending', b'') + self._io(f'T {self._ms()}')
-            self.pending = b''
-        return out[:max_bytes] if out else b''
-
-    def close(self):
-        with self.lock:
-            self.closed = True
-        try:
-            self.p.stdin.close()
-            self.p.wait(2)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def test_real_hwlink_against_core(binary):
