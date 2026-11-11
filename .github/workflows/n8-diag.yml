@@ -32,7 +32,9 @@ jobs:
             echo "--- $mode koşu $i: rc=$rc $(grep -a '=== .* test geçti' /tmp/$mode-$i.log | tail -1)"
             if [ $rc -ne 0 ]; then
               grep -a '\[FAIL\]\|scenario_finished\|step_finished' /tmp/$mode-$i.log | sed 's/^[0-9T:.Z-]* //' | sort -u | cut -c1-300
-              tail -25 /tmp/$mode-$i.log | cut -c1-300
+              echo "##### TAM GÜNLÜK (başarısız koşu) #####"
+              cut -c1-400 /tmp/$mode-$i.log
+              echo "##### GÜNLÜK SONU #####"
             fi
           done
           true
