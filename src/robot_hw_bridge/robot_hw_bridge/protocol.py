@@ -108,6 +108,7 @@ class StatusFlag:
     WATCHDOG_TRIPPED = 0x0002
     OPEN_LOOP_ANY = 0x0004  # en az bir eksen encoder'sız: adım kaybı ALGILANAMAZ
     HOST_LINK_OK = 0x0008
+    BENCH_MODE = 0x0010     # tezgâh derlemesi (K9_BENCH): HOME = tezgâh sıfırı. Gerçek robot DEĞİL
 
 
 class AxisFlag:
