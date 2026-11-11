@@ -22,14 +22,17 @@ jobs:
           load: true
           tags: ros2-robot-arm:ci
           cache-from: type=gha
-      - name: gazebo-jobs x3 and gazebo-integration x3
+      - name: gazebo-integration x3 (keep logs of failures)
         run: |
-          for mode in gazebo-jobs gazebo-integration; do
-            for i in 1 2 3; do
-              docker run --rm -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro" \
-                -v "$PWD/plugins:/workspace/plugins:ro" ros2-robot-arm:ci run_selftest $mode > /tmp/$mode-$i.log 2>&1
-              rc=$?
-              echo "--- $mode koşu $i: rc=$rc $(grep -a '=== .* test geçti' /tmp/$mode-$i.log | tail -1)"
-              grep -a 'ÖLÇÜM\|\[FAIL\]' /tmp/$mode-$i.log | sed 's/^[0-9T:.Z-]* //' | sort -u
-            done
+          mode=gazebo-integration
+          for i in 1 2 3; do
+            rc=0
+            docker run --rm -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro" \
+              -v "$PWD/plugins:/workspace/plugins:ro" ros2-robot-arm:ci run_selftest $mode > /tmp/$mode-$i.log 2>&1 || rc=$?
+            echo "--- $mode koşu $i: rc=$rc $(grep -a '=== .* test geçti' /tmp/$mode-$i.log | tail -1)"
+            if [ $rc -ne 0 ]; then
+              grep -a '\[FAIL\]\|scenario_finished\|step_finished' /tmp/$mode-$i.log | sed 's/^[0-9T:.Z-]* //' | sort -u | cut -c1-300
+              tail -25 /tmp/$mode-$i.log | cut -c1-300
+            fi
           done
+          true
