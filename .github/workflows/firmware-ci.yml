@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - 'firmware/**'
+      - 'tools/bench/**'
       - 'src/robot_hw_bridge/**'
       - '.github/workflows/firmware-ci.yml'
   push:
     branches: [main]
     paths:
       - 'firmware/**'
+      - 'tools/bench/**'
       - 'src/robot_hw_bridge/**'
       - '.github/workflows/firmware-ci.yml'
 
@@ -27,7 +29,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install pytest
-      - run: PYTHONPATH=src/robot_hw_bridge python -m pytest firmware/host -q
+      - run: PYTHONPATH=src/robot_hw_bridge python -m pytest firmware/host tools/bench -q
 
   build:
     name: PlatformIO derleme (${{ matrix.project }}/${{ matrix.env }})
