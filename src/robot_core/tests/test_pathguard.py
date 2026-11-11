@@ -115,11 +115,11 @@ def test_a_path_inside_the_box_is_executed_once(profile, park, zone):
     assert state.q == IN_B
 
 
-def test_a_path_leaving_the_box_is_rejected_three_times_and_never_executed(profile, park, zone):
+def test_a_path_leaving_the_box_is_rejected_on_every_plan_and_never_executed(profile, park, zone):
     guard, planner, state = make(profile, park, zone, OUT_A, [line(OUT_A, OUT_B)])
     out = guard.move_to(JointTarget(OUT_B, 'b'))
     assert not out.ok and out.code_name == CODE_PATH
-    assert planner.executed == [] and len(planner.planned) == 3         # at most 3 plans in total
+    assert planner.executed == [] and len(planner.planned) == 6   # at most 6 plans (N9)
     assert state.q == OUT_A                                              # nothing moved
     assert 'güvenli kutunun dışında' in out.message and 'TCP (' in out.message
     assert 'hareket başlamadı' in out.message and 'genişletilmedi' in out.message
