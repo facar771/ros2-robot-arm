@@ -22,10 +22,14 @@ jobs:
           load: true
           tags: ros2-robot-arm:ci
           cache-from: type=gha
-      - name: gazebo-jobs x3, keep ÖLÇÜM lines
+      - name: gazebo-jobs x3 and gazebo-integration x3
         run: |
-          for i in 1 2 3; do
-            docker run --rm ros2-robot-arm:ci run_selftest gazebo-jobs > /tmp/j$i.log 2>&1 || true
-            echo "--- koşu $i: $(grep -a '=== .* test geçti' /tmp/j$i.log | tail -1)"
-            grep -a 'ÖLÇÜM\|ORTASINDA' /tmp/j$i.log | sed 's/^[0-9T:.Z-]* //'
+          for mode in gazebo-jobs gazebo-integration; do
+            for i in 1 2 3; do
+              docker run --rm -v "$PWD/apps/control_hub:/workspace/apps/control_hub:ro" \
+                -v "$PWD/plugins:/workspace/plugins:ro" ros2-robot-arm:ci run_selftest $mode > /tmp/$mode-$i.log 2>&1
+              rc=$?
+              echo "--- $mode koşu $i: rc=$rc $(grep -a '=== .* test geçti' /tmp/$mode-$i.log | tail -1)"
+              grep -a 'ÖLÇÜM\|\[FAIL\]' /tmp/$mode-$i.log | sed 's/^[0-9T:.Z-]* //' | sort -u
+            done
           done

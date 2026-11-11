@@ -45,7 +45,12 @@ from robot_viz.viz_check import tool_from_tf
 
 CANCEL_DEADLINE_S = 2.5     # cancel / timeout -> arm quiet (own measurement)
 ACCEPT_DEADLINE_S = 1.5     # POST /api/jobs must answer this fast
-TIMEOUT_S = 1     # the shortest allowed: it must land in the middle of a motion INSIDE the box
+# N8: the timeout must land in the middle of a motion INSIDE the box, but POST -> first motion is
+# 0.5-0.95 s on a healthy runner and was seen above 2.6 s on a slow one (own measurement, 36
+# trials),
+# so no single fixed timeout is mid-motion every time. The check therefore tries the SHORTEST
+# timeout first and goes up only while the arm demonstrably had not started moving yet.
+TIMEOUT_STEPS = (1, 2, 3, 4, 6)
 
 
 def job(api: Api, job_id: str):
@@ -67,6 +72,12 @@ def motion_timeline(sampler: Sampler, t0: float, t1: float, eps: float = 0.005):
     q0 = window[0][1]
     first = next((t for t, q in window if max(abs(a - b) for a, b in zip(q, q0)) > eps), None)
     return (None if first is None else first - t0), sampler.displacement(t0, t1)
+
+
+def wait_ended(api: Api, job_id: str, timeout: float):
+    """The job once it reached any final state (done / failed / cancelled), else None."""
+    return wait_for(lambda: (lambda d: d if d and d['state'] in ('done', 'failed', 'cancelled')
+                             else None)(job(api, job_id)), timeout, 0.1)
 
 
 def start_far(api: Api, buffer: Buffer, tip: str, home_ref, command='demo_scenario', **extra):
@@ -181,19 +192,28 @@ def run(base: str, config, state: JointStateCache, buffer: Buffer, sampler: Samp
     api.post('/api/jobs', {'command': 'above green 0.25'})
     time.sleep(0.5)
     wait_for(lambda: api.robot()['state'] == 'idle', 120.0, 0.2)
-    t_start = time.monotonic()
-    status, _, doc = api.post('/api/jobs', {'command': 'above red 0.35', 'timeout_s': TIMEOUT_S})
-    jid = doc['id'] if doc else None
-    failed = wait_job(api, jid, 'failed', 60.0) if jid else None
-    t_failed = time.monotonic()
-    latency, _ = motion_timeline(sampler, t_start, t_failed)
-    print(f"ÖLÇÜM zaman aşımı: POST -> ilk hareket "
-          f"{'YOK' if latency is None else f'{latency:.2f} s'}; POST -> failed "
-          f"{t_failed - t_start:.2f} s (timeout_s={TIMEOUT_S})")
-    record('zaman aşımı hareketin ORTASINDA doldu (kol kıpırdadı)',
-           sampler.displacement(t_start, t_failed) > 0.02,
-           f'(en büyük eklem değişimi {sampler.displacement(t_start, t_failed):.3f} rad)')
-    record(f'timeout_s={TIMEOUT_S}: iş failed, timed_out true, neden "zaman aşımı"',
+    attempts = []
+    for timeout_s in TIMEOUT_STEPS:
+        wait_for(lambda: api.robot()['state'] == 'idle', 60.0, 0.2)
+        t_start = time.monotonic()
+        status, _, doc = api.post('/api/jobs',
+                                  {'command': 'above red 0.35', 'timeout_s': timeout_s})
+        jid = doc['id'] if doc else None
+        ended = wait_ended(api, jid, 60.0) if jid else None
+        t_failed = time.monotonic()
+        failed = ended if ended and ended['state'] == 'failed' else None
+        latency, moved = motion_timeline(sampler, t_start, t_failed)
+        attempts.append(f'{timeout_s} s: ' + ('ilk hareket YOK' if latency is None
+                                              else f'ilk hareket {latency:.2f} s') +
+                        f', bitiş {t_failed - t_start:.2f} s, değişim {moved:.3f} rad')
+        print(f"ÖLÇÜM zaman aşımı timeout_s={timeout_s}: POST -> ilk hareket "
+              f"{'YOK' if latency is None else f'{latency:.2f} s'}; POST -> bitiş "
+              f"{t_failed - t_start:.2f} s ({ended and ended['state']})")
+        if moved > 0.02 or not failed:      # moved (the real thing) or something else went wrong
+            break
+    record('zaman aşımı hareketin ORTASINDA doldu (kol kıpırdadı)', moved > 0.02,
+           f'(en büyük eklem değişimi {moved:.3f} rad; denemeler: {"; ".join(attempts)})')
+    record(f'timeout_s={timeout_s}: iş failed, timed_out true, neden "zaman aşımı"',
            status == 202 and bool(failed) and failed['timed_out'] and 'zaman aşımı'
            in failed['error'], f'({failed and failed["error"]})')
     time.sleep(2.0)
