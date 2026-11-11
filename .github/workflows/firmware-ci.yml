@@ -1,0 +1,54 @@
+name: firmware-ci
+# K9 Faz 1: firmware derleme + host testi. ci.yml / nightly.yml bu dosyaya bağlı değildir.
+on:
+  pull_request:
+    paths:
+      - 'firmware/**'
+      - 'src/robot_hw_bridge/**'
+      - '.github/workflows/firmware-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'firmware/**'
+      - 'src/robot_hw_bridge/**'
+      - '.github/workflows/firmware-ci.yml'
+
+concurrency:
+  group: firmware-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  host-test:
+    name: Uno çekirdeği host testi (codec uyumu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest
+      - run: PYTHONPATH=src/robot_hw_bridge python -m pytest firmware/host -q
+
+  build:
+    name: PlatformIO derleme (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [uno, esp_relay]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ matrix.project }}-${{ hashFiles('firmware/*/platformio.ini') }}
+      - run: pip install platformio
+      - name: Wi-Fi yapılandırması (yalnız CI, sahte değerler)
+        if: matrix.project == 'esp_relay'
+        run: cp firmware/esp_relay/include/wifi_config.example.h firmware/esp_relay/include/wifi_config.h
+      - run: pio run -d firmware/${{ matrix.project }}
+      - name: Boyut (RAM/Flash)
+        run: pio run -d firmware/${{ matrix.project }} -t size
