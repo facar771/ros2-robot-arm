@@ -194,8 +194,10 @@ def test_bad_payloads_raise_protocol_error_only(bad):
 
 def test_bench_mode_flag_is_free_distinct_bit_and_roundtrips():
     from robot_hw_bridge.protocol import StatusFlag
-    others = StatusFlag.HW_LOOP_OPEN | StatusFlag.WATCHDOG_TRIPPED | StatusFlag.OPEN_LOOP_ANY | StatusFlag.HOST_LINK_OK
+    others = (StatusFlag.HW_LOOP_OPEN | StatusFlag.WATCHDOG_TRIPPED | StatusFlag.OPEN_LOOP_ANY
+              | StatusFlag.HOST_LINK_OK)
     assert StatusFlag.BENCH_MODE == 0x0010 and StatusFlag.BENCH_MODE & others == 0
-    st = Status(State.HOMED, EstopReason.NONE, StatusFlag.OPEN_LOOP_ANY | StatusFlag.BENCH_MODE, 1, 300, ())
+    flags = StatusFlag.OPEN_LOOP_ANY | StatusFlag.BENCH_MODE
+    st = Status(State.HOMED, EstopReason.NONE, flags, 1, 300, ())
     back = Status.unpack(st.pack())
     assert back.flags & StatusFlag.BENCH_MODE and back.open_loop_any
