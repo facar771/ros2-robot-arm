@@ -14,7 +14,8 @@ from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 # de). Bu yüzden numpy GÖMÜLÜR (eskiden dışlanmıştı) ve zincirin tamamı CORE_MODULES'te açıkça sayılır. Yeni bir
 # robot_core modülü webcmd zincirine girerse hub-exe.yml artık src/robot_core/** değişince de koşar ve ajan öz
 # sınamasının "ajan etkin" adımında yakalar.
-AGENT_PATHS = ['../../src/robot_agent', '../../src/robot_core']
+# KM3 Tezgâh: tools/bench/bench.py (veri olarak) ve robot_hw_bridge (ROS'suz host/protocol/transport) gömülür.
+AGENT_PATHS = ['../../src/robot_agent', '../../src/robot_core', '../../src/robot_hw_bridge']
 CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'kinematics', 'models', 'ports', 'profile',
                 'safezone', 'scenario', 'se3', 'skills', 'supervisor', 'targets', 'waypointapi', 'waypoints',
                 'webcmd']
@@ -31,6 +32,7 @@ hidden = (
     + collect_submodules('serial')           # ESP32 köprüsü: pyserial (Windows COM, socket:// vb. işleyiciler)
     + collect_submodules('control_hub')
     + collect_submodules('robot_agent')
+    + collect_submodules('robot_hw_bridge')
     + ['robot_core'] + ['robot_core.' + m for m in CORE_MODULES]
     # anahtar deposu: keyring arka uçlarını entry point (importlib.metadata) ile bulur -> dist-info gömülür,
     # Windows Credential Manager arka ucu (WinVaultKeyring) pywin32-ctypes (win32ctypes) ile çalışır
@@ -41,7 +43,7 @@ hidden = (
 a = Analysis(
     ['exe_entry.py'],
     pathex=['.'] + AGENT_PATHS,
-    datas=[('control_hub/web', 'control_hub/web'), ('config', 'config')] + copy_metadata('keyring'),
+    datas=[('control_hub/web', 'control_hub/web'), ('config', 'config'), ('../../tools/bench/bench.py', 'tools/bench')] + copy_metadata('keyring'),
     hiddenimports=hidden,
     excludes=['PIL', 'pytest', 'matplotlib', 'IPython'],
     noarchive=False,

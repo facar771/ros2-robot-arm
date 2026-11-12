@@ -72,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument('--bridge-only', action='store_true',
                    help='yalnızca köprüyü çalıştır (web arayüzü/robot API yok)')
     g.add_argument('--list-serial-ports', action='store_true', help='seri portları listele ve çık')
+    b = p.add_argument_group('Tezgâh (KM3; gerçek robot DEĞİL; varsayılan KAPALI)')
+    b.add_argument('--bench', action='store_true', default=os.environ.get('HUB_BENCH') == '1',
+                   help='Tezgâh sayfasını etkinleştir (PIN kipi şart; ESP32 köprüsüyle birlikte açılmaz)')
+    b.add_argument('--bench-port', default=os.environ.get('HUB_BENCH_PORT', ''), metavar='PORT',
+                   help="Tezgâh Uno'sunun seri portu (ör. COM3)")
+    b.add_argument('--bench-baud', type=int, default=115200)
     a = p.add_argument_group('Yapay zekâ ajanı (sohbet paneli)')
     a.add_argument('--no-agent', action='store_true', help='ajan panelini kapat')
     a.add_argument('--agent-provider', choices=('anthropic', 'openai', 'offline'), default='anthropic',
@@ -154,9 +160,32 @@ def build_hub(args: argparse.Namespace) -> Hub:
         hub.bridge = _make_bridge(
             args, on_event=lambda kind, msg, lvl: hub.events.emit(
                 f'hw_{kind}', msg, level=lvl if lvl in ('info', 'warning', 'error') else 'info'))
+    if args.bench:
+        _attach_bench(hub, args)
     if not args.no_agent and not args.check_config:
         hub.agent = make_agent(hub, args)
     return hub
+
+
+def _attach_bench(hub: Hub, args: argparse.Namespace) -> None:
+    if args.access_mode != 'pin':
+        raise ValueError('--bench yalnızca --access-mode pin ile açılır (Tezgâh PIN ister)')
+    if not args.bench_port:
+        raise ValueError('--bench için --bench-port gerekli (ör. --bench-port COM3)')
+    if args.serial_bridge and args.serial_bridge == args.bench_port:
+        raise ValueError('Tezgâh portu ESP32 köprüsü portuyla aynı olamaz (COM tek sahiplidir)')
+    from control_hub.hw import BenchError, BenchService
+    if args.check_config:        # .exe'de tools/bench + robot_hw_bridge gömülü mü?
+        from control_hub.hw.bench_service import load_bench_module
+        try:
+            load_bench_module()
+        except BenchError as exc:
+            raise ValueError(exc.message) from exc
+    hub.attach_bench(BenchService(
+        enabled=True, serial_url=args.bench_port, baud=args.bench_baud,
+        bridge_active=lambda: hub.bridge is not None,
+        on_event=lambda kind, msg, lvl: hub.events.emit(
+            kind, msg, level=lvl if lvl in ('info', 'warning', 'error') else 'info')))
 
 
 def make_agent(hub: Hub, args: argparse.Namespace):

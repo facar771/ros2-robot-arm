@@ -36,9 +36,16 @@ class Hub:
         self._stop_report: Optional[StopReport] = None
         self._stop_thread: Optional[threading.Thread] = None
         self.bridge: Optional[Any] = None          # hw.SerialTcpBridge (isteğe bağlı, ESP32 köprüsü)
+        self.bench: Optional[Any] = None           # hw.BenchService (isteğe bağlı, KM3 Tezgâh)
         self.agent: Optional[Any] = None           # agent.AgentService (isteğe bağlı, LLM ajanı)
         self.runner = ScenarioRunner(backend, self.events, is_estopped=lambda: self.estopped,
                                      clock=clock)
+
+    def attach_bench(self, bench: Any) -> Any:
+        """Tezgâh servisini bağlar; genel ACİL DUR tezgâhı da durdurur."""
+        self.bench = bench
+        self.add_estop_listener(bench.estop)
+        return bench
 
     # --- ACİL DUR ------------------------------------------------------------------------------
     @property
@@ -153,12 +160,15 @@ class Hub:
             'runner': self.runner.status(),
             'robot': robot,
             'bridge': self.bridge.status() if self.bridge is not None else None,
+            'bench': self.bench.summary() if self.bench is not None else None,
             'agent': self.agent.summary() if self.agent is not None else None,
             'last_event_seq': self.events.last_seq,
         }
 
     def close(self) -> None:
         self.runner.cancel('kapanıyor')
+        if self.bench is not None:
+            self.bench.close()                      # stop + DISABLE, port bırakılır
         if self.agent is not None:
             self.agent.close()
         if self.bridge is not None:

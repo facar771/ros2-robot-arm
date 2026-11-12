@@ -239,6 +239,9 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
 
     from control_hub.server.jog_routes import install_jog_routes
     install_jog_routes(app, hub, need_view=need_view, need_control=need_control)
+    from control_hub.server.bench_routes import install_bench_routes
+    install_bench_routes(app, hub, need_view=need_view, need_control=need_control,
+                         api_error=lambda st, code, msg: ApiError(st, code, msg))
     from control_hub.server.agent_routes import install_agent_routes
     install_agent_routes(app, hub, token_of=token_of, need_view=need_view, need_control=need_control)
 

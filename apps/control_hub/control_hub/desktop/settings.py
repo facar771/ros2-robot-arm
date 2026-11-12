@@ -28,6 +28,10 @@ class Settings:
     serial_baud: int = 921600
     bridge_port: int = 8770            # köprünün TCP portu (ROS düğümü buna bağlanır)
     bridge_open: bool = False          # True: 0.0.0.0 (Docker/başka makine) + token zorunlu
+    # KM3 Tezgâh (tools/bench ile aynı mantık; GERÇEK ROBOT DEĞİL). VARSAYILAN KAPALI; PIN kipi şart.
+    bench_enabled: bool = False
+    bench_serial: str = ''             # Tezgâh Uno'su: 'COM3' (köprü açıkken kullanılamaz)
+    bench_baud: int = 115200
     # Yapay zekâ ajanı: yalnızca SIR OLMAYAN ayarlar. API anahtarı buraya ASLA yazılmaz
     # (bellek ya da isteğe bağlı Windows Credential Manager).
     agent_provider: str = 'anthropic'  # anthropic | openai | offline
@@ -54,6 +58,15 @@ class Settings:
                 out.append('Seri baud 300-4000000 arasında olmalı')
             if not 1024 <= self.bridge_port <= 65535 or self.bridge_port == self.port:
                 out.append('Köprü portu 1024-65535 olmalı ve Hub portundan farklı olmalı')
+        if self.bench_enabled:
+            if not self.bench_serial:
+                out.append('Tezgâh açıksa Tezgâh seri portu gerekli (ör. COM3)')
+            if not 300 <= self.bench_baud <= 4_000_000:
+                out.append('Tezgâh baud 300-4000000 arasında olmalı')
+            if self.access_mode != 'pin':
+                out.append('Tezgâh yalnızca PIN erişim kipinde açılır')
+            if self.bench_serial and self.bench_serial == self.serial_port:
+                out.append('Tezgâh portu ESP32 köprüsü portuyla aynı olamaz (COM tek sahiplidir)')
         out.extend(self.agent_config().problems())
         return out
 

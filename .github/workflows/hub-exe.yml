@@ -10,6 +10,8 @@ on:
       - 'apps/control_hub/**'
       - 'src/robot_core/**'
       - 'src/robot_agent/**'
+      - 'src/robot_hw_bridge/**'
+      - 'tools/bench/**'
       - '.github/workflows/hub-exe.yml'
   push:
     branches: [main]
@@ -17,6 +19,8 @@ on:
       - 'apps/control_hub/**'
       - 'src/robot_core/**'
       - 'src/robot_agent/**'
+      - 'src/robot_hw_bridge/**'
+      - 'tools/bench/**'
       - '.github/workflows/hub-exe.yml'
   workflow_dispatch:
 
@@ -101,6 +105,11 @@ jobs:
           $out = & $exe --fake --check-config 2>&1
           $rc = $LASTEXITCODE
           Note "check-config rc=$rc" $out ($(if ($rc -eq 0) { 'notice' } else { 'error' }))
+          if ($rc -ne 0) { exit 1 }
+          # KM3: tools/bench/bench.py ve robot_hw_bridge .exe'ye gömülü mü? (donanım açılmaz; yalnız yükleme denenir)
+          $out = & $exe --fake --check-config --pin 123456 --bench --bench-port COM1 2>&1
+          $rc = $LASTEXITCODE
+          Note "check-config --bench rc=$rc" $out ($(if ($rc -eq 0) { 'notice' } else { 'error' }))
           if ($rc -ne 0) { exit 1 }
           $out = & $exe --firewall-help --port 8765 2>&1
           $rc = $LASTEXITCODE
