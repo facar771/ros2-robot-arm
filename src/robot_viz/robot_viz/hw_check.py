@@ -449,32 +449,35 @@ def run(base: str, port: int) -> list:
             )
             record(f"{label} düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
             # N6b: what the Robot API's latch did around the reset (state + estop reason, with the
-            # time of every change), to see whether a late /api/stop from the bridge re-trips it.
+            # time of every change, sampled all the way through clear + home), to see whether a
+            # late /api/stop from the bridge re-latches it after the operator's reset.
             t0 = time.monotonic()
-            timeline, last = [], None
+            timeline, last = [], [None]
+            sampling = threading.Event()
 
             def watch():
-                nonlocal last
                 robot = api.robot() or {}
                 now = (robot.get("state"), (robot.get("estop") or {}).get("reason"))
-                if now != last:
+                if now != last[0]:
                     timeline.append(f"{time.monotonic() - t0:+.2f}s {now[0]}/{now[1]}")
-                    last = now
+                    last[0] = now
 
-            watch()
+            def sample():
+                while not sampling.is_set():
+                    watch()
+                    time.sleep(0.05)
+
+            sampler = threading.Thread(target=sample, daemon=True)
+            sampler.start()
             reset = api.post("/api/reset", {})
             timeline.append(f"{time.monotonic() - t0:+.2f}s reset={reset[0] if reset else None}")
             ready, msg = node.recover()
-            end = time.monotonic() + 1.5
-            while time.monotonic() < end:
-                watch()
-                time.sleep(0.05)
-            print(f"ÖLÇÜM {label}-kurtarma: ok={ready} | {msg} | {' ; '.join(timeline)}", flush=True)
-            record(
-                f"{label} clear + home ile yeniden hazır",
-                ready,
-                f"{msg} | {' ; '.join(timeline)}",
-            )
+            time.sleep(1.5)
+            sampling.set()
+            sampler.join(1.0)
+            line = " ; ".join(timeline)
+            print(f"ÖLÇÜM {label}-kurtarma: ok={ready} | {msg} | {line}", flush=True)
+            record(f"{label} clear + home ile yeniden hazır", ready, f"{msg} | {line}")
 
         moving_far("8a")
         gaps.reset()
