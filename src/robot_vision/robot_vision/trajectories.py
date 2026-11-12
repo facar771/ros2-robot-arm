@@ -30,8 +30,12 @@ class Scenario:
     max_relock: float = 9.5              # pass threshold: 4.5 s lock timer + 5 s recovery
 
 
+# Reach: the slide joint stops at 2.5 m, so a target at lateral offset y needs
+# sqrt(3.5^2 + y^2) - distance(2.0) <= 2.5, i.e. |y| <= ~3.0 m. The old linear/blackout paths ended
+# at y = 3.2 / 3.8 and left the reach ~1.5 s / ~5 s before the end (hold 0.86 in one nightly run).
+# Paths are kept inside |y| <= 2.4 so the lock never depends on the slide hitting its end stop.
 def _linear(t: float) -> Vec:
-    return (3.5, -0.8 + 0.25 * t, 1.0)
+    return (3.5, -1.6 + 0.25 * t, 1.0)
 
 
 def _sine(t: float) -> Vec:
@@ -49,7 +53,7 @@ def _abrupt(t: float) -> Vec:
 def _blackout(t: float) -> Optional[Vec]:
     if 9.0 <= t < 10.0:                  # exactly 1 s without a target
         return None
-    return (3.5, -0.6 + 0.2 * t, 1.0)
+    return (3.5, -2.0 + 0.2 * t, 1.0)
 
 
 SCENARIOS: Dict[str, Scenario] = {s.name: s for s in (
