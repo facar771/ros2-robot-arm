@@ -247,6 +247,49 @@ gate('real', m)          # .open, .reasons ("donanıma hazır değil" + eksik al
 profille açılmaz (`maturity.F4B_DONE = False`; onu `True` yapmak F4b'yi bitiren PR'ın işidir). Kapıyı Robot API'ye /
 `mode: real`'e bağlamak ve Hub sihirbazı bu PR'da **yoktur**.
 
+## Karma robot (K8): `src/robot_description/profile/karma_robot/`
+
+İkinci robot profili: 7 eksenli küçük masaüstü kol. **Her sayısı yer tutucu ya da tahmindir; robot
+yapılmadı, hiçbir şey ölçülmedi** (`quality.profile.yaml`: hiçbir alan `measured` değil, donanım
+hazırlığı kapalı).
+
+| Eklem | İş | Aktüatör |
+|---|---|---|
+| joint_1 | taban dönüşü | 28BYJ-48 + ULN2003 (step, açık döngü) |
+| joint_2 | omuz | 28BYJ-48 + ULN2003 (step, açık döngü) |
+| joint_3 | dirsek | 2 × SG90, **aynalı çift** |
+| joint_4 | bilek eğimi | 2 × SG90, **aynalı çift** |
+| joint_5 | bilek dönüşü | SG90 |
+| joint_6 | bilek bükümü | SG90 |
+| joint_7 | kıskaç çenesi | step + A4988 (açık döngü) |
+
+- **Dosyalar:** `karma_robot.yaml`, `hardware.profile.yaml`, `quality.profile.yaml` (aynı dizinde;
+  `load_hardware` robot profilini yanında bulur). Üretilenler `profile/generated/karma_robot/`
+  altında: `output_paths(robot)` ilk robota dokunmaz (`six_axis_robot` yolları aynen), diğer her robot
+  kendi dizinine yazar; başlıkta profil yolu ve `--profile` komutu yazar.
+  `cd src/robot_core && python3 -m robot_core.profile_gen --profile ../robot_description/profile/karma_robot/karma_robot.yaml [--check]`
+- **`home` kutunun İÇİNDE** (uç ≈ [0.16, 0, 0.23], güvenli kutu x 0.06–0.20, y ±0.12, z 0.02–0.26),
+  kol eklemleri sınırdan ≥ 0.7 rad uzak; simülasyon `initial_positions` = `home` ile başlar (F4b
+  dersi). `ready` (joint_5 ≠ 0) jog başlatmak içindir: üç paralel eğim ekseni + bilek dönüşü 0 =
+  tekil. Küçük kolda σ_min ≈ 0.04 < `sigma_slow` 0.06: jog yavaşlatılmış çalışır (ölçek etkisi; eşikler
+  global, bu PR değiştirmez).
+- **Her referans `home` ile aynı:** step eksenlerinin `homing.position`'ı, servo eksenlerinin
+  `reference.pose` ve `rest.angle`'ı home açısıdır.
+- **`jog: locked` (eklem anahtarı, isteğe bağlı, varsayılan `free`):** `joint_7` zincirde kalır (FK,
+  URDF, MoveIt: tek 7 eklemli grup) ama `Chain` onun Jacobian sütununu sıfırlar; Kartezyen jog
+  kıskacı hiçbir koşulda oynatmaz. Eski profillerde alan yok → hiçbir şey değişmez.
+- **Aynalı çift (`servo.mirror.pulse_range`):** ikinci SG90'ın kendi darbe aralığı. Doğrulayıcı
+  ikinci servonun açısının darbe artarken **azalmasını** ister (aynı yönlü iki servo ortak eklemde
+  birbirine karşı çalışır) ve eklem limitlerinin her iki aralıkta da bulunmasını. API:
+  `ServoAxis.mirror_pulse_us(_int)`, `HardwareProfile.servo_mirror_pulses_us`. Kalite alanı
+  `axes.<j>.servo.mirror_pulse_range` yalnız aynalı eksenlerde kritiktir.
+- **GERÇEK LİMİT ANAHTARI YOK (joint_1, joint_2, joint_7):** açık döngü step'te home anahtarı ŞARTTIR
+  (HARDWARE.md §7). Profil bu anahtarları *tanımlar* ama **henüz yoktur** (yer tutucu; yapılmalı, konumu
+  ölçülmeli). Yani gerçek robotta bu üç eksenin referansı yok. Açık sorunun (K6a'dan) cevabı
+  gelene kadar kural değişmedi.
+- **Kapsam dışı:** fırlatma/MoveIt dosyaları hâlâ `six_axis_robot`'a sabit (karma için launch yok);
+  `hardware_gen` servo içeren profilde 2 koduyla reddeder (servo protokolü K6b); köprü/firmware yok.
+
 ## Bu aşamada olmayanlar
 Servo protokolü/simülatörü/`HARDWARE.md` durum makinesi (K6b), servo firmware (K3), servo güç ve tork denetimi (K7), karma/tam step robot profilleri (K8), step eksende `manual_zero` (karar bekliyor);
 Takım kütüphanesi (Q2), Hub/Robot API'de takım seçimi ve çalışma zamanı değişimi (Q3), sensörlerin URDF/SDF/Gazebo'ya yazılması (P1), takım kütlesinin tork denetimine girmesi (K7);

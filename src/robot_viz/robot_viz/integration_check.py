@@ -226,17 +226,31 @@ def run(base: str, hub_dir: str, config, state: JointStateCache, buffer: Buffer,
                f'(hata {err * 100:.2f} cm)')
 
         # 5. one job at a time across clients; looking is allowed; Hub e-stop ----------
+        # N8: the plugin job of section 4 may still be releasing the arm when it returns. A scenario
+        # started in that instant fails its first step ("robot başka bir işle meşgul") at once, and
+        # every check below would then run against a scenario that is already dead (the arm still
+        # stands far from home from section 4, which is all `far_and_inside` can see). So: wait for
+        # idle, start the scenario, and only go on once it is PROVEN running (runner running AND the
+        # robot busy with its job); the checks below also require it to still run after the agent
+        # call.
+        wait_for(lambda: backend.snapshot().get('state') == 'idle', 30.0, 0.1)
         hub.run_scenario('demo_tour')
-        away = wait_for(lambda: far_and_inside(api, buffer, tip, home_ref), 120.0, 0.1)
+        alive = wait_for(lambda: hub.runner.running and backend.snapshot().get('state') == 'busy',
+                         30.0, 0.05)
+        away = bool(alive) and wait_for(lambda: far_and_inside(api, buffer, tip, home_ref),
+                                        120.0, 0.1)
         busy = agent.execute('run_plugin', {'plugin': 'follow_color', 'tool': 'follow_color',
                                             'arguments': {'color': 'red', 'duration_s': 3}})
         looking = find(agent, 'green')
         # Between two Hub steps the robot may read "idle" for an instant: then the agent's own
         # object lookup meets the server's 409 instead of the "robot meşgul" gate. Same safe result.
+        still_running = hub.runner.running
         record('Hub senaryosu sürerken ajanın ikinci hareketi reddedildi (tek iş: ajan kapısı ya '
-               'da sunucu 409)', bool(away) and busy.status == 'refused'
+               'da sunucu 409)', bool(alive) and bool(away) and still_running
+               and busy.status == 'refused'
                and ('meşgul' in busy.message or 'başka bir iş çalışıyor' in busy.message),
-               f'({busy.status}: {busy.message[:60]})')
+               f'({busy.status}: {busy.message[:60]}; senaryo başladı: {bool(alive)}, '
+               f'çağrıdan sonra sürüyor: {still_running})')
         record('...ama ajan bakabiliyor (find_object hareket sırasında ok)',
                looking.ok and (looking.data.get('plugin_data') or {}).get('count', 0) >= 1)
         t_stop = time.monotonic()

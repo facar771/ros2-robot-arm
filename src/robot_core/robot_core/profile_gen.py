@@ -25,11 +25,29 @@ from robot_core.se3 import matrix_from_wpr
 SRC = Path(__file__).resolve().parents[2]            # .../src
 PROFILE_PATH = SRC / 'robot_description' / 'profile' / 'six_axis_robot.yaml'
 PROFILE_REL = 'src/robot_description/profile/six_axis_robot.yaml'
+DEFAULT_ROBOT = 'six_axis_robot'
 CONTROLLER_UPDATE_RATE = 100                         # Hz, ros2_control manager
 
 
 def output_paths(robot: str) -> Dict[str, str]:
-    """Generated file key -> path relative to ``src``."""
+    """Generated file key -> path relative to ``src``.
+
+    The original robot keeps the paths the launch / MoveIt files read. Every other robot (K8) gets
+    its own directory ``robot_description/profile/generated/<robot>/``: two robots never share a
+    generated file (nothing the six-axis simulation loads is overwritten)."""
+    if robot != DEFAULT_ROBOT:
+        base = f'robot_description/profile/generated/{robot}'
+        return {
+            'urdf': f'{base}/robot.urdf',
+            'ros2_control_xacro': f'{base}/{robot}.ros2_control.xacro',
+            'joint_limits': f'{base}/joint_limits.yaml',
+            'srdf': f'{base}/{robot}.srdf',
+            'safe_zone': f'{base}/safe_zone.yaml',
+            'initial_positions': f'{base}/initial_positions.yaml',
+            'ros2_controllers': f'{base}/ros2_controllers.yaml',
+            'moveit_controllers': f'{base}/moveit_controllers.yaml',
+            'view_model': f'{base}/view_model.json',
+        }
     cfg = 'robot_moveit_config/config'
     return {
         'urdf': 'robot_description/urdf/robot.urdf',
@@ -58,12 +76,28 @@ HEADER = ('ÜRETİLDİ: {profile} dosyasından `python3 -m robot_core.profile_ge
           'ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).')
 
 
-def _xml_header() -> str:
-    return f'<!-- {HEADER.format(profile=PROFILE_REL)} -->'
+def profile_rel(robot: str) -> str:
+    """Repository path of a robot's profile: the original robot keeps its flat path, every other
+    robot lives in ``profile/<robot>/<robot>.yaml`` (K8)."""
+    if robot == DEFAULT_ROBOT:
+        return PROFILE_REL
+    return f'src/robot_description/profile/{robot}/{robot}.yaml'
 
 
-def _yaml_header() -> str:
-    return f'# {HEADER.format(profile=PROFILE_REL)}'
+def _header_text(p: Profile) -> str:
+    text = HEADER.format(profile=profile_rel(p.robot))
+    if p.robot == DEFAULT_ROBOT:
+        return text
+    return text.replace('`python3 -m robot_core.profile_gen`',
+                        f'`python3 -m robot_core.profile_gen --profile {profile_rel(p.robot)}`')
+
+
+def _xml_header(p: Profile) -> str:
+    return f'<!-- {_header_text(p)} -->'
+
+
+def _yaml_header(p: Profile) -> str:
+    return f'# {_header_text(p)}'
 
 
 # ---- URDF -------------------------------------------------------------------------------------
@@ -132,7 +166,7 @@ def _tool_xml(p: Profile, tool: Tool) -> str:
 
 
 def gen_urdf(p: Profile) -> str:
-    parts = ['<?xml version="1.0"?>\n', _xml_header() + '\n', f'<robot name="{p.robot}">\n']
+    parts = ['<?xml version="1.0"?>\n', _xml_header(p) + '\n', f'<robot name="{p.robot}">\n']
     for name, rgba in p.materials.items():
         parts.append(f'  <material name="{name}"><color rgba="{vec(rgba)}"/></material>\n')
     parts.append(
@@ -162,7 +196,7 @@ def gen_ros2_control_xacro(p: Profile) -> str:
         f'                <state_interface name="velocity"/>\n'
         f'            </joint>\n' for j in p.joints)
     return (
-        '<?xml version="1.0"?>\n' + _xml_header() + '\n'
+        '<?xml version="1.0"?>\n' + _xml_header(p) + '\n'
         '<robot xmlns:xacro="http://www.ros.org/wiki/xacro">\n'
         f'    <xacro:macro name="{p.robot}_ros2_control" '
         'params="name initial_positions_file use_gazebo:=false">\n'
@@ -188,7 +222,7 @@ def gen_ros2_control_xacro(p: Profile) -> str:
 
 # ---- YAML files -------------------------------------------------------------------------------
 def gen_joint_limits(p: Profile) -> str:
-    out = [_yaml_header(),
+    out = [_yaml_header(p),
            '# Position limits live in the URDF (same profile values); this file adds velocity and',
            '# acceleration limits. default_*_scaling = fraction of the maximum used when a request',
            '# does not set its own scaling.',
@@ -206,7 +240,7 @@ def gen_safe_zone(p: Profile) -> str:
     z = p.safety.zone
     rows = [f'  {a}: [{f(lo)}, {f(hi)}]' for a, lo, hi in zip('xyz', z.lower, z.upper)]
     return '\n'.join([
-        _yaml_header(),
+        _yaml_header(p),
         '# Safe working box for tool-tip goals + speed cap (read by robot_core.safezone, used by',
         '# Skills and the MoveIt adapter). A Cartesian goal whose target is outside the box is',
         '# refused with an explicit error and the robot does not move. Only the *target* is',
@@ -219,13 +253,13 @@ def gen_safe_zone(p: Profile) -> str:
 
 def gen_initial_positions(p: Profile) -> str:
     rows = [f'  {n}: {f(v)}' for n, v in p.initial_positions.items()]
-    return '\n'.join([_yaml_header(), "# Initial positions of the ros2_control fake/sim system",
+    return '\n'.join([_yaml_header(p), "# Initial positions of the ros2_control fake/sim system",
                       'initial_positions:', *rows, ''])
 
 
 def gen_ros2_controllers(p: Profile) -> str:
     joints = '\n'.join(f'      - {n}' for n in p.joint_names)
-    return (f'{_yaml_header()}\n# This config file is used by ros2_control\n'
+    return (f'{_yaml_header(p)}\n# This config file is used by ros2_control\n'
             'controller_manager:\n  ros__parameters:\n'
             f'    update_rate: {CONTROLLER_UPDATE_RATE}  # Hz\n\n'
             '    arm_controller:\n'
@@ -240,7 +274,7 @@ def gen_ros2_controllers(p: Profile) -> str:
 
 def gen_moveit_controllers(p: Profile) -> str:
     joints = '\n'.join(f'      - {n}' for n in p.joint_names)
-    return (f'{_yaml_header()}\n# MoveIt uses this configuration for controller management\n\n'
+    return (f'{_yaml_header(p)}\n# MoveIt uses this configuration for controller management\n\n'
             'moveit_controller_manager: '
             'moveit_simple_controller_manager/MoveItSimpleControllerManager\n\n'
             'moveit_simple_controller_manager:\n  controller_names:\n    - arm_controller\n\n'
@@ -276,7 +310,7 @@ def gen_view_model(p: Profile) -> str:
     joint_of = {j.child: j.name for j in p.joints}
     tool = p.tool
     model = {
-        '_generated': HEADER.format(profile=PROFILE_REL),
+        '_generated': _header_text(p),
         'view_model_version': VIEW_MODEL_VERSION,
         'robot': p.robot,
         'units': {'length': 'm', 'angle': 'rad'},
@@ -325,7 +359,7 @@ def gen_srdf(p: Profile) -> str:
                     for a, b, r in acm)
     mount, parent, child = p.mount
     return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n' + _xml_header() + '\n'
+        '<?xml version="1.0" encoding="UTF-8"?>\n' + _xml_header(p) + '\n'
         f'<robot name="{p.robot}">\n'
         f'    <group name="{group}">\n'
         + ''.join(f'        <joint name="{n}"/>\n' for n in p.joint_names)
@@ -376,6 +410,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.check:
             print(f'ESKİ     {paths[key]}')
         else:
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding='utf-8')
             print(f'yazıldı  {paths[key]}')
     if args.check and stale:

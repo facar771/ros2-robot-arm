@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen --profile src/robot_description/profile/karma_robot/karma_robot.yaml` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler). -->
+<robot name="karma_robot">
+    <group name="robot_arm">
+        <joint name="joint_1"/>
+        <joint name="joint_2"/>
+        <joint name="joint_3"/>
+        <joint name="joint_4"/>
+        <joint name="joint_5"/>
+        <joint name="joint_6"/>
+        <joint name="joint_7"/>
+    </group>
+    <!--GROUP STATES: named joint poses (profile: moveit.named_poses)-->
+    <group_state name="home" group="robot_arm">
+        <joint name="joint_1" value="0.0"/>
+        <joint name="joint_2" value="0.0"/>
+        <joint name="joint_3" value="0.8"/>
+        <joint name="joint_4" value="0.8"/>
+        <joint name="joint_5" value="0.0"/>
+        <joint name="joint_6" value="0.7"/>
+        <joint name="joint_7" value="0.1"/>
+    </group_state>
+    <group_state name="ready" group="robot_arm">
+        <joint name="joint_1" value="0.0"/>
+        <joint name="joint_2" value="0.6"/>
+        <joint name="joint_3" value="1.0"/>
+        <joint name="joint_4" value="1.0"/>
+        <joint name="joint_5" value="0.8"/>
+        <joint name="joint_6" value="1.0"/>
+        <joint name="joint_7" value="0.1"/>
+    </group_state>
+    <!--VIRTUAL JOINT: fixes the robot base to the world frame-->
+    <virtual_joint name="masa" type="fixed" parent_frame="world" child_link="base_link"/>
+    <!--DISABLE COLLISIONS: parent-child links overlap at their joint and are always disabled;
+         anything else is checked unless the profile lists it under moveit.collision.allow_extra
+         (with a reason). Without the adjacent entries every state is reported as self-collision.-->
+    <disable_collisions link1="base_link" link2="link_1" reason="Adjacent"/>
+    <disable_collisions link1="link_1" link2="link_2" reason="Adjacent"/>
+    <disable_collisions link1="link_2" link2="link_3" reason="Adjacent"/>
+    <disable_collisions link1="link_3" link2="link_4" reason="Adjacent"/>
+    <disable_collisions link1="link_4" link2="link_5" reason="Adjacent"/>
+    <disable_collisions link1="link_5" link2="link_6" reason="Adjacent"/>
+    <disable_collisions link1="link_6" link2="link_7" reason="Adjacent"/>
+</robot>

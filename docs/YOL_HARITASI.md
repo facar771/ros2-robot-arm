@@ -1,6 +1,6 @@
 # Yol Haritası (tek doğruluk kaynağı)
 
-Son güncelleme: 2026-11-10 (akşam) · main b2f2ee6 (açık: #68 F4b) · Robot_10 düzeltmesi, K9 telefon kontrolü, N8 en üstte · Güncelleyen: Müdür
+Son güncelleme: 2026-11-11 · main 3eed907 (#68 F4b birleşti; F4B_DONE bayrağı ayrı karar) · Robot_10 düzeltmesi, K9 telefon kontrolü, N8 en üstte · Güncelleyen: Müdür
 
 ## Kullanım kuralları (herkes için)
 1. **Her görev bu dosyadaki bir ID'ye bağlıdır** (örn. `L3`). PR başlığına/gövdesine "Yol haritası: L3" yaz. ID'si olmayan iş yapılmaz; yeni iş eklemek Ferhat ya da Müdür kararıdır.
@@ -45,16 +45,15 @@ Soru bekleyen iş burada durur; çözülünce satır silinir (eski liste bırak�
 - **K7 (servo güç/ACİL DUR kuralları):** başlamadan Robot_1 gözden geçirir (servo besleme hattını NC buton/röleyle kesme güvenlik içerir). Soru henüz Robot_1'e gitmedi; K6b bitince tek başına anlaşılır soru olarak götürülecek.
 - **Park listesine cnc/pc/dik eklenmesi (F4):** Ferhat onayı bekleniyor; kullanılmıyorlar, şimdilik yalnız `home`.
 - **M3 RL'e devam/bekle:** Ferhat'ta.
-- **Tezgâh modu: ONAYLANDI (Ferhat, 11 Kasım; "senin kontrolünde olsun").** Kapsam: yalnız ayrı yerel tezgâh aracı (`tools/bench/`); `mode: real` ve Robot API DIŞINDA; J5/F4 kapısı ROS yolu için aynen geçerli. Koşullar: motorlar yükten ayrık, operatör başında, firmware'e gömülü dar açı/adım limiti ve düşük hız, watchdog, güç kesme (NC acil dur/röle) hazır, ilk hareket küçük ve tek eksen. Robot_1'e bilgi notu gider (itiraz hakkı saklı), Faz 2 onu beklemez.
 - **Karma robot bağlantısı (Ferhat, 11 Kasım, EKSEN SIRASI tabandan uca):** J1 28BYJ-48 (NodeMCU, ULN2003); J2 28BYJ-48 (NodeMCU, ULN2003); J3 2×SG90 birlikte, muhtemelen ters yönlü (Uno); J4 2×SG90 birlikte (Uno); J5 SG90 (Uno); J6 SG90 (Uno); kıskaç = A4988 ile step (Uno). NodeMCU: Wi-Fi + 8 pin (2×ULN2003) + Uno ile TX/RX. Bu, 7 Kasım "NodeMCU yalnız aktarıcı" kararını DEĞİŞTİRİR (NodeMCU J1/J2'yi kendisi sürer): öneri = NodeMCU PC çerçevelerinin HEPSİNİ Uno'ya olduğu gibi iletir (kalp atışı üretmez, Uno watchdog'u yalnız PC çerçevesi sayar) ve kendi eksenlerini uygular; Robot_1'e bilgi. Açık: kartın ESP8266 mı ESP32 mi olduğu (8 pin + UART için), kıskaç A4988'in gerçekten step olduğu, pin tablosu Ferhat onayı.
 - (Çözüldü, 7 Kasım akşam) F4b: Robot_1 **(B′)** seçti, (A) GERİ ALINIYOR. Ayrıntı F4b satırında.
 
 ## Sıradaki işler (öncelik sırasıyla)
 1. **F4b (#68, 🟡, Robot_3):** güvenlik, gerçek robottan önce zorunlu. Robot_1 kararı **(B′)**: ε kuralı geri alınır; kutu dışından (home) görev hareketi önce doğrulanmış park geçişiyle ready'ye gider, plan ready'den başlar. Ayrıntı F4b satırında. Bitmeden `mode: real` açılmaz.
-2a. **K9 (Robot_10, YENİ sohbet, paralel):** Uno için robot sürme firmware'i; NodeMCU/ESP yalnız Wi-Fi/seri şeffaf aktarıcı. Kontrol telefondan (tarayıcı → Hub). Faz 0 plan, Faz 1 iskelet, Faz 2 motor (Robot_1 tezgâh kararı gerekir). Ayrıntı K9.
+2a. **K9 (Robot_10, YENİ sohbet, paralel):** Uno için robot sürme firmware'i; NodeMCU J1/J2 (28BYJ-48) sürer ve PC çerçevelerini Uno'ya olduğu gibi iletir. Kontrol telefondan (tarayıcı → Hub). Faz 0 plan, Faz 1 iskelet, Faz 2a motor (tezgâh modu ONAYLI, kurallar K9'da). Hedef KM1: Ferhat 3 step motorun bilgisayardan döndüğünü görür. Ayrıntı K9.
 2. **N8 (Robot_3, EN ÜSTTE, CI ~%46 kırmızı), sonra N6b, sonra F4c:** N6b: `hw_check` test 8 → 8a/8b, test 8'de `loop_stall` varsayılana döner (N6'ya bak). F4c: park geçişinin ortasında ACİL DUR sonrası kurtarma (F4 altında).
-3. **K8 (Robot_2)** karma robot profili; home pozu güvenli kutu içinde seçilir (K8 notuna bak) → Q2 (pointer, kamera, kamera+lazer takımları).
-4. **Robot_4:** K6b (HARDWARE.md/protokol/simülatöre servo ekseni) → K7 (Robot_1 incelemesi şart); sonra O3, H4 arayüz, J5 Hub sihirbazı.
+3. **Robot_3 (N8'den sonra, ayrı küçük PR): BENCH_MODE reddi** (K9'a bak). **K8 (Robot_2)** karma robot profili; home pozu güvenli kutu içinde seçilir (K8 notuna bak) → Q2 (pointer, kamera, kamera+lazer takımları).
+4. **Robot_4:** K6b (HARDWARE.md/protokol/simülatöre servo ekseni) → K7 (Robot_1 incelemesi şart) → Hub "Tezgâh" sayfası (KM3); sonra O3, H4 arayüz, J5 Hub sihirbazı.
 5. **P1 → P2 (Robot_5):** P1 profil kısmı Robot_2'nin Q2'sine bağlı. **P4 lazer güvenliği donanımdan önce zorunlu, atlanmaz.**
 6. Ferhat denemeleri: L5 (jog Gazebo'da), N3 (.exe), L9c'nin gerçek robot/telefonda denemesi (N-listesine bak).
 
@@ -139,7 +138,10 @@ Soru bekleyen iş burada durur; çözülünce satır silinir (eski liste bırak�
 - [ ] K9 **İlk donanım hareketi: karma robot, bilgisayardan motor açısı → mikrodenetleyici** (Robot_10, YENİ sohbet; Ferhat 10 Kasım isteği: "ROS'ta çalışan robotun bağlı motorları hareket etsin, %100 bitmesi gerekmez"). Ferhat'ın eski ekran/joystick/LCD kodu KAPSAM DIŞI (10 Kasım: elle kontrol bırakıldı; robot telefondan kontrol edilecek), o koddan taşıma ve "bozulmaz" şartı yok; firmware sıfırdan, yalnız robot sürme. Telefon doğrudan kartla konuşmaz: telefon tarayıcısı → Control Hub (PC) → köprü → kart. Hat: PC → (önce USB-seri/kablo, sonra NodeMCU Wi-Fi, K5) → Uno. Fazlar, her faz ayrı küçük PR:
   - **Faz 0, kod yok:** pin ve bağlantı tablosu (Ferhat onaylar, Karar bekleyenler); Uno'nun tek donanım UART'ı (USB ↔ NodeMCU) nasıl paylaşılacak; Uno/NodeMCU görev paylaşımı; bellek/CPU bütçesi (2 KB RAM); hangi eksen step/servo; NodeMCU kalp atışı ÜRETMEZ, çerçeveleri aktarır (Robot_1, 7 Kasım).
   - **Faz 1, hareketsiz:** `firmware/` iskeleti (PlatformIO, derleme CI), protokol çerçevesi (HARDWARE.md), hareket kodu derleme bayrağıyla KAPALI. K3 buraya dahil.
-  - **Faz 2, Robot_1 tezgâh kararından sonra:** step motor(lar) için hareket (mevcut protokol step konuşur); servolar K6b'den sonra. Firmware'e derlemeyle gömülü dar açı/adım limiti ve düşük hız; watchdog; PC tarafı `tools/bench/` (ROS'suz, Robot API/Hub/`mode: real` DIŞINDA). Motorlar yükten ayrık, NC acil dur kuralları HARDWARE.md §6.
+  - **Faz 2a (Robot_10), tezgâh modu onaylı:** step motorlar (J1/J2 NodeMCU, kıskaç Uno) için hareket; servolar K6b'den sonra (KM2). Firmware'e derlemeyle gömülü dar açı/adım limiti ve düşük hız; watchdog; PC tarafı `tools/bench/` (ROS'suz, Robot API/Hub/`mode: real` DIŞINDA). NC acil dur kuralları HARDWARE.md §6.
+  - **Tezgâh modu kuralları (Ferhat onayı 11 Kasım; Robot_1'in 6 maddesi gelince birebir bununla karşılaştırılır):** (1) yalnız `tools/bench/` ve firmware; `mode: real`, Robot API ve Hub gerçek modu DIŞINDA; (2) motorlar yükten ayrık, operatör başında; (3) firmware'e gömülü dar açı/adım limiti ve düşük hız (PC tarafı gevşetemez); (4) watchdog açık (Uno yalnız PC çerçevesi sayar); (5) güç kesme hazır (NC buton/röle); (6) ilk hareket küçük ve tek eksen. Ferhat sonucu bildirir; denenmeyen "denendi" yazılmaz.
+  - **Robot_3: BENCH_MODE reddi.** Robot API, `robot_agent` ve `robot_hw_bridge` düğümü hiçbir koşulda tezgâh modunu kabul etmez (BENCH_MODE bayrağı/ortam değişkeni görülürse başlatma reddedilir); reddi kanıtlayan test. Tezgâh yolu ROS'a asla bağlanmaz; ROS'tan gerçek hareket yine J5 "donanıma hazır" + F4 ister.
+  - **Kilometre taşları (küçük robot; RL'deki M-numaralarından ayrı):** **KM1** Ferhat 3 step motorun (J1, J2, kıskaç) bilgisayardan döndüğünü görür (tezgâh, Faz 2a). **KM2** servolar (K6b + K7 sonrası, J3–J6). **KM3** Hub "Tezgâh" sayfası (Robot_4; tezgâh aracının Hub'dan, telefondan sürülmesi; gerçek mod DEĞİL). **KM4** küçük robot ROS profili (K8, J5) + Hub'da canlı.
   - **Faz 3, ROS yolu:** köprüde servo (K6b ardından Robot_3), karma robot profili ve ölçülmüş değerler (K8/J5, Robot_2; Ferhat ölçümleri), `mode: real` kapısı (J5 "donanıma hazır" + F4 bitmeden açılmaz). Bu, "ROS'tan gerçek hareket"in kapısıdır.
   Gerçek donanımda denenmeyeni "denendi" yazma; Ferhat deneyip sonucu bildirir.
 - [ ] K5 Wi-Fi kanalı (HMAC + seq, OTA kapalı/imzalı), USB-seri sonrası
@@ -197,6 +199,7 @@ Soru bekleyen iş burada durur; çözülünce satır silinir (eski liste bırak�
 - [x] N7a (#69) Hub .exe: numpy paketlenir (kök neden O2 c2fecfd, `webcmd` → `waypoints` → numpy), `hub-exe.yml` `src/robot_core/**` ve `src/robot_agent/**` değişince de koşar (A3'ün "ajan .exe'de çalışıyor" iddiasının kör noktası). **Doğrulama durumu:** CI Windows işi yeşil; gerçek Windows'ta elle açılış, antivirüs ve boyut etkisi denenmedi.
 
 ## Değişiklik günlüğü
+- 2026-11-11: #68 (F4b) ve #78 birleşti. Tezgâh modu kuralları K9 altına taşındı, Karar bekleyenlerden satır silindi. Faz 2a Robot_10; Robot_3 BENCH_MODE reddi; Robot_4 K6b + Hub Tezgâh sayfası; Robot_2 K8. Küçük robot kilometre taşları KM1–KM4.
 - 2026-11-10 (akşam): yeni firmware çalışanı Robot_10 (Robot_9 müdürdür; önceki yazım düzeltildi). K9 telefon kontrolüne göre yeniden yazıldı (eski ekran/joystick kodu kapsam dışı). N8 en üste alındı (CI ~%46 kırmızı). #68 PR gövdesi güncellendi, CI yeniden koşuyor.
 - 2026-11-10: K9 (ilk donanım hareketi, Robot_10 yeni sohbet) eklendi; K3'ün sahibi Robot_4 → Robot_10; sahiplik tablosuna Robot_10; Karar bekleyenlere "tezgâh modu" (Robot_1) ve karma robot bağlantı tablosu (Ferhat). #68 hâlâ açık.
 - 2026-11-07 (gece): #72 (K6a), #73 (L8 Hub), #74 birleşti. L8 `[x]`; K6 kısmen (K6a). Robot_1 F4b kararı: (B′), (A) geri alınır; F4c (ACİL DUR park ortası kurtarma) ve K8 "home kutu içinde seç" notu eklendi. #68 açık, CI kırmızı (`gazebo-cmd` demo_scenario, ε=2 mm kuralı kalkınca düzelmesi beklenir; doğrulanmadı). Main'in Gazebo CI işi bu güncelleme sırasında tamamlanmamıştı.

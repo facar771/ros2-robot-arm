@@ -1,0 +1,28 @@
+# ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen --profile src/robot_description/profile/karma_robot/karma_robot.yaml` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler).
+# This config file is used by ros2_control
+controller_manager:
+  ros__parameters:
+    update_rate: 100  # Hz
+
+    arm_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+arm_controller:
+  ros__parameters:
+    joints:
+      - joint_1
+      - joint_2
+      - joint_3
+      - joint_4
+      - joint_5
+      - joint_6
+      - joint_7
+    command_interfaces:
+      - position
+    state_interfaces:
+      - position
+      - velocity
+    allow_nonzero_velocity_at_trajectory_end: true
