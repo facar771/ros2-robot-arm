@@ -426,44 +426,80 @@ def run(base: str, port: int) -> list:
         record("7 buton bırakıldı: clear + home ile yeniden hazır", ready, msg)
 
         # ---- 8. telemetry lost: TCP dropped mid-motion
-        node.send(node.goal(FAR, 5.0, start=[a.homing.position for a in hw.axes]), wait=False)
-        moving = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
-        # N6: an idle MCU (drivers off) is not latched by the watchdog, so a drop without motion
-        # says nothing; fail with the real reason instead of a misleading '3.02 s'.
-        record("8 ön koşul: kol hareket ediyordu (hat koparılmadan önce)", bool(moving))
+        # N6b: the cable can come back before the MCU's watchdog (300 ms) has seen 300 ms of silence
+        # (measured: host silent 5-28 ms at the check in 3 of 30 CI runs, trips=0). Then "the MCU's
+        # watchdog stopped the arm" is simply not what happened, so the check is split in two:
+        #   8a  the host may reconnect: the arm must be stopped <= 0.8 s by whoever wins (MCU
+        #       watchdog or the host's own abort); the winner is reported.
+        #   8b  the host is held off (cable stays unplugged) for 1.5 s: now ONLY the MCU's own
+        #       watchdog can stop the arm, and it must do so <= 0.8 s.
+        # Both limits are the old 0.8 s; nothing was loosened.
+        def moving_far(label):
+            node.send(node.goal(FAR, 5.0, start=[a.homing.position for a in hw.axes]), wait=False)
+            moving = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+            # N6: an idle MCU (drivers off) is not latched by the watchdog, so a drop without
+            # motion says nothing; fail with the real reason instead of a misleading '3.02 s'.
+            record(f"{label} ön koşul: kol hareket ediyordu (hat koparılmadan önce)", bool(moving))
+
+        def recover_from_drop(label):
+            tripped = wait_for(lambda: (api.robot() or {}).get("state") == "estopped", 4.0, 0.05)
+            record(f"{label} Robot API estopped (ESP32 telemetrisi kesildi)", bool(tripped))
+            back = wait_for(
+                lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
+            )
+            record(f"{label} düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
+            before = api.robot() or {}
+            reset = api.post("/api/reset", {})
+            ready, msg = node.recover()
+            after = api.robot() or {}
+            keys = ("state", "reason", "message")
+            record(
+                f"{label} clear + home ile yeniden hazır",
+                ready,
+                f"{msg} | reset={reset[0] if reset else None} | API önce "
+                f"{({k: before.get(k) for k in keys})} sonra {({k: after.get(k) for k in keys})}",
+            )
+
+        moving_far("8a")
         gaps.reset()
         t_drop = time.monotonic()
         server.drop_client()
+        quiet_a = wait_for(lambda: plant.speed() < QUIET_STEPS_PER_S, 3.0, 0.01)
+        took_a = time.monotonic() - t_drop
+        winner = (
+            "MCU watchdog"
+            if sim.state == State.ESTOPPED and sim.reason == EstopReason.WATCHDOG
+            else "ana bilgisayar (hat geri geldi, kendi iptali)"
+        )
+        view_a = mcu_view(sim, gaps)
+        print(f"ÖLÇÜM test8a: {took_a:.2f}s; kazanan: {winner}; {view_a}", flush=True)
+        record(
+            "8a hat koptu: kol <= 0.8 s içinde durdu (MCU watchdog'u ya da ana bilgisayar)",
+            bool(quiet_a) and took_a <= 0.8,
+            f"{took_a:.2f}s; kazanan: {winner}; {view_a}",
+        )
+        recover_from_drop("8a")
+
+        moving_far("8b")
+        gaps.reset()
+        t_drop = time.monotonic()
+        server.drop_client(hold_off_s=1.5)
         mcu_stop = wait_for(
             lambda: sim.state == State.ESTOPPED and sim.reason == EstopReason.WATCHDOG, 3.0, 0.02
         )
-        print(f"ÖLÇÜM test8: {time.monotonic() - t_drop:.2f}s; {mcu_view(sim, gaps)}", flush=True)
+        took_b = time.monotonic() - t_drop
+        view_b = mcu_view(sim, gaps)
+        print(f"ÖLÇÜM test8b: {took_b:.2f}s; {view_b}", flush=True)
         record(
-            "8 hat koptu: MCU kendi watchdog'uyla durdu (<= 0.8 s)",
-            bool(mcu_stop) and time.monotonic() - t_drop <= 0.8,
-            f"{time.monotonic() - t_drop:.2f}s; {mcu_view(sim, gaps)}",
+            "8b ana bilgisayar yok: MCU kendi watchdog'uyla durdu (<= 0.8 s)",
+            bool(mcu_stop) and took_b <= 0.8,
+            f"{took_b:.2f}s; {view_b}",
         )
         record(
-            "8 kol fiziksel olarak durdu",
+            "8b kol fiziksel olarak durdu",
             bool(wait_for(lambda: plant.speed() < QUIET_STEPS_PER_S, 2.0, 0.01)),
         )
-        tripped = wait_for(lambda: (api.robot() or {}).get("state") == "estopped", 4.0, 0.05)
-        record("8 Robot API estopped (ESP32 telemetrisi kesildi)", bool(tripped))
-        back = wait_for(
-            lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
-        )
-        record("8 düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
-        before = api.robot() or {}
-        api.post("/api/reset", {})
-        ready, msg = node.recover()
-        after = api.robot() or {}
-        keys = ("state", "reason", "message")
-        record(
-            "8 clear + home ile yeniden hazır",
-            ready,
-            f"{msg} | API önce {({k: before.get(k) for k in keys})} sonra "
-            f"{({k: after.get(k) for k in keys})}",
-        )
+        recover_from_drop("8b")
 
         # ---- 9. node process frozen
         pids = subprocess.run(

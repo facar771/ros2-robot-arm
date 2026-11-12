@@ -199,13 +199,19 @@ class SimServer:
         self._client: Optional[socket.socket] = None
         self._lock = threading.Lock()
         self.connections = 0
+        self._hold_off_until = 0.0
         self._thread = threading.Thread(target=self._run, name='esp32-sim-server', daemon=True)
 
     def start(self) -> 'SimServer':
         self._thread.start()
         return self
 
-    def drop_client(self) -> None:
+    def drop_client(self, hold_off_s: float = 0.0) -> None:
+        """Closes the client. With ``hold_off_s`` the cable stays unplugged: a host that tries to
+        reconnect during that time is turned away at once, so the MCU is really host-less (its
+        watchdog is then the only thing that can stop the arm)."""
+        if hold_off_s > 0:
+            self._hold_off_until = time.monotonic() + hold_off_s
         with self._lock:
             c, self._client = self._client, None
         if c is not None:
@@ -230,6 +236,9 @@ class SimServer:
                     conn, _ = self._srv.accept()
                 except (socket.timeout, OSError):
                     self._tick(None)
+                    continue
+                if time.monotonic() < self._hold_off_until:       # cable still unplugged
+                    conn.close()
                     continue
                 conn.settimeout(self.tick)
                 with self._lock:
