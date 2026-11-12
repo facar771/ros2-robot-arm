@@ -44,7 +44,7 @@ from robot_core.ports import EventSink, NullEventSink, PlanningPort, StatePort
 from robot_core.profile import Profile
 from robot_core.safezone import ParkConfig, SafeZone
 
-DEFAULT_MAX_PLANS = 3             # in total, the first plan included
+DEFAULT_MAX_PLANS = 6             # in total, the first plan included (N9: was 3; box unchanged)
 START_TOLERANCE = 0.05            # rad: plan start vs measured state (a stale plan is not run)
 VALIDITY_STEP = 0.05              # rad: largest joint step between collision-checked states
 TRAJECTORY_DT = 0.05              # s between points of the park trajectory

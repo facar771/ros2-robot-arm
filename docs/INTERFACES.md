@@ -789,9 +789,9 @@ mevcut komutların reddetme nedenleri ve `home`'un anlamı (aşağıda) değişi
   ve adlandırılmış pozlar (`ready`, `home`, ...) AYNI koddan geçer. Sıra: **planla** (MoveIt `plan_only`, hareket yok) →
   **doğrula** (`pathcheck.check_path`: ardışık plan noktaları arası eklem uzayında örneklenir, her örnekte FK ile TCP kutuya
   karşı denetlenir) → **çalıştır** (doğrulanan planın kendisi, MoveIt `execute_trajectory`; yeniden planlama yok).
-- **Reddedilen plan:** hareket BAŞLAMAZ. En çok **3 plan** (ilki dahil) denenir (planlayıcı rastgeledir); hiçbiri geçmezse
+- **Reddedilen plan:** hareket BAŞLAMAZ. En çok **6 plan** (ilki dahil; N9: 3'ten çıkarıldı, kutu/tolerans aynı) denenir (planlayıcı rastgeledir); hiçbiri geçmezse
   `code_name: PATH_ZONE` ve mesaj ihlal noktasını söyler: "yol N. parçasında %P noktasında TCP (x, y, z) m güvenli kutunun
-  dışında: x üst sınırını D mm aşıyor; hareket başlamaz … 3 planın hepsi güvenli kutudan çıkıyor, hareket başlamadı (kutu
+  dışında: x üst sınırını D mm aşıyor; hareket başlamaz … 6 planın hepsi güvenli kutudan çıkıyor, hareket başlamadı (kutu
   genişletilmedi)". Kutu **sessizce genişletilmez**, yol onarılmaz. MoveIt'in kendi planlama hatası (`PLANNING_FAILED` vb.)
   aynen iletilir, yeniden planlanmaz.
 - **Başlangıç kutunun dışındaysa** (örn. `home`): yalnız kutuya **yaklaşırken** (uzaklık azalıyor) izin vardır, kutuya girdikten
