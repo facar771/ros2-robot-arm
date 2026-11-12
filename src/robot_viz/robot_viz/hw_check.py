@@ -181,6 +181,47 @@ class Rig(Node):
         )
 
 
+def load_snapshot() -> str:
+    """Host load, to tell a loaded runner from a real watchdog delay (N6b)."""
+    try:
+        with open("/proc/loadavg", encoding="utf-8") as fh:
+            load = fh.read().split()[0]
+    except OSError:
+        load = "?"
+    return f"load1={load} cpus={os.cpu_count()}"
+
+
+class AdvanceGaps:
+    """Longest wall-clock gap between two ticks of the simulated MCU since reset(): a starved
+    simulator (loaded runner) shows up here, a real watchdog delay does not."""
+
+    def __init__(self, sim) -> None:
+        self.max_gap = 0.0
+        self._last = None
+        original = sim._advance
+
+        def wrapped():
+            now = time.monotonic()
+            if self._last is not None:
+                self.max_gap = max(self.max_gap, now - self._last)
+            self._last = now
+            return original()
+
+        sim._advance = wrapped
+
+    def reset(self) -> None:
+        self.max_gap, self._last = 0.0, None
+
+
+def mcu_view(sim, gaps) -> str:
+    """What the simulated MCU itself saw: state/reason, how long the host had been silent, trips."""
+    rx = sim._last_host_rx
+    silent = "-" if rx is None else f"{(sim._clock() - rx) * 1000:.0f}ms"
+    return (f"mcu={sim.state.name}/{getattr(sim.reason, 'name', sim.reason)} sessiz={silent} "
+            f"watchdog_ms={sim.watchdog_ms} trips={sim.counters['watchdog_trips']} "
+            f"max_tick_boşluğu={gaps.max_gap * 1000:.0f}ms {load_snapshot()}")
+
+
 def make_sim() -> Esp32Sim:
     axes = [SimAxis(phys_min=-5000.0, phys_max=20000.0) for _ in range(6)]
     return Esp32Sim(axes)
@@ -196,6 +237,7 @@ def run(base: str, port: int) -> list:
 
     hw = load_hardware(find_profile())
     sim = make_sim()
+    gaps = AdvanceGaps(sim)
     server = SimServer(sim, "127.0.0.1", port).start()
     plant = Plant(sim)
     plant.start()
@@ -331,7 +373,7 @@ def run(base: str, port: int) -> list:
                     lambda: sim.state == State.ESTOPPED and sim.reason == EstopReason.HOST_CMD, 3.0
                 )
             ),
-            f"{sim.state.name}/{sim.reason.name}",
+            f"{sim.state.name}/{getattr(sim.reason, 'name', sim.reason)}",
         )
         record(
             f"6 kol ölçülerek durdu (<= {STOP_DEADLINE_S} s) ve sürünmedi",
@@ -389,15 +431,17 @@ def run(base: str, port: int) -> list:
         # N6: an idle MCU (drivers off) is not latched by the watchdog, so a drop without motion
         # says nothing; fail with the real reason instead of a misleading '3.02 s'.
         record("8 ön koşul: kol hareket ediyordu (hat koparılmadan önce)", bool(moving))
+        gaps.reset()
         t_drop = time.monotonic()
         server.drop_client()
         mcu_stop = wait_for(
             lambda: sim.state == State.ESTOPPED and sim.reason == EstopReason.WATCHDOG, 3.0, 0.02
         )
+        print(f"ÖLÇÜM test8: {time.monotonic() - t_drop:.2f}s; {mcu_view(sim, gaps)}", flush=True)
         record(
             "8 hat koptu: MCU kendi watchdog'uyla durdu (<= 0.8 s)",
             bool(mcu_stop) and time.monotonic() - t_drop <= 0.8,
-            f"{time.monotonic() - t_drop:.2f}s",
+            f"{time.monotonic() - t_drop:.2f}s; {mcu_view(sim, gaps)}",
         )
         record(
             "8 kol fiziksel olarak durdu",
@@ -421,7 +465,10 @@ def run(base: str, port: int) -> list:
         record("9 hw_bridge_node süreci bulundu", pid is not None, str(pids))
         if pid is not None:
             node.send(node.goal(FAR, 6.0, start=[a.homing.position for a in hw.axes]), wait=False)
-            wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+            moving9 = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+            record("9 ön koşul: kol hareket ediyordu (düğüm dondurulmadan önce)", bool(moving9),
+                   mcu_view(sim, gaps))
+            gaps.reset()
             t_freeze = time.monotonic()
             os.kill(pid, signal.SIGSTOP)
             try:
@@ -431,14 +478,16 @@ def run(base: str, port: int) -> list:
                     0.02,
                 )
                 took = time.monotonic() - t_freeze
+                view9 = mcu_view(sim, gaps)
                 stopped = wait_for(lambda: plant.speed() < QUIET_STEPS_PER_S, 2.0, 0.01)
             finally:
                 os.kill(pid, signal.SIGCONT)
             record(
                 "9 düğüm donduruldu: MCU watchdog'u kendiliğinden durdurdu (<= 0.8 s)",
                 bool(froze) and bool(stopped) and took <= 0.8,
-                f"{took:.2f}s",
+                f"{took:.2f}s; {view9}",
             )
+            print(f"ÖLÇÜM test9: {took:.2f}s; {view9}", flush=True)
             tripped = wait_for(lambda: (api.robot() or {}).get("state") == "estopped", 6.0, 0.1)
             record("9 düğüm uyanınca Robot API estopped", bool(tripped))
     finally:
