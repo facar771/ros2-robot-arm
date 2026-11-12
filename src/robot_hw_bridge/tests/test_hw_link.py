@@ -207,3 +207,34 @@ def test_transport_closed_is_raised_not_swallowed():
 def test_threads_do_not_leak(rig):
     names = {t.name for t in threading.enumerate()}
     assert 'hw-rx' in names and 'hw-hb' in names and 'esp32-sim' in names
+
+
+def test_drop_client_hold_off_turns_a_reconnecting_host_away_until_it_expires():
+    """N6b: with hold_off_s the cable stays unplugged: the MCU must really be host-less."""
+    import socket
+    import time
+
+    sim = Esp32Sim()
+    srv = SimServer(sim).start()
+    try:
+        first = socket.create_connection(('127.0.0.1', srv.port), timeout=1)
+        deadline = time.monotonic() + 2
+        while srv.connections < 1 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert srv.connections == 1
+        srv.drop_client(hold_off_s=0.6)
+        first.close()
+        early = socket.create_connection(('127.0.0.1', srv.port), timeout=1)
+        early.settimeout(0.4)
+        assert early.recv(16) == b''                 # turned away at once (closed by the server)
+        early.close()
+        assert srv.connections == 1                  # never counted as a client
+        time.sleep(0.7)                              # the hold-off is over: connecting works again
+        late = socket.create_connection(('127.0.0.1', srv.port), timeout=1)
+        deadline = time.monotonic() + 2
+        while srv.connections < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert srv.connections == 2
+        late.close()
+    finally:
+        srv.stop()

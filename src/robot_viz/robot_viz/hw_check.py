@@ -144,7 +144,11 @@ class Rig(Node):
             time.sleep(0.5)
         if not ok:
             return False, f"clear: {msg}"
+        # N6b: "yörünge çalışırken homing yapılmaz": let the previous trajectory finish unwinding
+        idle = wait_for(lambda: not self.state.get("executing"), 15.0, 0.05)
         ok2, msg2 = self.trigger(self.home_srv)
+        if not idle:
+            msg2 += " (yörünge 15 s içinde bitmedi)"
         return ok2 and bool(
             wait_for(lambda: self.state.get("homed") is True, 3.0)
         ), f"{msg} | {msg2}"
@@ -181,6 +185,98 @@ class Rig(Node):
         )
 
 
+def load_snapshot() -> str:
+    """Host load, to tell a loaded runner from a real watchdog delay (N6b)."""
+    try:
+        with open("/proc/loadavg", encoding="utf-8") as fh:
+            load = fh.read().split()[0]
+    except OSError:
+        load = "?"
+    return f"load1={load} cpus={os.cpu_count()}"
+
+
+class AdvanceGaps:
+    """Longest wall-clock gap between two ticks of the simulated MCU since reset(): a starved
+    simulator (loaded runner) shows up here, a real watchdog delay does not."""
+
+    def __init__(self, sim) -> None:
+        self.max_gap = 0.0
+        self._last = None
+        original = sim._advance
+
+        def wrapped():
+            now = time.monotonic()
+            if self._last is not None:
+                self.max_gap = max(self.max_gap, now - self._last)
+            self._last = now
+            return original()
+
+        sim._advance = wrapped
+
+    def reset(self) -> None:
+        self.max_gap, self._last = 0.0, None
+
+
+def mcu_view(sim, gaps) -> str:
+    """What the simulated MCU itself saw: state/reason, how long the host had been silent, trips."""
+    rx = sim._last_host_rx
+    silent = "-" if rx is None else f"{(sim._clock() - rx) * 1000:.0f}ms"
+    return (f"mcu={sim.state.name}/{getattr(sim.reason, 'name', sim.reason)} sessiz={silent} "
+            f"watchdog_ms={sim.watchdog_ms} trips={sim.counters['watchdog_trips']} "
+            f"max_tick_boşluğu={gaps.max_gap * 1000:.0f}ms {load_snapshot()}")
+
+
+def operator_recover_impl(label, name, api, node, record):
+    # N6b: what the Robot API's latch did around the reset (state + estop reason, with the
+    # time of every change, sampled all the way through clear + home), to see whether a
+    # late /api/stop from the bridge re-latches it after the operator's reset.
+    t0 = time.monotonic()
+    timeline, last = [], [None]
+    sampling = threading.Event()
+
+    def watch():
+        robot = api.robot() or {}
+        now = (robot.get("state"), (robot.get("estop") or {}).get("reason"))
+        if now != last[0]:
+            timeline.append(f"{time.monotonic() - t0:+.2f}s {now[0]}/{now[1]}")
+            last[0] = now
+
+    def sample():
+        while not sampling.is_set():
+            watch()
+            time.sleep(0.05)
+
+    sampler = threading.Thread(target=sample, daemon=True)
+    sampler.start()
+    # N6b (measured, 13 of 60 recoveries): the bridge reports the MCU's emergency stop to the
+    # Robot API as soon as it has read the MCU's status after the reconnect. If the operator's
+    # reset comes first, that late report re-latches the API and the API->ESP32 relay then
+    # kills the homing. So: wait until the bridge has SEEN the MCU state and, when the MCU is
+    # stopped, until that report has reached the API; only then reset (retried while the
+    # API refuses with 409: it will not reset before the stop is verified).
+    wait_for(
+        lambda: node.state.get("mcu_state") not in (None, "ESTOPPED")
+        or "MCU ACİL DUR" in str(((api.robot() or {}).get("estop") or {}).get("reason")),
+        5.0,
+        0.05,
+    )
+    resets = []
+    for _ in range(40):
+        reset = api.post("/api/reset", {})
+        resets.append(reset[0] if reset else None)
+        if resets[-1] == 200:
+            break
+        time.sleep(0.25)
+    timeline.append(f"{time.monotonic() - t0:+.2f}s reset={resets}")
+    ready, msg = node.recover()
+    time.sleep(1.5)
+    sampling.set()
+    sampler.join(1.0)
+    line = " ; ".join(timeline)
+    print(f"ÖLÇÜM {label}-kurtarma: ok={ready} | {msg} | {line}", flush=True)
+    record(f"{label} {name}", ready, f"{msg} | {line}")
+
+
 def make_sim() -> Esp32Sim:
     axes = [SimAxis(phys_min=-5000.0, phys_max=20000.0) for _ in range(6)]
     return Esp32Sim(axes)
@@ -196,6 +292,7 @@ def run(base: str, port: int) -> list:
 
     hw = load_hardware(find_profile())
     sim = make_sim()
+    gaps = AdvanceGaps(sim)
     server = SimServer(sim, "127.0.0.1", port).start()
     plant = Plant(sim)
     plant.start()
@@ -331,7 +428,7 @@ def run(base: str, port: int) -> list:
                     lambda: sim.state == State.ESTOPPED and sim.reason == EstopReason.HOST_CMD, 3.0
                 )
             ),
-            f"{sim.state.name}/{sim.reason.name}",
+            f"{sim.state.name}/{getattr(sim.reason, 'name', sim.reason)}",
         )
         record(
             f"6 kol ölçülerek durdu (<= {STOP_DEADLINE_S} s) ve sürünmedi",
@@ -379,39 +476,75 @@ def run(base: str, port: int) -> list:
         running = [j for j in json.loads(listing)["jobs"] if j["state"] in ("running", "queued")]
         record("7 çalışan iş kalmadı", not running, str([j["state"] for j in running]))
         sim.release_estop()
-        api.post("/api/reset", {})
-        ready, msg = node.recover()
-        record("7 buton bırakıldı: clear + home ile yeniden hazır", ready, msg)
+        operator_recover_impl(
+            "7", "buton bırakıldı: clear + home ile yeniden hazır", api, node, record
+        )
 
         # ---- 8. telemetry lost: TCP dropped mid-motion
-        node.send(node.goal(FAR, 5.0, start=[a.homing.position for a in hw.axes]), wait=False)
-        moving = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
-        # N6: an idle MCU (drivers off) is not latched by the watchdog, so a drop without motion
-        # says nothing; fail with the real reason instead of a misleading '3.02 s'.
-        record("8 ön koşul: kol hareket ediyordu (hat koparılmadan önce)", bool(moving))
+        # N6b: the cable can come back before the MCU's watchdog (300 ms) has seen 300 ms of silence
+        # (measured: host silent 5-28 ms at the check in 3 of 30 CI runs, trips=0). Then "the MCU's
+        # watchdog stopped the arm" is simply not what happened, so the check is split in two:
+        #   8a  the host may reconnect: the arm must be stopped <= 0.8 s by whoever wins (MCU
+        #       watchdog or the host's own abort); the winner is reported.
+        #   8b  the host is held off (cable stays unplugged) for 1.5 s: now ONLY the MCU's own
+        #       watchdog can stop the arm, and it must do so <= 0.8 s.
+        # Both limits are the old 0.8 s; nothing was loosened.
+        def moving_far(label):
+            node.send(node.goal(FAR, 5.0, start=[a.homing.position for a in hw.axes]), wait=False)
+            moving = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+            # N6: an idle MCU (drivers off) is not latched by the watchdog, so a drop without
+            # motion says nothing; fail with the real reason instead of a misleading '3.02 s'.
+            record(f"{label} ön koşul: kol hareket ediyordu (hat koparılmadan önce)", bool(moving))
+
+        def recover_from_drop(label):
+            tripped = wait_for(lambda: (api.robot() or {}).get("state") == "estopped", 4.0, 0.05)
+            record(f"{label} Robot API estopped (ESP32 telemetrisi kesildi)", bool(tripped))
+            back = wait_for(
+                lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
+            )
+            record(f"{label} düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
+            operator_recover_impl(label, "clear + home ile yeniden hazır", api, node, record)
+
+        moving_far("8a")
+        gaps.reset()
         t_drop = time.monotonic()
         server.drop_client()
+        quiet_a = wait_for(lambda: plant.speed() < QUIET_STEPS_PER_S, 3.0, 0.01)
+        took_a = time.monotonic() - t_drop
+        winner = (
+            "MCU watchdog"
+            if sim.state == State.ESTOPPED and sim.reason == EstopReason.WATCHDOG
+            else "ana bilgisayar (hat geri geldi, kendi iptali)"
+        )
+        view_a = mcu_view(sim, gaps)
+        print(f"ÖLÇÜM test8a: {took_a:.2f}s; kazanan: {winner}; {view_a}", flush=True)
+        record(
+            "8a hat koptu: kol <= 0.8 s içinde durdu (MCU watchdog'u ya da ana bilgisayar)",
+            bool(quiet_a) and took_a <= 0.8,
+            f"{took_a:.2f}s; kazanan: {winner}; {view_a}",
+        )
+        recover_from_drop("8a")
+
+        moving_far("8b")
+        gaps.reset()
+        t_drop = time.monotonic()
+        server.drop_client(hold_off_s=1.5)
         mcu_stop = wait_for(
             lambda: sim.state == State.ESTOPPED and sim.reason == EstopReason.WATCHDOG, 3.0, 0.02
         )
+        took_b = time.monotonic() - t_drop
+        view_b = mcu_view(sim, gaps)
+        print(f"ÖLÇÜM test8b: {took_b:.2f}s; {view_b}", flush=True)
         record(
-            "8 hat koptu: MCU kendi watchdog'uyla durdu (<= 0.8 s)",
-            bool(mcu_stop) and time.monotonic() - t_drop <= 0.8,
-            f"{time.monotonic() - t_drop:.2f}s",
+            "8b ana bilgisayar yok: MCU kendi watchdog'uyla durdu (<= 0.8 s)",
+            bool(mcu_stop) and took_b <= 0.8,
+            f"{took_b:.2f}s; {view_b}",
         )
         record(
-            "8 kol fiziksel olarak durdu",
+            "8b kol fiziksel olarak durdu",
             bool(wait_for(lambda: plant.speed() < QUIET_STEPS_PER_S, 2.0, 0.01)),
         )
-        tripped = wait_for(lambda: (api.robot() or {}).get("state") == "estopped", 4.0, 0.05)
-        record("8 Robot API estopped (ESP32 telemetrisi kesildi)", bool(tripped))
-        back = wait_for(
-            lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
-        )
-        record("8 düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
-        api.post("/api/reset", {})
-        ready, msg = node.recover()
-        record("8 clear + home ile yeniden hazır", ready, msg)
+        recover_from_drop("8b")
 
         # ---- 9. node process frozen
         pids = subprocess.run(
@@ -421,7 +554,10 @@ def run(base: str, port: int) -> list:
         record("9 hw_bridge_node süreci bulundu", pid is not None, str(pids))
         if pid is not None:
             node.send(node.goal(FAR, 6.0, start=[a.homing.position for a in hw.axes]), wait=False)
-            wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+            moving9 = wait_for(lambda: plant.speed() > 40, 10.0, 0.02)
+            record("9 ön koşul: kol hareket ediyordu (düğüm dondurulmadan önce)", bool(moving9),
+                   mcu_view(sim, gaps))
+            gaps.reset()
             t_freeze = time.monotonic()
             os.kill(pid, signal.SIGSTOP)
             try:
@@ -431,14 +567,16 @@ def run(base: str, port: int) -> list:
                     0.02,
                 )
                 took = time.monotonic() - t_freeze
+                view9 = mcu_view(sim, gaps)
                 stopped = wait_for(lambda: plant.speed() < QUIET_STEPS_PER_S, 2.0, 0.01)
             finally:
                 os.kill(pid, signal.SIGCONT)
             record(
                 "9 düğüm donduruldu: MCU watchdog'u kendiliğinden durdurdu (<= 0.8 s)",
                 bool(froze) and bool(stopped) and took <= 0.8,
-                f"{took:.2f}s",
+                f"{took:.2f}s; {view9}",
             )
+            print(f"ÖLÇÜM test9: {took:.2f}s; {view9}", flush=True)
             tripped = wait_for(lambda: (api.robot() or {}).get("state") == "estopped", 6.0, 0.1)
             record("9 düğüm uyanınca Robot API estopped", bool(tripped))
     finally:
