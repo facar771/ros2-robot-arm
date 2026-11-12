@@ -144,6 +144,8 @@ class Rig(Node):
             time.sleep(0.5)
         if not ok:
             return False, f"clear: {msg}"
+        # N6b: "yörünge çalışırken homing yapılmaz": let the previous trajectory finish unwinding
+        wait_for(lambda: not self.state.get("executing"), 5.0, 0.05)
         ok2, msg2 = self.trigger(self.home_srv)
         return ok2 and bool(
             wait_for(lambda: self.state.get("homed") is True, 3.0)
@@ -469,8 +471,26 @@ def run(base: str, port: int) -> list:
 
             sampler = threading.Thread(target=sample, daemon=True)
             sampler.start()
-            reset = api.post("/api/reset", {})
-            timeline.append(f"{time.monotonic() - t0:+.2f}s reset={reset[0] if reset else None}")
+            # N6b (measured, 13 of 60 recoveries): the bridge reports the MCU's emergency stop to the
+            # Robot API as soon as it has read the MCU's status after the reconnect. If the operator's
+            # reset comes first, that late report re-latches the API and the API->ESP32 relay then
+            # kills the homing. So: wait until the bridge has SEEN the MCU state and, when the MCU is
+            # stopped, until that report has reached the API; only then reset (retried while the
+            # API refuses with 409: it will not reset before the stop is verified).
+            wait_for(
+                lambda: node.state.get("mcu_state") not in (None, "ESTOPPED")
+                or "MCU ACİL DUR" in str(((api.robot() or {}).get("estop") or {}).get("reason")),
+                5.0,
+                0.05,
+            )
+            resets = []
+            for _ in range(40):
+                reset = api.post("/api/reset", {})
+                resets.append(reset[0] if reset else None)
+                if resets[-1] == 200:
+                    break
+                time.sleep(0.25)
+            timeline.append(f"{time.monotonic() - t0:+.2f}s reset={resets}")
             ready, msg = node.recover()
             time.sleep(1.5)
             sampling.set()
