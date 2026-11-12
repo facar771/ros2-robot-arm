@@ -145,8 +145,10 @@ class Rig(Node):
         if not ok:
             return False, f"clear: {msg}"
         # N6b: "yörünge çalışırken homing yapılmaz": let the previous trajectory finish unwinding
-        wait_for(lambda: not self.state.get("executing"), 5.0, 0.05)
+        idle = wait_for(lambda: not self.state.get("executing"), 15.0, 0.05)
         ok2, msg2 = self.trigger(self.home_srv)
+        if not idle:
+            msg2 += " (yörünge 15 s içinde bitmedi)"
         return ok2 and bool(
             wait_for(lambda: self.state.get("homed") is True, 3.0)
         ), f"{msg} | {msg2}"
@@ -222,6 +224,57 @@ def mcu_view(sim, gaps) -> str:
     return (f"mcu={sim.state.name}/{getattr(sim.reason, 'name', sim.reason)} sessiz={silent} "
             f"watchdog_ms={sim.watchdog_ms} trips={sim.counters['watchdog_trips']} "
             f"max_tick_boşluğu={gaps.max_gap * 1000:.0f}ms {load_snapshot()}")
+
+
+def operator_recover_impl(label, name, api, node, record):
+    # N6b: what the Robot API's latch did around the reset (state + estop reason, with the
+    # time of every change, sampled all the way through clear + home), to see whether a
+    # late /api/stop from the bridge re-latches it after the operator's reset.
+    t0 = time.monotonic()
+    timeline, last = [], [None]
+    sampling = threading.Event()
+
+    def watch():
+        robot = api.robot() or {}
+        now = (robot.get("state"), (robot.get("estop") or {}).get("reason"))
+        if now != last[0]:
+            timeline.append(f"{time.monotonic() - t0:+.2f}s {now[0]}/{now[1]}")
+            last[0] = now
+
+    def sample():
+        while not sampling.is_set():
+            watch()
+            time.sleep(0.05)
+
+    sampler = threading.Thread(target=sample, daemon=True)
+    sampler.start()
+    # N6b (measured, 13 of 60 recoveries): the bridge reports the MCU's emergency stop to the
+    # Robot API as soon as it has read the MCU's status after the reconnect. If the operator's
+    # reset comes first, that late report re-latches the API and the API->ESP32 relay then
+    # kills the homing. So: wait until the bridge has SEEN the MCU state and, when the MCU is
+    # stopped, until that report has reached the API; only then reset (retried while the
+    # API refuses with 409: it will not reset before the stop is verified).
+    wait_for(
+        lambda: node.state.get("mcu_state") not in (None, "ESTOPPED")
+        or "MCU ACİL DUR" in str(((api.robot() or {}).get("estop") or {}).get("reason")),
+        5.0,
+        0.05,
+    )
+    resets = []
+    for _ in range(40):
+        reset = api.post("/api/reset", {})
+        resets.append(reset[0] if reset else None)
+        if resets[-1] == 200:
+            break
+        time.sleep(0.25)
+    timeline.append(f"{time.monotonic() - t0:+.2f}s reset={resets}")
+    ready, msg = node.recover()
+    time.sleep(1.5)
+    sampling.set()
+    sampler.join(1.0)
+    line = " ; ".join(timeline)
+    print(f"ÖLÇÜM {label}-kurtarma: ok={ready} | {msg} | {line}", flush=True)
+    record(f"{label} {name}", ready, f"{msg} | {line}")
 
 
 def make_sim() -> Esp32Sim:
@@ -423,9 +476,9 @@ def run(base: str, port: int) -> list:
         running = [j for j in json.loads(listing)["jobs"] if j["state"] in ("running", "queued")]
         record("7 çalışan iş kalmadı", not running, str([j["state"] for j in running]))
         sim.release_estop()
-        api.post("/api/reset", {})
-        ready, msg = node.recover()
-        record("7 buton bırakıldı: clear + home ile yeniden hazır", ready, msg)
+        operator_recover_impl(
+            "7", "buton bırakıldı: clear + home ile yeniden hazır", api, node, record
+        )
 
         # ---- 8. telemetry lost: TCP dropped mid-motion
         # N6b: the cable can come back before the MCU's watchdog (300 ms) has seen 300 ms of silence
@@ -450,54 +503,7 @@ def run(base: str, port: int) -> list:
                 lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
             )
             record(f"{label} düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
-            # N6b: what the Robot API's latch did around the reset (state + estop reason, with the
-            # time of every change, sampled all the way through clear + home), to see whether a
-            # late /api/stop from the bridge re-latches it after the operator's reset.
-            t0 = time.monotonic()
-            timeline, last = [], [None]
-            sampling = threading.Event()
-
-            def watch():
-                robot = api.robot() or {}
-                now = (robot.get("state"), (robot.get("estop") or {}).get("reason"))
-                if now != last[0]:
-                    timeline.append(f"{time.monotonic() - t0:+.2f}s {now[0]}/{now[1]}")
-                    last[0] = now
-
-            def sample():
-                while not sampling.is_set():
-                    watch()
-                    time.sleep(0.05)
-
-            sampler = threading.Thread(target=sample, daemon=True)
-            sampler.start()
-            # N6b (measured, 13 of 60 recoveries): the bridge reports the MCU's emergency stop to the
-            # Robot API as soon as it has read the MCU's status after the reconnect. If the operator's
-            # reset comes first, that late report re-latches the API and the API->ESP32 relay then
-            # kills the homing. So: wait until the bridge has SEEN the MCU state and, when the MCU is
-            # stopped, until that report has reached the API; only then reset (retried while the
-            # API refuses with 409: it will not reset before the stop is verified).
-            wait_for(
-                lambda: node.state.get("mcu_state") not in (None, "ESTOPPED")
-                or "MCU ACİL DUR" in str(((api.robot() or {}).get("estop") or {}).get("reason")),
-                5.0,
-                0.05,
-            )
-            resets = []
-            for _ in range(40):
-                reset = api.post("/api/reset", {})
-                resets.append(reset[0] if reset else None)
-                if resets[-1] == 200:
-                    break
-                time.sleep(0.25)
-            timeline.append(f"{time.monotonic() - t0:+.2f}s reset={resets}")
-            ready, msg = node.recover()
-            time.sleep(1.5)
-            sampling.set()
-            sampler.join(1.0)
-            line = " ; ".join(timeline)
-            print(f"ÖLÇÜM {label}-kurtarma: ok={ready} | {msg} | {line}", flush=True)
-            record(f"{label} clear + home ile yeniden hazır", ready, f"{msg} | {line}")
+            operator_recover_impl(label, "clear + home ile yeniden hazır", api, node, record)
 
         moving_far("8a")
         gaps.reset()
