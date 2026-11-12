@@ -20,6 +20,9 @@ CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'kinematics', 'mode
                 'safezone', 'scenario', 'se3', 'skills', 'supervisor', 'targets', 'waypointapi', 'waypoints',
                 'webcmd']
 
+# robot_hw_bridge/__init__ bunları içe aktarır (ROS'suz). collect_submodules derleme anında pakete erişemediği için sayılır.
+HW_MODULES = ['codec', 'crc', 'host', 'protocol', 'sim', 'transport']
+
 try:
     import numpy  # noqa: F401  (derleme ortamında yoksa .exe sessizce eksik çıkmasın)
 except ImportError as exc:
@@ -32,7 +35,7 @@ hidden = (
     + collect_submodules('serial')           # ESP32 köprüsü: pyserial (Windows COM, socket:// vb. işleyiciler)
     + collect_submodules('control_hub')
     + collect_submodules('robot_agent')
-    + collect_submodules('robot_hw_bridge')
+    + ['robot_hw_bridge'] + ['robot_hw_bridge.' + m for m in HW_MODULES]      # KM3: tools/bench bunları içe aktarır
     + ['robot_core'] + ['robot_core.' + m for m in CORE_MODULES]
     # anahtar deposu: keyring arka uçlarını entry point (importlib.metadata) ile bulur -> dist-info gömülür,
     # Windows Credential Manager arka ucu (WinVaultKeyring) pywin32-ctypes (win32ctypes) ile çalışır
