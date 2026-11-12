@@ -27,7 +27,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 log = logging.getLogger('control_hub.bench')
-REPO = Path(__file__).resolve().parents[4]
 IDLE_TIMEOUT_S = 5.0
 MAX_MESSAGES = 40
 # Hub'ın kendi girdi süzgeci: bench.parse_amount'tan ÖNCE; "30", "-30", "5deg" (en çok 5 hane)
@@ -41,12 +40,21 @@ class BenchError(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+def bench_candidates(here: Path, frozen: Optional[str] = None) -> List[Path]:
+    """bench.py'nin olası yerleri. ``here`` bu dosyanın yolu: Docker imajında ``/app/control_hub/hw/...``
+    gibi sığ yollarda depo kökü YOKTUR (``parents[4]`` IndexError verirdi: Hub açılışta çökerdi)."""
+    out: List[Path] = []
+    if frozen:
+        out.append(Path(frozen) / 'tools' / 'bench' / 'bench.py')
+    parents = here.parents
+    if len(parents) > 4:
+        out.append(parents[4] / 'tools' / 'bench' / 'bench.py')
+    return out
+
+
 def load_bench_module() -> Any:
     """``tools/bench/bench.py``'yi yoldan yükler (paket değil). .exe'de ``sys._MEIPASS`` altında gömülü."""
-    here = [REPO / 'tools' / 'bench' / 'bench.py']
-    frozen = getattr(sys, '_MEIPASS', None)
-    if frozen:
-        here.insert(0, Path(frozen) / 'tools' / 'bench' / 'bench.py')
+    here = bench_candidates(Path(__file__).resolve(), getattr(sys, '_MEIPASS', None))
     for path in here:
         if path.is_file():
             spec = importlib.util.spec_from_file_location('k9_bench_tool', path)

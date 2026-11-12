@@ -344,3 +344,19 @@ def test_panel_logic_and_dom_flow_in_node():
     script = Path(__file__).parent / 'js' / 'bench_panel_check.js'
     r = subprocess.run(['node', str(script), str(web)], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and 'BENCH_PANEL_JS_OK' in r.stdout, r.stdout + r.stderr
+
+
+def test_shallow_install_path_does_not_break_import():
+    """Docker imajında Hub /app/control_hub/... altındadır (depo kökü yok): içe aktarma çökmemeli,
+    tezgâh aracı yoksa 503 ile net hata verilmeli. (CI Docker duman testini bu yakaladı.)"""
+    from pathlib import PurePosixPath
+
+    from control_hub.hw.bench_service import bench_candidates
+    assert bench_candidates(PurePosixPath('/app/control_hub/hw/bench_service.py')) == []   # type: ignore[arg-type]
+    deep = bench_candidates(PurePosixPath('/r/apps/control_hub/control_hub/hw/bench_service.py'))  # type: ignore[arg-type]
+    assert [str(p) for p in deep] == ['/r/tools/bench/bench.py']
+    svc = BenchService(enabled=True, serial_url='COM3', loader=lambda: (_ for _ in ()).throw(
+        BenchError(503, 'bench_unavailable', 'yok')))
+    with pytest.raises(BenchError) as e:
+        svc.open()
+    assert e.value.status == 503
