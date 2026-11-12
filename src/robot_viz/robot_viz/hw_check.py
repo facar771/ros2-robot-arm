@@ -453,9 +453,17 @@ def run(base: str, port: int) -> list:
             lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
         )
         record("8 düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
+        before = api.robot() or {}
         api.post("/api/reset", {})
         ready, msg = node.recover()
-        record("8 clear + home ile yeniden hazır", ready, msg)
+        after = api.robot() or {}
+        keys = ("state", "reason", "message")
+        record(
+            "8 clear + home ile yeniden hazır",
+            ready,
+            f"{msg} | API önce {({k: before.get(k) for k in keys})} sonra "
+            f"{({k: after.get(k) for k in keys})}",
+        )
 
         # ---- 9. node process frozen
         pids = subprocess.run(
