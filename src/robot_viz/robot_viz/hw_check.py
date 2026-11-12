@@ -448,16 +448,32 @@ def run(base: str, port: int) -> list:
                 lambda: node.state.get("link_ok") and node.state.get("homed") is False, 15.0, 0.2
             )
             record(f"{label} düğüm kendiliğinden yeniden bağlandı ve UNHOMED", bool(back))
-            before = api.robot() or {}
+            # N6b: what the Robot API's latch did around the reset (state + estop reason, with the
+            # time of every change), to see whether a late /api/stop from the bridge re-trips it.
+            t0 = time.monotonic()
+            timeline, last = [], None
+
+            def watch():
+                nonlocal last
+                robot = api.robot() or {}
+                now = (robot.get("state"), (robot.get("estop") or {}).get("reason"))
+                if now != last:
+                    timeline.append(f"{time.monotonic() - t0:+.2f}s {now[0]}/{now[1]}")
+                    last = now
+
+            watch()
             reset = api.post("/api/reset", {})
+            timeline.append(f"{time.monotonic() - t0:+.2f}s reset={reset[0] if reset else None}")
             ready, msg = node.recover()
-            after = api.robot() or {}
-            keys = ("state", "reason", "message")
+            end = time.monotonic() + 1.5
+            while time.monotonic() < end:
+                watch()
+                time.sleep(0.05)
+            print(f"ÖLÇÜM {label}-kurtarma: ok={ready} | {msg} | {' ; '.join(timeline)}", flush=True)
             record(
                 f"{label} clear + home ile yeniden hazır",
                 ready,
-                f"{msg} | reset={reset[0] if reset else None} | API önce "
-                f"{({k: before.get(k) for k in keys})} sonra {({k: after.get(k) for k in keys})}",
+                f"{msg} | {' ; '.join(timeline)}",
             )
 
         moving_far("8a")
