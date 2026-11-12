@@ -14,15 +14,15 @@ enum : uint8_t {
   T_HELLO = 0x81, T_STATUS = 0x82, T_ACK = 0x83, T_FAULT = 0x84
 };
 enum : uint8_t { S_UNHOMED = 0, S_HOMING = 1, S_HOMED = 2, S_ENABLED = 3, S_ESTOPPED = 4 };
-enum : uint8_t { R_NONE = 0, R_HOST_CMD = 2, R_WATCHDOG = 3 };
+enum : uint8_t { R_NONE = 0, R_HW_BUTTON = 1, R_HOST_CMD = 2, R_WATCHDOG = 3, R_BOOT = 7 };
 enum : uint8_t {
   RES_OK = 0, RES_BAD_STATE = 1, RES_BAD_ARG = 2, RES_LIMIT = 3, RES_NO_REFERENCE = 4,
   RES_ESTOP_ACTIVE = 5, RES_HW_LOOP_OPEN = 6, RES_BUSY = 7, RES_UNKNOWN_CMD = 8
 };
 enum : uint8_t { K_WATCHDOG_MS = 1, K_SOFT_MIN = 2, K_SOFT_MAX = 3, K_FOLLOW_STEPS = 4, K_FOLLOW_MS = 5 };
-enum : uint8_t { F_WATCHDOG = 2 };
-enum : uint16_t { SF_OPEN_LOOP_ANY = 0x0004, SF_HOST_LINK_OK = 0x0008 };
-enum : uint8_t { AF_OPEN_LOOP = 0x20 };
+enum : uint8_t { F_HW_ESTOP = 1, F_WATCHDOG = 2 };
+enum : uint16_t { SF_HW_LOOP_OPEN = 0x0001, SF_OPEN_LOOP_ANY = 0x0004, SF_HOST_LINK_OK = 0x0008, SF_BENCH_MODE = 0x0010 };
+enum : uint8_t { AF_MOVING = 0x01, AF_HOMED = 0x02, AF_ENABLED = 0x04, AF_OPEN_LOOP = 0x20 };
 enum : uint8_t { FLAG_AUTH = 0x01, FLAG_RETRY = 0x02 };
 
 static inline uint16_t rd16(const uint8_t* p) { return (uint16_t)(p[0] | (p[1] << 8)); }
@@ -43,6 +43,16 @@ void Mcu::begin(uint16_t bootCount, uint32_t now, TxSink sink, void* ctx) {
   nextStatus_ = now;
   state_ = S_UNHOMED;  // açılışta hareketsiz; Faz 1'de NC döngü girişi yok (bkz. FAZ0_PLAN)
   reason_ = R_NONE;
+#if K9_BENCH
+  if (hal_) {
+    benchAllOff();
+    if (!hal_->loopClosed()) {  // açılışta döngü açık / bağlı değil: kilitli başla
+      loopOpen_ = true;
+      state_ = S_ESTOPPED;
+      reason_ = R_BOOT;
+    }
+  }
+#endif
   for (uint8_t i = 0; i < K9_AXES; i++) {
     softMin_[i] = hardMin(i);
     softMax_[i] = hardMax(i);
@@ -140,6 +150,10 @@ uint8_t Mcu::runCommand(uint8_t type, const uint8_t* p, uint8_t plen, uint8_t* d
   if (type == T_ESTOP) { enterEstop(R_HOST_CMD, false, 255, 0); return RES_OK; }
   if (type == T_CLEAR) {
     if (state_ != S_ESTOPPED) return RES_OK;
+#if K9_BENCH
+    if (hal_ && (loopOpen_ || !hal_->loopClosed())) return RES_HW_LOOP_OPEN;  // döngü açıkken kilit AÇILMAZ
+    homedMask_ = enabledMask_ = 0;  // yeniden sıfırlama gerekir
+#endif
     // Faz 1: NC döngü girişi yok, kilit yalnız CLEAR ile açılır. Eksenler hiç referanslanmadı -> UNHOMED.
     reason_ = R_NONE;
     state_ = S_UNHOMED;
@@ -147,6 +161,9 @@ uint8_t Mcu::runCommand(uint8_t type, const uint8_t* p, uint8_t plen, uint8_t* d
     return RES_OK;
   }
   if (state_ == S_ESTOPPED) return RES_ESTOP_ACTIVE;
+#if K9_BENCH
+  if (hal_ && type != T_CONFIG) return benchCommand(type, p, detail);
+#endif
   switch (type) {
     case T_STOP:
       return RES_OK;  // hiçbir şey hareket etmiyor
@@ -213,19 +230,117 @@ void Mcu::watchdogCheck(uint32_t now) {
 void Mcu::enterEstop(uint8_t reason, bool fault, uint8_t axis, int32_t detail) {
   state_ = S_ESTOPPED;
   reason_ = reason;
-  // Faz 2'de burada sürücüler kesilir ve adım üretimi durur. Faz 1'de sürülen bir şey yok.
-  if (fault) sendFault(F_WATCHDOG, axis, detail);
+#if K9_BENCH
+  if (hal_) benchAllOff();  // adım üretimi durur, bobin/EN kapanır, kilitli; CLEAR + yeniden sıfır gerekir
+#endif
+  if (fault) sendFault(reason == R_HW_BUTTON ? F_HW_ESTOP : F_WATCHDOG, axis, detail);
   sendStatus();
 }
 
 void Mcu::poll(uint32_t now) {
   now_ = now;
+#if K9_BENCH
+  if (hal_) benchMonitorLoop(now);
+#endif
   watchdogCheck(now);
   if ((int32_t)(now - nextStatus_) >= 0) {
     sendStatus();
     nextStatus_ = now + K9_STATUS_PERIOD_MS;
   }
 }
+
+#if K9_BENCH
+// ---------------------------------------------------------------- tezgâh (Faz 2a)
+void Mcu::benchAllOff() {
+  for (uint8_t a = 0; a < K9_AXES; a++) {
+    if (!isBenchAxis(a)) continue;
+    hal_->halt(a);
+    hal_->power(a, false);
+  }
+  homedMask_ = 0;
+  enabledMask_ = 0;
+}
+
+// NC döngüsü: HIGH/bağlı değil = açık. 5 ms üst üste açık okunursa ESTOPPED/HW_BUTTON (yalnız gürültü süzgeci;
+// asıl koruma EN hattındaki donanımdır, HARDWARE.md §6).
+void Mcu::benchMonitorLoop(uint32_t now) {
+  if (hal_->loopClosed()) {
+    openPending_ = false;
+    loopOpen_ = false;
+    return;
+  }
+  if (!openPending_) {
+    openPending_ = true;
+    openT_ = now;
+    return;
+  }
+  if (!loopOpen_ && (uint32_t)(now - openT_) >= 5) {
+    loopOpen_ = true;
+    if (state_ != S_ESTOPPED) enterEstop(R_HW_BUTTON, true, 255, 0);
+  }
+}
+
+uint8_t Mcu::benchCommand(uint8_t type, const uint8_t* p, uint8_t* detail) {
+  switch (type) {
+    case T_STOP: {
+      uint8_t mask = p[2];
+      for (uint8_t a = 0; a < K9_AXES; a++)
+        if ((mask & (1u << a)) && isBenchAxis(a)) hal_->stop(a);
+      return RES_OK;
+    }
+    case T_HOME: {  // tezgâh sıfırı: durgun + DISABLED eksende mevcut konum 0 olur
+      if (state_ != S_UNHOMED && state_ != S_HOMED) return RES_BAD_STATE;
+      uint8_t mask = p[2];
+      if (mask == 0 || (mask & ~BENCH_MASK)) return RES_BAD_ARG;  // servo eksenleri bu derlemede yok
+      for (uint8_t a = 0; a < K9_AXES; a++)
+        if ((mask & (1u << a)) && hal_->moving(a)) return RES_BUSY;
+      for (uint8_t a = 0; a < K9_AXES; a++) {
+        if (!(mask & (1u << a))) continue;
+        hal_->setZero(a);
+        homedMask_ |= (uint8_t)(1u << a);
+      }
+      state_ = S_HOMED;
+      return RES_OK;
+    }
+    case T_ENABLE:
+      if (state_ == S_ENABLED) return RES_OK;
+      if (state_ != S_HOMED || homedMask_ == 0) return RES_NO_REFERENCE;  // sıfırlanmadan ENABLE yok
+      if (loopOpen_ || !hal_->loopClosed()) return RES_HW_LOOP_OPEN;
+      for (uint8_t a = 0; a < K9_AXES; a++)
+        if (homedMask_ & (1u << a)) hal_->power(a, true);  // yalnız sıfırlanan eksenler enerjilenir
+      enabledMask_ = homedMask_;
+      state_ = S_ENABLED;
+      return RES_OK;
+    case T_DISABLE:
+      if (state_ == S_HOMED) return RES_OK;
+      if (state_ != S_ENABLED) return RES_BAD_STATE;
+      for (uint8_t a = 0; a < K9_AXES; a++)
+        if (isBenchAxis(a) && hal_->moving(a)) return RES_BUSY;  // hareket ortasında kesmek adım kaybettirir: önce STOP
+      for (uint8_t a = 0; a < K9_AXES; a++)
+        if (isBenchAxis(a)) hal_->power(a, false);
+      enabledMask_ = 0;
+      state_ = S_HOMED;  // konum korunur (eksen durgundu); yeniden ENABLE mümkün
+      return RES_OK;
+    case T_MOVE: {
+      if (state_ != S_ENABLED) return RES_BAD_STATE;
+      uint8_t axis = p[2];
+      if (axis >= K9_AXES || !isBenchAxis(axis)) return RES_BAD_ARG;
+      if (!(enabledMask_ & (1u << axis))) return RES_BAD_STATE;
+      int32_t target = rd32(p + 3);
+      uint32_t vmax = (uint32_t)rd32(p + 7), accel = (uint32_t)rd32(p + 11);
+      if (vmax == 0 || accel == 0) return RES_BAD_ARG;
+      if (vmax > hardVmax(axis)) { *detail = 2; return RES_LIMIT; }    // gömülü hız sınırı
+      if (accel > hardAccel(axis)) { *detail = 3; return RES_LIMIT; }  // gömülü ivme sınırı
+      if (target < softMin_[axis] || target > softMax_[axis]) return RES_LIMIT;
+      if (hal_->moving(axis)) return RES_BUSY;  // önce STOP; hedef değiştirme yok
+      hal_->moveTo(axis, target, vmax, accel);
+      return RES_OK;
+    }
+    default:
+      return RES_UNKNOWN_CMD;
+  }
+}
+#endif
 
 // ---------------------------------------------------------------- gönderim
 void Mcu::sendFrame(uint8_t type, uint8_t plen) {
@@ -265,15 +380,29 @@ void Mcu::sendStatus() {
   uint8_t* p = txPayload();
   p[0] = state_;
   p[1] = reason_;
-  wr16(p + 2, (uint16_t)(SF_OPEN_LOOP_ANY | (linkOk_ ? (uint16_t)SF_HOST_LINK_OK : (uint16_t)0)));
+  uint16_t sf = (uint16_t)(SF_OPEN_LOOP_ANY | (linkOk_ ? (uint16_t)SF_HOST_LINK_OK : (uint16_t)0));
+#if K9_BENCH
+  sf = (uint16_t)(sf | SF_BENCH_MODE | (loopOpen_ ? (uint16_t)SF_HW_LOOP_OPEN : (uint16_t)0));
+#endif
+  wr16(p + 2, sf);
   wr32(p + 4, millisSince());
   wr16(p + 8, watchdogMs_);
   p[10] = K9_AXES;
   uint8_t o = 11;
   for (uint8_t i = 0; i < K9_AXES; i++) {  // konum = komut sayacı (kestirim), encoder yok
-    wr32(p + o, 0);
+    uint8_t af = AF_OPEN_LOOP;
+    int32_t pos = 0;
+#if K9_BENCH
+    if (hal_ && isBenchAxis(i)) {
+      pos = hal_->position(i);
+      if (hal_->moving(i)) af |= AF_MOVING;
+      if (homedMask_ & (1u << i)) af |= AF_HOMED;
+      if (enabledMask_ & (1u << i)) af |= AF_ENABLED;
+    }
+#endif
+    wr32(p + o, (uint32_t)pos);
     wr32(p + o + 4, 0);
-    p[o + 8] = AF_OPEN_LOOP;
+    p[o + 8] = af;
     o += 9;
   }
   sendFrame(T_STATUS, o);

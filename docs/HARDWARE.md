@@ -156,6 +156,10 @@ Eksen başına `encoder: none | incremental | absolute` (HELLO'da bildirilir).
   limit anahtarları.
 * **Following error:** encoder'lı eksende `|komut − ölçüm| > FOLLOW_ERR_STEPS` süre `FOLLOW_ERR_MS`'i aşarsa `ESTOPPED/FOLLOWING_ERROR` (varsayılan 200 adım / 100 ms).
 * **Limit anahtarı** homing dışında tetiklenirse `ESTOPPED/LIMIT_VIOLATION`. Yazılım limitleri (`SOFT_MIN/MAX`) hedefi **hareketten önce** reddeder (`LIMIT`).
+* **Tezgâh derlemesi (K9, Robot_1 onaylı; sahiplik istisnası: yalnız bu not ve `StatusFlag.BENCH_MODE`):** firmware `K9_BENCH=1` ile derlenirse `STATUS.flags` bit `0x0010 BENCH_MODE` yükselir.
+  Yukarıdaki "referanslanamayan eksen asla `HOMED` olamaz" kuralının **tek istisnası** budur: bu derlemede `HOME` = *tezgâh sıfırı* (durgun + `DISABLED` eksende mevcut konum 0, `HOMED`; bu bir
+  **referans değil kestirimdir**, `OPEN_LOOP` bayrağı kalır). Yalnız 3 step ekseni (J1, J2, J7), gömülü dar limit ve düşük hız, servo yok; yalnız yükten ayrık motor ve `tools/bench/` için.
+  `BENCH_MODE` gören üst katman bu hattı gerçek robot saymamalıdır (Robot API / `mode: real` bu bayrakla hareket vermemeli; öneri, bu PR'da uygulanmadı).
 
 ## 7a. Servo ekseni (K6b, HELLO proto 2)
 

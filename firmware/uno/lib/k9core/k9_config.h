@@ -1,15 +1,13 @@
-// K9 Faz 1: derleme zamanı sabitleri. HAREKET YOK.
+// K9: derleme zamanı sabitleri. Varsayılan derleme (K9_BENCH=0) HAREKETSİZDİR (Faz 1).
 // Bu dosya donanımdan bağımsızdır (Arduino başlığı yok): AVR'de ve bilgisayarda (host testi) aynı derlenir.
 #pragma once
 #include <stdint.h>
 
-// Hareket kodu Faz 2'dir ve Robot_1'in "tezgâh modu" kararı gelmeden AÇILMAZ.
-// Bu bayrak 1 yapılırsa derleme bilerek durur (hareket kodu henüz yok).
-#ifndef K9_MOTION
-#define K9_MOTION 0
-#endif
-#if K9_MOTION
-#error "K9_MOTION=1: step hareketi Faz 2'dir; Robot_1 tezgah modu karari gelmeden desteklenmez."
+// K9_BENCH=1: Faz 2a TEZGÂH derlemesi (Robot_1 kararı). YALNIZ 3 step ekseni (J1, J2: 28BYJ-48; J7: A4988) hareket eder,
+// motorlar yükten ayrık, operatör başında, güç kesmeye hazır. Servolar Faz 2b'dir (bu derlemede de sürülmez).
+// Bayraksız derleme bugünkü hareketsiz davranışı aynen korur (HOME/ENABLE -> NO_REFERENCE).
+#ifndef K9_BENCH
+#define K9_BENCH 0
 #endif
 
 // Eksen sayısı: tabandan uca 7 (1,2: 28BYJ-48; 3,4: SG90 çifti; 5,6: SG90; 7: A4988 kıskaç). docs: firmware/FAZ0_PLAN.md
@@ -30,9 +28,22 @@
 
 namespace k9 {
 
-// Gömülü (derleme zamanı) eksen limitleri, adım cinsinden. PC bunları GENİŞLETEMEZ, yalnız daraltabilir.
-// Faz 1'de hepsi 0..0: hiçbir hedef geçerli değil. Faz 2'de Ferhat'ın ölçümüyle ve Robot_1 kararıyla doldurulur.
+#if K9_BENCH
+// Tezgâh eksenleri (protokol eksen indeksi, 0 tabanlı): J1=0, J2=1, J7=6. Diğerleri (servo) bu derlemede YOKTUR.
+const uint8_t BENCH_MASK = 0x43;
+inline bool isBenchAxis(uint8_t a) { return a == 0 || a == 1 || a == 6; }
+
+// Gömülü (derleme zamanı) limitler, YARIM ADIM/ADIM cinsinden. PC bunları GENİŞLETEMEZ, yalnız daraltabilir.
+// J1,J2 (28BYJ-48 yarım adım): +-256, <=300 adım/sn, <=300 adım/sn^2.  J7 (A4988): +-50 adım, <=100 adım/sn.
+// J7 ivme sınırı Robot_1 mesajında verilmedi: ÖNERİLEN <=100 adım/sn^2 (onay bekliyor, bkz. PR).
+inline int32_t hardMin(uint8_t a) { return (a == 0 || a == 1) ? -256 : (a == 6 ? -50 : 0); }
+inline int32_t hardMax(uint8_t a) { return (a == 0 || a == 1) ? 256 : (a == 6 ? 50 : 0); }
+inline uint32_t hardVmax(uint8_t a) { return (a == 0 || a == 1) ? 300 : (a == 6 ? 100 : 0); }
+inline uint32_t hardAccel(uint8_t a) { return (a == 0 || a == 1) ? 300 : (a == 6 ? 100 : 0); }
+#else
+// Faz 1: hepsi 0..0, hiçbir hedef geçerli değil.
 inline int32_t hardMin(uint8_t /*axis*/) { return 0; }
 inline int32_t hardMax(uint8_t /*axis*/) { return 0; }
+#endif
 
 }  // namespace k9

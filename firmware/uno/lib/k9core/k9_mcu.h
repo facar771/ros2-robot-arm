@@ -1,9 +1,12 @@
-// K9 Faz 1: Uno tarafı protokol çekirdeği (HAREKETSİZ). Arduino başlığı kullanmaz; zaman ve bayt akışı dışarıdan verilir.
+// K9: Uno tarafı protokol çekirdeği. Varsayılan derleme HAREKETSİZ (Faz 1); K9_BENCH=1 tezgâh derlemesi (Faz 2a). Arduino başlığı kullanmaz; zaman ve bayt akışı dışarıdan verilir.
 // Davranış belirtimi: src/robot_hw_bridge/robot_hw_bridge/sim.py (Esp32Sim) ve docs/HARDWARE.md §3-§5.
 #pragma once
 #include <stdint.h>
 
 #include "k9_config.h"
+#if K9_BENCH
+#include "k9_bench.h"
+#endif
 
 namespace k9 {
 
@@ -19,6 +22,9 @@ class Mcu {
   void begin(uint16_t bootCount, uint32_t now, TxSink sink, void* ctx);
   void feed(uint8_t byte, uint32_t now);  // PC'den gelen her bayt
   void poll(uint32_t now);                // watchdog + 50 ms'lik STATUS
+#if K9_BENCH
+  void setHal(BenchHal* hal) { hal_ = hal; }  // begin()'den ÖNCE çağrılmalı
+#endif
   const Counters& counters() const { return cnt_; }
   uint8_t state() const { return state_; }
 
@@ -34,6 +40,11 @@ class Mcu {
   uint8_t doConfig(const uint8_t* p, uint8_t* detail);
   void watchdogCheck(uint32_t now);
   void enterEstop(uint8_t reason, bool fault, uint8_t axis, int32_t detail);
+#if K9_BENCH
+  uint8_t benchCommand(uint8_t type, const uint8_t* p, uint8_t* detail);
+  void benchMonitorLoop(uint32_t now);
+  void benchAllOff();
+#endif
   void sendHello();
   void sendStatus();
   void sendFault(uint8_t code, uint8_t axis, int32_t detail);
@@ -65,6 +76,12 @@ class Mcu {
   uint16_t bootCount_ = 0;
   int32_t softMin_[K9_AXES];
   int32_t softMax_[K9_AXES];
+#if K9_BENCH
+  BenchHal* hal_ = 0;
+  uint8_t homedMask_ = 0, enabledMask_ = 0;  // bit = protokol eksen indeksi
+  bool loopOpen_ = false, openPending_ = false;
+  uint32_t openT_ = 0;
+#endif
   // --- komut yanıt önbelleği (halka)
   struct CacheEntry { uint16_t id; uint8_t res, det; };
   CacheEntry cache_[K9_CACHE];

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from k9_hostlib import CORE, HERE, Dev, DriverTransport, build  # noqa: F401
 from robot_hw_bridge import cobs
 from robot_hw_bridge.codec import Frame, FrameDecoder, encode_frame
 from robot_hw_bridge.crc import crc16
@@ -18,76 +19,13 @@ from robot_hw_bridge.protocol import (
     Ack, ConfigKey, EstopReason, Fault, Hello, MsgType, Result, State, Status, StatusFlag, pack_cmd,
 )
 
-HERE = Path(__file__).resolve().parent
-CORE = HERE.parent / 'uno' / 'lib' / 'k9core'
 
 pytestmark = pytest.mark.skipif(shutil.which('g++') is None, reason='g++ yok')
 
 
 @pytest.fixture(scope='module')
 def binary(tmp_path_factory):
-    out = tmp_path_factory.mktemp('k9') / 'k9_host'
-    subprocess.run(['g++', '-std=c++11', '-Wall', '-Wextra', '-Werror', '-O1', '-DK9_HOST_TEST',
-                    f'-I{CORE}', str(HERE / 'k9_host_driver.cpp'), str(CORE / 'k9_mcu.cpp'),
-                    '-o', str(out)], check=True)
-    return out
-
-
-class Dev:
-    """Sürücü sürecini sarar; host gibi seq'li çerçeve üretir, MCU çıktısını çözer."""
-
-    def __init__(self, binary):
-        self.p = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self.tx_seq = 0
-        self.dec = FrameDecoder()
-        self.t = 0
-        self.cid = 0
-
-    def close(self):
-        self.p.stdin.close()
-        self.p.wait(5)
-
-    def _io(self, line):
-        self.p.stdin.write(line + '\n')
-        self.p.stdin.flush()
-        resp = self.p.stdout.readline().strip()
-        assert resp.startswith('O'), resp
-        return bytes.fromhex(resp[2:])
-
-    def raw(self, data: bytes):
-        return self.dec.feed(self._io('F ' + data.hex()))
-
-    def send(self, mtype, payload=b'', flags=0, seq=None):
-        if seq is None:
-            seq = self.tx_seq
-            self.tx_seq = (self.tx_seq + 1) & 0xFFFF
-        return self.raw(encode_frame(Frame(mtype, seq, 0, payload, flags)))
-
-    def at(self, ms):
-        self.t = ms
-        return self.dec.feed(self._io(f'T {ms}'))
-
-    def counters(self):
-        self.p.stdin.write('S\n')
-        self.p.stdin.flush()
-        line = self.p.stdout.readline().strip()
-        assert line.startswith('C ')
-        return {k: int(v) for k, v in (kv.split('=') for kv in line[2:].split())}
-
-    def cmd(self, mtype, **kw):
-        self.cid += 1
-        frames = self.send(mtype, pack_cmd(mtype, self.cid, **kw))
-        return frames, self.cid
-
-    def result(self, mtype, **kw):
-        frames, cid = self.cmd(mtype, **kw)
-        acks = [Ack.unpack(f.payload) for f in frames if f.type == MsgType.ACK]
-        assert len(acks) == 1 and acks[0].cmd_id == cid, frames
-        return acks[0]
-
-    def status(self, frames):
-        sts = [Status.unpack(f.payload) for f in frames if f.type == MsgType.STATUS]
-        return sts[-1] if sts else None
+    return build(tmp_path_factory.mktemp('k9') / 'k9_host')
 
 
 @pytest.fixture
@@ -308,49 +246,6 @@ import sys  # noqa: E402
 
 from robot_hw_bridge.host import HwLink  # noqa: E402
 from robot_hw_bridge.transport import TransportClosed  # noqa: E402
-
-
-class DriverTransport:
-    """HwLink'in Transport'u: gerçek zamanı sürücünün sanal saatine çevirir (seri hat gibi)."""
-
-    def __init__(self, binary):
-        self.p = subprocess.Popen([str(binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
-        self.lock = threading.Lock()
-        self.t0 = time.monotonic()
-        self.closed = False
-
-    def _ms(self):
-        return int((time.monotonic() - self.t0) * 1000)
-
-    def _io(self, line):
-        self.p.stdin.write(line + '\n')
-        self.p.stdin.flush()
-        return bytes.fromhex(self.p.stdout.readline().strip()[2:])
-
-    def send(self, data):
-        with self.lock:
-            if self.closed:
-                raise TransportClosed('kapalı')
-            self._io(f'N {self._ms()}')
-            self.pending = getattr(self, 'pending', b'') + self._io('F ' + data.hex())
-
-    def recv(self, max_bytes, timeout):
-        time.sleep(0.01)
-        with self.lock:
-            if self.closed:
-                raise TransportClosed('kapalı')
-            out = getattr(self, 'pending', b'') + self._io(f'T {self._ms()}')
-            self.pending = b''
-        return out[:max_bytes] if out else b''
-
-    def close(self):
-        with self.lock:
-            self.closed = True
-        try:
-            self.p.stdin.close()
-            self.p.wait(2)
-        except Exception:  # noqa: BLE001
-            pass
 
 
 def test_real_hwlink_against_core(binary):
