@@ -106,7 +106,7 @@ jobs:
           $rc = $LASTEXITCODE
           Note "check-config rc=$rc" $out ($(if ($rc -eq 0) { 'notice' } else { 'error' }))
           if ($rc -ne 0) { exit 1 }
-          # KM3: tools/bench/bench.py ve robot_hw_bridge .exe'ye gömülü mü? (donanım açılmaz; yalnız yükleme denenir)
+          # KM3: tools/bench/bench_core.py ve robot_hw_bridge .exe'ye gömülü mü? (yalnız yükleme; donanım açılmaz)
           $out = & $exe --fake --check-config --pin 123456 --bench --bench-port COM1 2>&1
           $rc = $LASTEXITCODE
           Note "check-config --bench rc=$rc" $out ($(if ($rc -eq 0) { 'notice' } else { 'error' }))

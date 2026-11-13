@@ -178,9 +178,16 @@ def _attach_bench(hub: Hub, args: argparse.Namespace) -> None:
     if args.check_config:        # .exe'de tools/bench + robot_hw_bridge gömülü mü?
         from control_hub.hw.bench_service import load_bench_module
         try:
-            load_bench_module()
+            mod = load_bench_module()
         except BenchError as exc:
             raise ValueError(exc.message) from exc
+        need = ('Bench', 'AXES', 'HwLink', 'SerialTransport', 'StatusFlag')
+        missing = [n for n in need if not hasattr(mod, n)]
+        if missing:
+            raise ValueError(f'bench_core eksik: {missing}')
+        frozen = getattr(sys, '_MEIPASS', None)       # .exe: modül gömülü kopyadan yüklenmiş olmalı
+        if frozen and Path(mod.__file__).resolve().parent.parent.parent != Path(frozen).resolve():
+            raise ValueError(f'bench_core gömülü yoldan yüklenmedi: {mod.__file__}')
     hub.attach_bench(BenchService(
         enabled=True, serial_url=args.bench_port, baud=args.bench_baud,
         bridge_active=lambda: hub.bridge is not None,

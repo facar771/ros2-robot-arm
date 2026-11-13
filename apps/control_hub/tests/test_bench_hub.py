@@ -1,5 +1,5 @@
 """KM3: Hub "Tezgâh" (tools/bench mantığı Hub'dan). BenchSim (sim'de BENCH_MODE) + gerçek
-tools/bench/bench.py + HwLink. GERÇEK Uno/motor/COM yok: doğrulanan, kapıların ve çıkış davranışının Hub
+tools/bench/bench_core.py + HwLink. GERÇEK Uno/motor/COM yok: doğrulanan, kapıların ve çıkış davranışının Hub
 tarafı ile simülatör anlamlarıdır."""
 import threading
 import time
@@ -354,9 +354,28 @@ def test_shallow_install_path_does_not_break_import():
     from control_hub.hw.bench_service import bench_candidates
     assert bench_candidates(PurePosixPath('/app/control_hub/hw/bench_service.py')) == []   # type: ignore[arg-type]
     deep = bench_candidates(PurePosixPath('/r/apps/control_hub/control_hub/hw/bench_service.py'))  # type: ignore[arg-type]
-    assert [str(p) for p in deep] == ['/r/tools/bench/bench.py']
+    assert [str(p) for p in deep] == ['/r/tools/bench/bench_core.py']
     svc = BenchService(enabled=True, serial_url='COM3', loader=lambda: (_ for _ in ()).throw(
         BenchError(503, 'bench_unavailable', 'yok')))
     with pytest.raises(BenchError) as e:
         svc.open()
     assert e.value.status == 503
+
+
+def test_only_a_controlling_session_refreshes_liveness(web, scenarios, ui):
+    """GET /api/bench canlılık tazeler YALNIZ denetim yetkili oturumdan; salt izleyici (locked kipi)
+    sürücü sekmesi kapandığında Tezgâh'ı ayakta tutamaz."""
+    c, hub, r = web
+    login(c)
+    r.now[0] = 100.0
+    assert c.get('/api/bench').status_code == 200
+    assert r.svc._seen == 100.0                                        # oturumlu: tazelendi
+    hub2 = make_hub(scenarios, ui, mode='locked')
+    r2 = Rig()
+    hub2.attach_bench(r2.svc)
+    v = TestClient(create_app(hub2), base_url='http://localhost')
+    r2.now[0] = 100.0
+    assert v.get('/api/bench').status_code == 200                      # izleyici görebilir
+    assert r2.svc._seen == 0.0                                         # ama tazeleyemez
+    hub2.close()
+    r2.runner.stop()

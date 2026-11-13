@@ -1,10 +1,10 @@
-"""Hub "Tezgâh" (KM3): ``tools/bench/bench.py`` mantığını Hub'dan sürer. GERÇEK ROBOT DEĞİL.
+"""Hub "Tezgâh" (KM3): ``tools/bench/bench_core.py`` mantığını Hub'dan sürer. GERÇEK ROBOT DEĞİL.
 
 Kurallar (Robot_1, tezgâh modu; docs/YOL_HARITASI.md K9):
 
 * **Yeniden kullanım, kopya yok:** kapılar (BENCH_MODE, döngü, durum), eksen limitleri, ilk-hareket sınırı ve
-  mesajlar ``tools/bench/bench.py``'daki ``Bench`` sınıfından gelir; bu modül yalnızca onu sarar (ağ üstünden
-  çağrılabilir yapar, konsol ``ask`` yerine onay kutusu verir). Hub limitleri GENİŞLETEMEZ: ``Bench`` ve
+  mesajlar ``tools/bench/bench_core.py``'daki ``Bench`` sınıfından gelir; bu modül yalnızca onu sarar
+  (ağ üstünden çağrılabilir yapar, konsol ``ask`` yerine onay kutusu verir). Hub limitleri GENİŞLETEMEZ: ``Bench`` ve
   firmware aynen uygular. Hub'ın eklediği tek şey **daha dar** kapılardır (varsayılan kapalı, PIN kipi,
   köprü açıkken ret, girdi doğrulama).
 * **COM tek sahipli:** ESP32 köprüsü (``hw.SerialTcpBridge``) açıkken Tezgâh açılmaz (net mesaj); Tezgâh
@@ -41,29 +41,29 @@ class BenchError(Exception):
 
 
 def bench_candidates(here: Path, frozen: Optional[str] = None) -> List[Path]:
-    """bench.py'nin olası yerleri. ``here`` bu dosyanın yolu: Docker imajında ``/app/control_hub/hw/...``
+    """bench_core.py'nin olası yerleri. ``here`` bu dosyanın yolu: Docker imajında ``/app/control_hub/hw/...``
     gibi sığ yollarda depo kökü YOKTUR (``parents[4]`` IndexError verirdi: Hub açılışta çökerdi)."""
     out: List[Path] = []
     if frozen:
-        out.append(Path(frozen) / 'tools' / 'bench' / 'bench.py')
+        out.append(Path(frozen) / 'tools' / 'bench' / 'bench_core.py')
     parents = here.parents
     if len(parents) > 4:
-        out.append(parents[4] / 'tools' / 'bench' / 'bench.py')
+        out.append(parents[4] / 'tools' / 'bench' / 'bench_core.py')
     return out
 
 
 def load_bench_module() -> Any:
-    """``tools/bench/bench.py``'yi yoldan yükler (paket değil). .exe'de ``sys._MEIPASS`` altında gömülü."""
+    """``tools/bench/bench_core.py``'yi (CLI'sız mantık) yoldan yükler; .exe'de ``sys._MEIPASS`` altında."""
     here = bench_candidates(Path(__file__).resolve(), getattr(sys, '_MEIPASS', None))
     for path in here:
         if path.is_file():
-            spec = importlib.util.spec_from_file_location('k9_bench_tool', path)
+            spec = importlib.util.spec_from_file_location('bench_core', path)
             assert spec and spec.loader
             mod = importlib.util.module_from_spec(spec)
-            sys.modules['k9_bench_tool'] = mod
+            sys.modules['bench_core'] = mod
             spec.loader.exec_module(mod)
             return mod
-    raise BenchError(503, 'bench_unavailable', 'Tezgâh aracı (tools/bench/bench.py) bu kurulumda yok')
+    raise BenchError(503, 'bench_unavailable', 'Tezgâh aracı (tools/bench/bench_core.py) bu kurulumda yok')
 
 
 class BenchService:

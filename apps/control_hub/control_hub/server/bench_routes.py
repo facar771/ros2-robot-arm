@@ -2,7 +2,8 @@
 
 * Varsayılan KAPALI (Hub ayarı); açık olsa da **yalnız ``pin`` erişim kipinde** ve geçerli oturumla çalışır
   (``open`` kipinde PIN olmaz: reddedilir; ``locked`` salt okunur: reddedilir).
-* ``GET /api/bench`` durum + (arayüz sorgusu = canlılık işareti); ``POST /api/bench/open|close|command``.
+* ``GET /api/bench`` durum; oturumlu arayüz sorgusu canlılık işaretidir (izleyici tazelemez).
+  ``POST /api/bench/open|close|command`` denetim ister.
 * ``POST /api/bench/estop`` oturum ve kilit denetiminin DIŞINDADIR (``/api/estop`` gibi): durdurmayı
   engellemek durdurmaktan daha tehlikelidir. Hub genel ACİL DUR'u da tezgâhı durdurur (dinleyici).
 """
@@ -44,6 +45,13 @@ def install_bench_routes(app: FastAPI, hub, *, need_view: Callable, need_control
                             f'şu an kip: {hub.access.mode}')
         return svc()
 
+    def _controls(request: Request) -> bool:
+        try:
+            need_control(request)
+        except Exception:                             # noqa: BLE001 - ApiError: yetkisiz/izleyici
+            return False
+        return hub.access.mode == 'pin'
+
     async def run(fn, *a):
         try:
             return await asyncio.to_thread(fn, *a)
@@ -54,7 +62,8 @@ def install_bench_routes(app: FastAPI, hub, *, need_view: Callable, need_control
     async def bench_info(request: Request):
         need_view(request)
         b = svc()
-        b.touch()
+        if _controls(request):        # yalnız denetim yetkili OTURUM canlılığı tazeler;
+            b.touch()                 # salt izleyici (locked kipi) sürücü sekmesini ayakta tutamaz
         return {'ok': True, **b.info()}
 
     @app.post('/api/bench/open')
