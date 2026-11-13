@@ -248,3 +248,23 @@ def test_limits_match_firmware_config():
     assert (bench.AXES['j7'].lo, bench.AXES['j7'].hi, bench.AXES['j7'].vmax, bench.AXES['j7'].accel) == (-50, 50, 100, 100)
     assert all(a.def_vmax < a.vmax and a.def_accel < a.accel for a in bench.AXES.values())
     assert [a.idx for a in bench.AXES.values()] == [0, 1, 6]
+
+
+def test_core_is_importable_and_cli_reexports_same_objects():
+    """Hub (Robot_4) çekirdeği içe aktarır; CLI aynı nesneleri sunar (arayüz sabit)."""
+    import bench_core
+    for name in ('Bench', 'AXES', 'Axis', 'SerialTransport', 'parse_amount', 'first_move_cap', 'CONFIRM',
+                 'BENCH_MASK', 'FIRST_MOVE_DEG'):
+        assert getattr(bench, name) is getattr(bench_core, name)
+    assert callable(bench.main) and not hasattr(bench_core, 'main')
+
+
+def test_core_importable_as_namespace_package_from_repo_root():
+    import subprocess
+    root = HERE.parents[1]
+    out = subprocess.run([sys.executable, '-I', '-c',
+                          'import sys; sys.path.insert(0, %r); import tools.bench.bench_core as c; '
+                          'print(sorted(c.AXES), c.CONFIRM)' % str(root)],
+                         capture_output=True, text=True, cwd='/tmp')
+    assert out.returncode == 0, out.stderr
+    assert "['j1', 'j2', 'j7'] EVET" in out.stdout
