@@ -4,7 +4,8 @@ Kurallar (Robot_1, tezgâh modu; docs/YOL_HARITASI.md K9):
 
 * **Yeniden kullanım, kopya yok:** kapılar (BENCH_MODE, döngü, durum), eksen limitleri, ilk-hareket sınırı ve
   mesajlar ``tools/bench/bench_core.py``'daki ``Bench`` sınıfından gelir; bu modül yalnızca onu sarar
-  (ağ üstünden çağrılabilir yapar, konsol ``ask`` yerine onay kutusu verir). Hub limitleri GENİŞLETEMEZ: ``Bench`` ve
+  (ağ üstünden çağrılabilir yapar, konsol ``ask`` yerine onay kutusu verir).
+  Hub limitleri GENİŞLETEMEZ: ``Bench`` ve
   firmware aynen uygular. Hub'ın eklediği tek şey **daha dar** kapılardır (varsayılan kapalı, PIN kipi,
   köprü açıkken ret, girdi doğrulama).
 * **COM tek sahipli:** ESP32 köprüsü (``hw.SerialTcpBridge``) açıkken Tezgâh açılmaz (net mesaj); Tezgâh
