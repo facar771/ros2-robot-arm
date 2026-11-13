@@ -85,6 +85,7 @@ class HwBridgeNode(Node):
             self.relay = EstopRelay(RobotApiClient(url), hw_estop=self.bridge.estop,
                                     hw_stop=self.bridge.stop,
                                     moving=lambda: self.bridge.executing).start()
+            self.bridge.api_reset_since = self.relay.reset_since
         ticks = MutuallyExclusiveCallbackGroup()
         work = ReentrantCallbackGroup()
         jog_group = MutuallyExclusiveCallbackGroup()

@@ -111,6 +111,10 @@ class HwBridge:
         self._homed_ok = False
         self._estop_seen = False
         self._link_lost = False
+        self._known_good_at: Optional[float] = None   # MCU'nun ESTOPPED OLMADIĞI son görülme anı
+        # Robot API ``t`` anından sonra reset edildi mi (EstopRelay.reset_since); düğüm bağlar
+        self.api_reset_since: Optional[Callable[[float], bool]] = None
+        self.stale_estops: List[str] = []             # bildirilmeyen, reset'ten ESKİ MCU acil durları
         self.fault: Optional[str] = None
         self.reports: List[str] = []              # acil dur nedenleri (Robot API'ye iletilenler)
         self._tick: Optional[float] = None
@@ -135,6 +139,7 @@ class HwBridge:
         now = self._clock()
         q = self._joints_from(st)
         with self._lock:
+            first_of_session = self._status is None
             if self._prev is not None and q is not None:
                 dt = now - self._prev[0]
                 if dt > 0.005:
@@ -145,11 +150,28 @@ class HwBridge:
             self._status = st
             if st.state == State.ESTOPPED and not self._estop_seen:
                 self._estop_seen = True
-                self._invalidate(f'MCU ACİL DUR ({st.reason.name})')
+                reason = f'MCU ACİL DUR ({st.reason.name})'
+                if first_of_session and self._reset_after_last_good():
+                    # Bu oturumun İLK durumu zaten ESTOPPED: olay, hat koptuğu sırada oldu ve operatör
+                    # Robot API'yi o zamandan sonra reset etti. Yeni bir olay gibi bildirmek reset'i ezerdi.
+                    # Yerel güvenlik aynı (homed silinir, yörünge kesilir, clear + homing gerekir).
+                    self.stale_estops.append(reason)
+                    self._invalidate(reason, report=False)
+                else:
+                    self._invalidate(reason)
             elif st.state != State.ESTOPPED:
                 self._estop_seen = False
+                self._known_good_at = now
             if st.state == State.UNHOMED:
                 self._homed_ok = False
+
+    def _reset_after_last_good(self) -> bool:
+        if self._known_good_at is None or self.api_reset_since is None:
+            return False
+        try:
+            return bool(self.api_reset_since(self._known_good_at))
+        except Exception:                                  # noqa: BLE001 - şüphede bildir (güvenli yön)
+            return False
 
     def on_fault(self, fault: Fault) -> None:
         self._invalidate(f'MCU FAULT {fault.code.name} eksen={fault.axis}', report=False)

@@ -75,6 +75,7 @@ class EstopRelay:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._was_tripped = False
+        self._last_reset_at: Optional[float] = None
         self._last_ok: Optional[float] = None
         self._api_lost_acted = False
         self.delivered: list = []
@@ -93,6 +94,12 @@ class EstopRelay:
         """ESP32 tarafı bir sorun gördü: Robot API'yi durdur (yeniden denenir)."""
         with self._lock:
             self._pending.append((reason, self._clock()))
+
+    def reset_since(self, t: float) -> bool:
+        """Operatör Robot API'yi ``t`` anından (``clock`` ile aynı saat) SONRA reset etti mi? Gözlem poll_s
+        aralığıyla yapılır; kaçan bir reset ``False`` verir (eski davranış: bildir, yani güvenli yön)."""
+        with self._lock:
+            return self._last_reset_at is not None and self._last_reset_at >= t
 
     def _run(self) -> None:
         while not self._stop.wait(self.poll_s):
@@ -128,4 +135,7 @@ class EstopRelay:
         self._last_ok, self._api_lost_acted = now, False
         if tripped and not self._was_tripped:
             self._hw_estop('robot API acil dur')
+        if self._was_tripped and not tripped:
+            with self._lock:
+                self._last_reset_at = now
         self._was_tripped = tripped

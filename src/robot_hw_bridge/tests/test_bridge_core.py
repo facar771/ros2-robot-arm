@@ -494,7 +494,7 @@ def _wait(pred, timeout=5.0):
 def _lost_cable_and_operator_reset(api, relay):
     """Kablo çıkar -> MCU watchdog'u ESTOPPED -> köprü API'yi durdurur -> operatör API'yi reset eder."""
     r = TcpRig(relay.report)
-    r.bridge.api_reset_since = getattr(relay, 'reset_since', None)
+    r.bridge.api_reset_since = relay.reset_since
     ok, msg = r.bridge.configure()
     assert ok, msg
     ok, msg = r.bridge.home()
