@@ -118,6 +118,11 @@ def first_move_cap(ax: Axis) -> int:
 
 
 class Bench:
+    """Dönüş değerleri (Hub/Robot_4 için): zero/enable/disable/stop/clear -> True = firmware komutu KABUL etti (ACK OK);
+    move -> True = hedefe VARILDI (kabul + varış); False = reddedildi / kapıya takıldı / zaman aşımı / hat koptu /
+    kilitlendi / Ctrl-C. Reddedilen komut hiç gönderilmemiş olabilir; ayrıntı `say` çıktısındadır. Bilinmeyen eksen adı
+    ValueError fırlatır (eskisi gibi). estop ACK beklemez, dönüş değeri yok."""
+
     def __init__(self, link: HwLink, say: Callable[[str], None] = print,
                  ask: Callable[[str], str] = input, j7_spr: Optional[int] = None):
         self.link, self.say, self.ask = link, say, ask
@@ -179,102 +184,106 @@ class Bench:
             deg = f' ≈ {a.pos * 360.0 / ax.spr:.1f}°' if ax.spr else ''
             self.say(f'  {ax.name.upper()}: konum {a.pos} adım{deg} (KESTİRİM, enkoder yok)  [{", ".join(flags) or "-"}]')
 
-    def zero(self, name: str) -> None:
+    def zero(self, name: str) -> bool:
         ax = self._axis(name)
         st = self._need_bench()
         if st is None:
-            return
+            return False
         if st.state not in (State.UNHOMED, State.HOMED):
             self.say(f'REDDEDİLDİ: durum {st.state.name}; sıfırlama yalnız UNHOMED/HOMED iken (ESTOPPED: clear; ENABLED: disable). Komut gönderilmedi.')
-            return
+            return False
         if st.axes[ax.idx].moving:
             self.say('REDDEDİLDİ: eksen hareket ediyor. Komut gönderilmedi.')
-            return
+            return False
         self.say(f'{ax.name.upper()} tezgâh sıfırı: mevcut konum 0 sayılacak. Bu bir referans DEĞİL, yalnız başlangıç noktasıdır.')
         if self.ask(f'motor yükten ayrık, güç kesmeye hazırım: {CONFIRM} yaz > ').strip() != CONFIRM:
             self.say('Onay verilmedi. Komut gönderilmedi.')
-            return
-        self._report(f'zero {ax.name}', self.link.home(mask=1 << ax.idx))
+            return False
+        return self._report(f'zero {ax.name}', self.link.home(mask=1 << ax.idx))
 
-    def enable(self) -> None:
+    def enable(self) -> bool:
         st = self._need_bench()
         if st is None:
-            return
+            return False
         if st.state != State.HOMED and st.state != State.ENABLED:
             self.say(f'REDDEDİLDİ: durum {st.state.name}; önce zero. Komut gönderilmedi.')
-            return
-        if self._report('enable', self.link.enable()):
-            self.say('  yalnız sıfırlanan eksenler enerjilendi (bobinler tutuyor, ısınabilir).')
+            return False
+        if not self._report('enable', self.link.enable()):
+            return False
+        self.say('  yalnız sıfırlanan eksenler enerjilendi (bobinler tutuyor, ısınabilir).')
+        return True
 
-    def move(self, name: str, amount: str) -> None:
+    def move(self, name: str, amount: str) -> bool:
         ax = self._axis(name)
         st = self._need_bench()
         if st is None:
-            return
+            return False
         if st.state != State.ENABLED or not st.axes[ax.idx].enabled:
             self.say(f'REDDEDİLDİ: {ax.name.upper()} enerjili değil (durum {st.state.name}); zero + enable gerekir. Komut gönderilmedi.')
-            return
+            return False
         if st.axes[ax.idx].moving:
             self.say('REDDEDİLDİ: eksen hareket ediyor; önce stop. Komut gönderilmedi.')
-            return
+            return False
         try:
             delta = parse_amount(amount, ax)
         except ValueError as exc:
             self.say(f'REDDEDİLDİ: {exc}')
-            return
+            return False
         if delta == 0:
             self.say('REDDEDİLDİ: 0 adım.')
-            return
+            return False
         target = st.axes[ax.idx].pos + delta
         if not ax.lo <= target <= ax.hi:
             self.say(f'REDDEDİLDİ: hedef {target} adım, sınır {ax.lo}..{ax.hi} (firmware ile aynı). Komut gönderilmedi.')
-            return
+            return False
         cap = first_move_cap(ax)
         if ax.idx not in self._moved and abs(delta) > cap:
             self.say(f'REDDEDİLDİ: bu oturumda {ax.name.upper()} ilk hareketi en çok {cap} adım '
                      f'(' + (f'{FIRST_MOVE_DEG:g}°' if ax.spr else 'adım/devir bilinmiyor') + f'); {abs(delta)} istendi. Komut gönderilmedi.')
-            return
+            return False
         if not self._report(f'move {ax.name} {delta:+d} adım -> hedef {target}',
                             self.link.move(ax.idx, target, ax.def_vmax, ax.def_accel)):
-            return
+            return False
         self._moved.add(ax.idx)
-        self._wait_done(ax, target, abs(delta))
+        return self._wait_done(ax, target, abs(delta))
 
-    def _wait_done(self, ax: Axis, target: int, dist: int) -> None:
+    def _wait_done(self, ax: Axis, target: int, dist: int) -> bool:
         end = time.monotonic() + dist / ax.def_vmax + 2.0 * ax.def_vmax / ax.def_accel + 3.0
         try:
             while time.monotonic() < end:
                 st = self._status()
                 if st is None:
                     self.say('  hat koptu; firmware watchdog 300 ms içinde keser.')
-                    return
+                    return False
                 if st.state != State.ENABLED:
                     self.say(f'  durum {st.state.name} (neden {st.reason.name}): hareket kesildi, konum kestirimdir.')
-                    return
+                    return False
                 a = st.axes[ax.idx]
                 if not a.moving and a.pos == target:
                     self.say(f'  vardı: konum {a.pos} adım (KESTİRİM).')
-                    return
+                    return True
                 time.sleep(0.02)
             self.say('  zaman aşımı: hedefe varış görülmedi; status bak, gerekirse stop/estop.')
+            return False
         except KeyboardInterrupt:
             self.stop(None)
             self.say('  Ctrl-C: stop gönderildi.')
+            return False
 
-    def stop(self, name: Optional[str]) -> None:
+    def stop(self, name: Optional[str]) -> bool:
         """Güvenlik komutu: kapıya takılmaz (hat varsa her zaman gider)."""
         mask = BENCH_MASK if not name else 1 << self._axis(name).idx
-        self._report('stop', self.link.stop_axes(mask=mask))
+        return self._report('stop', self.link.stop_axes(mask=mask))
 
     def estop(self) -> None:
         self.link.estop()
         self.say('ESTOP 3 kez gönderildi (ACK beklenmez). Kilidi açmak için: clear, sonra zero.')
 
-    def clear(self) -> None:
-        self._report('clear', self.link.clear())
+    def clear(self) -> bool:
+        return self._report('clear', self.link.clear())
 
-    def disable(self) -> None:
-        self._report('disable', self.link.disable())
+    def disable(self) -> bool:
+        return self._report('disable', self.link.disable())
 
     def close(self) -> None:
         """Çıkış/hata: hareketi durdur, DISABLE gönder; olmazsa hattı keserek watchdog'a bırak. Her zaman HwLink'i durdurur."""
