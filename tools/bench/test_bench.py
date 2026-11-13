@@ -268,3 +268,43 @@ def test_core_importable_as_namespace_package_from_repo_root():
                          capture_output=True, text=True, cwd='/tmp')
     assert out.returncode == 0, out.stderr
     assert "['j1', 'j2', 'j7'] EVET" in out.stdout
+
+
+def test_methods_return_bool_success(s):
+    """Hub (Robot_4) sözleşmesi: kabul/varış -> True; ret, kapı, onay yok -> False. Çıktı metinleri değişmez."""
+    assert s.b.enable() is False                                    # sıfırlanmadı
+    assert s.b.move('j1', '5') is False                             # enerjili değil
+    assert s.b.zero('j1') is True
+    assert s.b.enable() is True
+    s.wait_state(State.ENABLED)
+    assert s.b.move('j1', '57') is False and s.pos(0) == 0          # ilk hareket tavanı (56)
+    assert s.b.move('j1', '20') is True and s.pos(0) == 20          # kabul + varış
+    assert s.b.move('j1', '300') is False and s.pos(0) == 20        # host limiti
+    assert s.b.move('j1', '0') is False
+    assert s.b.stop(None) is True and s.b.stop('j1') is True
+    with pytest.raises(ValueError):
+        s.b.move('j9', '5')                                         # bilinmeyen eksen: eskisi gibi istisna
+    assert s.b.disable() is True
+    assert s.b.move('j1', '5') is False                             # disable sonrası
+    s.b.link.estop()
+    s.wait_state(State.ESTOPPED)
+    assert s.b.zero('j1') is False                                  # kilitli
+    assert s.b.clear() is True
+    s.wait_state(State.UNHOMED)
+
+
+def test_zero_without_confirmation_returns_false(bench_bin):
+    x = Session(bench_bin, answer='hayır')
+    try:
+        assert x.b.zero('j1') is False and not x.link.status.axes[0].homed
+    finally:
+        x.done()
+
+
+def test_bool_returns_on_plain_firmware_gate(plain_bin):
+    x = Session(plain_bin)
+    try:
+        assert x.b.zero('j1') is False and x.b.enable() is False and x.b.move('j1', '5') is False
+        assert x.b.stop(None) is True                                   # güvenlik komutu kapıya takılmaz
+    finally:
+        x.done()
