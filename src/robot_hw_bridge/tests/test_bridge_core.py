@@ -443,3 +443,109 @@ def test_heartbeat_keeps_going_at_20_hz_or_faster_without_any_setpoint():
         assert rig.link.stats.tx_frames - before >= 15       # idle: heartbeats only (test link: 20 ms)
     finally:
         rig.close()
+
+
+# ---- eski MCU durumu, operatörün API reset'inden sonra yeniden bildirilmemeli ---------------------
+class TcpRig:
+    """Gerçek MCU gibi: hat kopsa da simülatör çalışır (SimServer); düğüm gibi yeniden bağlanılır."""
+
+    def __init__(self, on_estop):
+        from robot_hw_bridge import SimServer, SocketTransport
+        self._tcp = SocketTransport
+        self.hw, self.robot = profiles()
+        self.sim = Esp32Sim(sim_axes())
+        self.srv = SimServer(self.sim).start()
+        self.bridge = HwBridge(self.hw, self.robot, BridgeConfig(), on_estop=on_estop)
+        self.link, self.seq = None, 0
+        self.connect()
+
+    def connect(self):
+        b = self.bridge
+        self.link = HwLink(self._tcp('127.0.0.1', self.srv.port), heartbeat_s=0.02, link_timeout_s=0.25,
+                           ack_timeout_s=0.1, on_status=b.on_status, on_fault=b.on_fault,
+                           on_link_lost=b.on_link_lost, on_link_up=b.on_link_up, initial_seq=self.seq)
+        b.attach(self.link)
+        self.link.start()
+
+    def reconnect(self):
+        self.seq = self.link.next_seq                        # node.py gibi: MCU geri giden seq'i atar
+        self.link.stop()
+        self.connect()
+        self.bridge.configure(wait_s=5.0)                    # düğüm gibi; ESTOPPED'da reddi beklenir
+
+    def mcu(self):
+        return self.bridge.state_doc()['mcu_state']
+
+    def close(self):
+        self.bridge.close()
+        self.link.stop()
+        self.srv.stop()
+
+
+def _wait(pred, timeout=5.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if pred():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def _lost_cable_and_operator_reset(api, relay):
+    """Kablo çıkar -> MCU watchdog'u ESTOPPED -> köprü API'yi durdurur -> operatör API'yi reset eder."""
+    r = TcpRig(relay.report)
+    r.bridge.api_reset_since = getattr(relay, 'reset_since', None)
+    ok, msg = r.bridge.configure()
+    assert ok, msg
+    ok, msg = r.bridge.home()
+    assert ok, msg
+    threading.Thread(target=lambda: r.bridge.execute(NAMES, [Point(0.0, ZERO), Point(3.0, at(0.5))]),
+                     daemon=True).start()                    # sürücüler açık: watchdog ancak o zaman kilitler
+    assert _wait(lambda: r.bridge.executing)
+    time.sleep(0.3)
+    r.srv.drop_client()
+    assert _wait(lambda: r.sim.state == State.ESTOPPED, 3.0) and r.sim.reason == EstopReason.WATCHDOG
+    assert _wait(lambda: len(api.stops) == 1) and api.tripped
+    api.tripped = False                                      # operatör: POST /api/reset
+    assert _wait(lambda: not relay._was_tripped)
+    return r
+
+
+def test_mcu_estop_older_than_the_api_reset_is_not_reported_again():
+    """N6b'de ölçüldü: reset'ten 0.05-0.21 s sonra köprü, yeniden bağlanınca okuduğu ESKİ MCU durumunu yeni
+    acil dur diye bildirip API'yi yeniden kilitliyordu (ve API->ESP32 rölesi MCU'yu yeniden durduruyordu)."""
+    from test_robot_api_relay import FakeApi, make
+    api = FakeApi()
+    relay, _ = make(api)
+    r = _lost_cable_and_operator_reset(api, relay)
+    try:
+        r.reconnect()                                        # kablo geri; MCU hâlâ ESTOPPED/WATCHDOG
+        assert _wait(lambda: r.mcu() == 'ESTOPPED', 3.0)
+        time.sleep(0.6)
+        assert len(api.stops) == 1 and not api.tripped, api.stops
+        assert not r.bridge.homed                            # yerel güvenlik aynı: kilitli, homing'siz
+    finally:
+        r.close()
+        relay.close()
+        api.close()
+
+
+def test_a_new_mcu_estop_after_the_api_reset_is_still_reported():
+    from test_robot_api_relay import FakeApi, make
+    api = FakeApi()
+    relay, _ = make(api)
+    r = _lost_cable_and_operator_reset(api, relay)
+    try:
+        r.reconnect()
+        assert _wait(lambda: r.mcu() == 'ESTOPPED', 3.0)
+        assert _wait(lambda: r.bridge.clear()[0], 3.0)       # clear idempotent; STATUS gecikebilir
+        assert _wait(lambda: r.mcu() not in (None, 'ESTOPPED'), 3.0), r.mcu()
+        ok, msg = r.bridge.home()
+        assert ok, msg
+        r.sim.press_estop()                                  # bu GERÇEKTEN yeni bir olay
+        assert _wait(lambda: len(api.stops) == 2), api.stops
+        assert 'MCU ACİL DUR' in api.stops[1] and api.tripped
+    finally:
+        r.close()
+        relay.close()
+        api.close()
