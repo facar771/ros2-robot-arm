@@ -101,6 +101,8 @@ class HubService:
             except ServiceError:
                 self._cleanup()
                 raise
+        if self.settings.bench_enabled:
+            self._attach_bench()
         config = uvicorn.Config(create_app(self.hub), host=self.host, port=self.settings.port,
                                 log_level='warning', log_config=None)
         self._server = uvicorn.Server(config)
@@ -118,6 +120,15 @@ class HubService:
         err = self._error
         self._cleanup()
         raise ServiceError(f'Sunucu başlamadı: {err}' if err else 'Sunucu zamanında başlamadı')
+
+    def _attach_bench(self) -> None:
+        from control_hub.hw import BenchService
+        hub = self.hub
+        hub.attach_bench(BenchService(                                    # type: ignore[union-attr]
+            enabled=True, serial_url=self.settings.bench_serial, baud=self.settings.bench_baud,
+            bridge_active=lambda: hub.bridge is not None,                # type: ignore[union-attr]
+            on_event=lambda kind, msg, lvl: hub.events.emit(              # type: ignore[union-attr]
+                kind, msg, level=lvl if lvl in ('info', 'warning', 'error') else 'info')))
 
     @property
     def bridge_token(self) -> Optional[str]:

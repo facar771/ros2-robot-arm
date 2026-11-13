@@ -59,6 +59,26 @@ Windows'ta (`.exe` gelene dek) aynısı PowerShell'de: `python -m control_hub --
 Seçenekler: `--robot-url`, `--port`, `--host`, `--access-mode open|pin|locked`, `--pin`, `--config-dir`,
 `--fake-speed 0.2` (sahte robotu 5 kat hızlandırır), `--allow-host`, `--check-config`.
 
+## Tezgâh sayfası (KM3) — gerçek robot DEĞİL
+
+`tools/bench/bench_core.py` (K9 Faz 2a) mantığını Hub'dan, telefondan da sürer: 3 step motor (J1, J2, J7), **yükten ayrık**
+motor, operatör başında, güç kesmeye hazır. Robot API, ROS ve `mode: real` ile ilgisi yoktur.
+
+* **Varsayılan KAPALI.** Açmak: `--bench --bench-port COM3` (ya da `HUB_BENCH=1`; masaüstü ayarlarında `bench_enabled`).
+  **Yalnız `--access-mode pin`**: `open` kipinde PIN olmaz, Tezgâh reddeder; `locked` salt okunurdur, reddeder.
+* **Kopya yok:** kapılar, eksen limitleri (J1/J2 ±256, J7 ±50 adım), ilk-hareket sınırı ve mesajlar `tools/bench/bench_core.py`'deki
+  `Bench` sınıfından gelir; Hub yalnızca sarar. Hub limitleri genişletemez; firmware zaten kendi gömülü limitini uygular.
+  (HELLO step eksenlerinin limitini taşımaz: limitler bench aracındaki firmware ile aynı sabitlerdir, bkz. PR notu.)
+* **BENCH_MODE görülmeden hiçbir hareket komutu gönderilmez** (`STATUS.flags`). `zero` için "motor yükten ayrık, güç kesmeye
+  hazırım" kutusu işaretli olmalı.
+* **COM tek sahipli:** ESP32 köprüsü (`--serial-bridge`) açıkken Tezgâh açılmaz ve nedenini söyler; bench CLI ya da başka program
+  portu tutuyorsa "port meşgul" der.
+* **Çıkış:** Hub kapanırken ve arayüz ~5 sn sorgulamayı bırakırsa (sekme kapandı, telefon uyudu) `stop` + `DISABLE` gider; hat
+  koparsa port bırakılır. Kalp atışı kesilirse firmware watchdog'u (300 ms) zaten keser: bu ikinci katmandır.
+* **ACİL DUR (TEZGÂH)** büyük düğmedir ve oturumsuz çalışır (`POST /api/bench/estop`); Hub genel ACİL DUR'u da tezgâhı durdurur.
+  Kilidi açmak: `clear`, sonra yeniden `zero`.
+* Konum KESTİRİMDİR (enkoder yok; adım kaybı algılanmaz).
+
 ## Windows'ta kurulum (ControlHub.exe)
 
 Tek dosya, kurulum yok, Python gerekmez, ROS yok; web arayüzü ve varsayılan senaryolar içine gömülü.

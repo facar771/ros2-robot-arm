@@ -139,6 +139,7 @@ function buildUi() {
   if (window.AgentPanel) AgentPanel.mount();
   if (window.JogPanel) JogPanel.mount();
   if (window.RobotView) RobotView.mount();
+  if (window.BenchPanel) BenchPanel.mount();
   api('/api/events').then((r) => { S.events = r.events; renderLog(); }).catch(() => {});
 }
 

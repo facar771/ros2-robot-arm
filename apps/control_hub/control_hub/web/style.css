@@ -178,3 +178,12 @@ button.reset:disabled { opacity: .4; cursor: not-allowed; }
 .sw-grid, .sw-rows { font-family: ui-monospace, Consolas, monospace; font-size: .75rem; line-height: 1.25; overflow-x: auto; margin: 6px 0; }
 .sw-rows { max-height: 12em; overflow-y: auto; }
 #sw-reach-lines .bad { color: #ffb4b0; }
+
+/* Tezgâh (KM3): sarı bant + büyük ACİL DUR */
+.bn-band { background: #e3b341; color: #1b1400; font-weight: 700; padding: 10px 12px; border-radius: 10px; margin-bottom: 10px; }
+.bn-axes { display: grid; gap: 10px; margin: 10px 0; }
+.bn-ax { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 8px; border: 1px solid var(--border); border-radius: 12px; }
+.bn-ax input[type=text] { font: inherit; width: 5em; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.bn-estop { display: block; width: 100%; margin-top: 12px; min-height: 72px; font-size: 1.4rem; font-weight: 800; color: #fff; background: #c4231c; border: 3px solid #f85149; border-radius: 14px; }
+.bn-estop:active { background: #8f1913; }
+#p-bench .log .bad { color: #ffb4b0; }
