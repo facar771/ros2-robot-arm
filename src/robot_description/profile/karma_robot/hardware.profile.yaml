@@ -1,90 +1,99 @@
-# Hardware profile v1 of the KARMA robot (K8). Format and rules: docs/ROBOT_PROFILE.md, wire contract:
-# docs/HARDWARE.md. Used ONLY by the bridge and the firmware, never by the simulation.
-#   joint_1, joint_2   28BYJ-48 + ULN2003 (step, open loop)
-#   joint_3, joint_4   hobby_servo, each a MIRRORED PAIR of SG90 (`servo.mirror`: 2nd servo)
-#   joint_5, joint_6   hobby_servo SG90
-#   joint_7            gripper: NEMA-class stepper + A4988 (step, open loop)
+# Hardware profile v1 of the KARMA robot (A2: Ferhat's KUCUK_ROBOT). Format and rules:
+# docs/ROBOT_PROFILE.md, wire contract: docs/HARDWARE.md. Used ONLY by the bridge and the firmware,
+# never by the simulation.
+#   joint_1            28BYJ-48 + 4:1 reduction  (step, open loop)
+#   joint_2            28BYJ-48 + 16:1 reduction (step, open loop)
+#   joint_3, joint_5   hobby_servo, each a MIRRORED PAIR of SG90 (`servo.mirror`: the 2nd servo)
+#   joint_4, joint_6   hobby_servo SG90
+#   tool_actuators.joint_7   gripper motor: small stepper + A4988 (step, open loop). NOT a joint of
+#                            the chain (the gripper is not designed yet); kept here so the firmware
+#                            pin map and the bench build keep their 3rd step axis.
 #
-# !! EVERY value is a PLACEHOLDER: no part was measured, no datasheet was verified. The robot is
-# !! NOT built. Quality tags: quality.profile.yaml (nothing `measured`; hardware readiness closed).
+# !! EVERY value is a PLACEHOLDER (or a datasheet-class estimate): no part was measured. Speeds,
+# !! microsteps and pulse ranges are meant to be edited later (no code change needed).
+# !! 28BYJ-48: `steps_per_rev` = steps per turn of the motor's OUTPUT shaft (its own gearbox
+# !! included, full step); `gear_ratio` = the robot's extra reduction. Driver ULN2003 is an ASSUMPTION
+# !! (unipolar 28BYJ-48); `microstep: 2` would be half-step.
 #
-# !! STEP AXES WITHOUT A REAL LIMIT SWITCH: joint_1, joint_2 and joint_7 are OPEN LOOP and the rule
-# !! (HARDWARE.md §7, NO_REFERENCE) demands a home switch. The `homing:` blocks below DECLARE a switch
-# !! that does NOT exist yet (placeholder: it must be built and its position measured). Without it
-# !! the real robot has no reference for these axes. Whether open-loop step axes may ever use a
-# !! manual reference instead is an OPEN question ("YAŞLI KURDA SORU", docs/ROBOT_PROFILE.md): until
-# !! it is answered the rule stays as it is.
+# !! STEP AXES WITHOUT A REAL LIMIT SWITCH: joint_1, joint_2 and the gripper (joint_7) are OPEN LOOP;
+# !! the rule (HARDWARE.md §7, NO_REFERENCE) demands a home switch. The `homing:` blocks below DECLARE
+# !! a switch that does NOT exist yet (placeholder). Without it the real robot has no reference for
+# !! these axes (the K9 bench build's "bench zero" is an estimate, not a reference). Whether open-loop
+# !! step axes may ever use a manual reference is still an OPEN question ("YAŞLI KURDA SORU").
 #
-# Every home value equals the robot profile's `home` named pose (INSIDE the safe box): the switch
-# position of a step axis and the manual_zero pose / rest angle of a servo axis are that pose.
+# Every home value equals the robot profile's `home` named pose (INSIDE the safe box).
 hardware_version: 1
 robot: karma_robot
 
 axes:
   joint_1:                         # base yaw
-    motor: {type: step, steps_per_rev: 2048, model: 28BYJ-48}    # steps per OUTPUT shaft turn (gearbox inside; PLACEHOLDER)
-    driver: {microstep: 1, model: ULN2003}
-    direction: 1
-    zero_offset: 0.0
-    gear_ratio: 1.0
-    encoder: none
-    limits: {position: [-3.14, 3.14], velocity: 0.8, acceleration: 0.8}
-    margin: {position: 0.05, velocity: 0.05}
-    homing: {method: switch, direction: -1, speed: 0.1, position: 0.0, backoff: 0.05}   # switch NOT built yet
-  joint_2:                         # shoulder pitch (28BYJ-48 is weak here: torque check = hardware-ready blocker)
     motor: {type: step, steps_per_rev: 2048, model: 28BYJ-48}
     driver: {microstep: 1, model: ULN2003}
     direction: 1
     zero_offset: 0.0
-    gear_ratio: 1.0
+    gear_ratio: 4.0
     encoder: none
-    limits: {position: [-1.57, 1.57], velocity: 0.8, acceleration: 0.8}
+    limits: {position: [-3.017, 3.017], velocity: 0.35, acceleration: 0.35}   # ~15 rpm / 4 = 0.39 rad/s max (estimate)
     margin: {position: 0.05, velocity: 0.05}
-    homing: {method: switch, direction: -1, speed: 0.1, position: 0.0, backoff: 0.05}   # switch NOT built yet
-  joint_3:                         # elbow pitch, mirrored SG90 pair
+    homing: {method: switch, direction: -1, speed: 0.05, position: 0.0, backoff: 0.05}   # switch NOT built yet
+  joint_2:                         # shoulder pitch: very slow on purpose (16:1)
+    motor: {type: step, steps_per_rev: 2048, model: 28BYJ-48}
+    driver: {microstep: 1, model: ULN2003}
+    direction: 1
+    zero_offset: 0.0
+    gear_ratio: 16.0
+    encoder: none
+    limits: {position: [0.0, 3.1416], velocity: 0.1, acceleration: 0.12}   # ~15 rpm / 16 = 0.098 rad/s max (estimate)
+    margin: {position: 0.05, velocity: 0.02}
+    homing: {method: switch, direction: -1, speed: 0.03, position: 1.55, backoff: 0.05}   # switch NOT built yet
+  joint_3:                         # elbow pitch, mirrored SG90 pair (0 = folded = servo end)
     motor: {type: hobby_servo, model: SG90}
     servo:
-      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER (datasheet-class 500-2400 us = +-90 deg; calibrate)
-      slew_limit: 1.2            # joint rad/s, software speed cap (PLACEHOLDER)
-      rest: {angle: 0.8, speed: 0.2}   # = home
-      mirror: {pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: 1.5708, angle_at_max_us: -1.5708}}      # 2nd SG90, mounted opposite: angle FALLS as the pulse grows
-    reference: {mode: manual_zero, pose: 0.8}   # operator puts the arm at home and confirms
-    limits: {position: [-1.5708, 1.5708]}
+      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: 0.0, angle_at_max_us: 3.1416}   # PLACEHOLDER: datasheet-class 500-2400 us = 180 deg; calibrate
+      slew_limit: 1.0            # joint rad/s, software speed cap (PLACEHOLDER, adjustable)
+      rest: {angle: 1.25, speed: 0.2}   # = home
+      mirror: {pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: 3.1416, angle_at_max_us: 0.0}}   # 2nd SG90, mounted opposite: angle FALLS as the pulse grows
+    reference: {mode: manual_zero, pose: 1.25}   # operator puts the arm at home and confirms
+    limits: {position: [0.0, 3.1416]}
     margin: {position: 0.05, velocity: 0.05}
-  joint_4:                         # wrist pitch, mirrored SG90 pair
+  joint_4:                         # forearm roll, SG90 (centred)
     motor: {type: hobby_servo, model: SG90}
     servo:
-      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER (datasheet-class 500-2400 us = +-90 deg; calibrate)
-      slew_limit: 1.2            # joint rad/s, software speed cap (PLACEHOLDER)
-      rest: {angle: 0.8, speed: 0.2}   # = home
-      mirror: {pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: 1.5708, angle_at_max_us: -1.5708}}      # 2nd SG90, mounted opposite: angle FALLS as the pulse grows
-    reference: {mode: manual_zero, pose: 0.8}   # operator puts the arm at home and confirms
-    limits: {position: [-1.5708, 1.5708]}
-    margin: {position: 0.05, velocity: 0.05}
-  joint_5:                         # wrist roll, SG90
-    motor: {type: hobby_servo, model: SG90}
-    servo:
-      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER (datasheet-class 500-2400 us = +-90 deg; calibrate)
-      slew_limit: 1.2            # joint rad/s, software speed cap (PLACEHOLDER)
+      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER: datasheet-class 500-2400 us = 180 deg; calibrate
+      slew_limit: 1.0            # joint rad/s, software speed cap (PLACEHOLDER, adjustable)
       rest: {angle: 0.0, speed: 0.2}   # = home
     reference: {mode: manual_zero, pose: 0.0}   # operator puts the arm at home and confirms
     limits: {position: [-1.5708, 1.5708]}
     margin: {position: 0.05, velocity: 0.05}
-  joint_6:                         # wrist bend, SG90
+  joint_5:                         # wrist pitch, mirrored SG90 pair (centred)
     motor: {type: hobby_servo, model: SG90}
     servo:
-      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER (datasheet-class 500-2400 us = +-90 deg; calibrate)
-      slew_limit: 1.2            # joint rad/s, software speed cap (PLACEHOLDER)
-      rest: {angle: 0.7, speed: 0.2}   # = home
-    reference: {mode: manual_zero, pose: 0.7}   # operator puts the arm at home and confirms
+      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER: datasheet-class 500-2400 us = 180 deg; calibrate
+      slew_limit: 1.0            # joint rad/s, software speed cap (PLACEHOLDER, adjustable)
+      rest: {angle: -0.3, speed: 0.2}   # = home
+      mirror: {pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: 1.5708, angle_at_max_us: -1.5708}}   # 2nd SG90, mounted opposite: angle FALLS as the pulse grows
+    reference: {mode: manual_zero, pose: -0.3}   # operator puts the arm at home and confirms
     limits: {position: [-1.5708, 1.5708]}
     margin: {position: 0.05, velocity: 0.05}
-  joint_7:                         # gripper jaw
+  joint_6:                         # flange roll, SG90 (centred)
+    motor: {type: hobby_servo, model: SG90}
+    servo:
+      pulse_range: {min_us: 500, max_us: 2400, angle_at_min_us: -1.5708, angle_at_max_us: 1.5708}   # PLACEHOLDER: datasheet-class 500-2400 us = 180 deg; calibrate
+      slew_limit: 1.0            # joint rad/s, software speed cap (PLACEHOLDER, adjustable)
+      rest: {angle: 0.0, speed: 0.2}   # = home
+    reference: {mode: manual_zero, pose: 0.0}   # operator puts the arm at home and confirms
+    limits: {position: [-1.5708, 1.5708]}
+    margin: {position: 0.05, velocity: 0.05}
+
+tool_actuators:
+  joint_7:                         # gripper drive; mechanism NOT designed: travel in motor-output rad
+    tool: gripper
+    travel: {position: [0.0, 0.8], velocity: 0.5, acceleration: 0.5}   # PLACEHOLDER (~60 mm jaw later)
     motor: {type: step, steps_per_rev: 200, model: placeholder}
     driver: {microstep: 16, model: A4988}
     direction: 1
     zero_offset: 0.0
-    gear_ratio: 10.0               # PLACEHOLDER jaw linkage / gear reduction
+    gear_ratio: 10.0               # PLACEHOLDER
     encoder: none
     limits: {position: [-0.1, 0.9], velocity: 1.0, acceleration: 1.0}
     margin: {position: 0.05, velocity: 0.05}

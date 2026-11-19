@@ -320,13 +320,21 @@ def _parse_link(name: str, data: Any, materials: Mapping) -> Link:
     where = f'links.{name}'
     d = _mapping(data, where, ('length', 'shape', 'origin', 'material', 'mass', 'inertia'),
                  ('length', 'shape', 'material', 'mass'))
-    length = _number(d['length'], f'{where}.length', lo=MIN_LENGTH, hi=MAX_LENGTH)
+    length = _number(d['length'], f'{where}.length', lo=0.0, hi=MAX_LENGTH)
+    if 0.0 < length < MIN_LENGTH:
+        raise _fail(f'{where}.length',
+                    f'{length:g}: alt sınır {MIN_LENGTH:g} m (tam 0 da olabilir)')
+    # length 0 (K8, horizontal links): the next joint sits only at its `offset`; the shape then
+    # needs its own extent (cylinder `length` / box `size: [x, y, z]`), it cannot borrow 0.
     shape_data = d['shape']
     kind = shape_data.get('type') if isinstance(shape_data, Mapping) else None
     if kind == 'cylinder':
         s = _mapping(shape_data, f'{where}.shape', ('type', 'radius', 'length'),
                      ('type', 'radius'))
         radius = _number(s['radius'], f'{where}.shape.radius', lo=MIN_LENGTH, hi=MAX_LENGTH)
+        if length == 0.0 and 'length' not in s:
+            raise _fail(f'{where}.shape', "length 0 olan link şeklin z boyunu kendisi vermeli "
+                                          "(cylinder: length, box: size [x, y, z])")
         extent = _number(s.get('length', length), f'{where}.shape.length', lo=MIN_LENGTH,
                          hi=MAX_LENGTH)
         dims: Tuple[float, ...] = (radius, extent)
@@ -340,6 +348,9 @@ def _parse_link(name: str, data: Any, materials: Mapping) -> Link:
         dims = (xyz[0], xyz[1], xyz[2] if len(xyz) == 3 else length)
     else:
         raise _fail(f'{where}.shape.type', f"'cylinder' ya da 'box' olmalı, bulunan: {kind!r}")
+    if dims[-1] <= 0.0:
+        raise _fail(f'{where}.shape', "length 0 olan link şeklin z boyunu kendisi vermeli "
+                                      "(cylinder: length, box: size [x, y, z])")
     extent_z = dims[-1]
     origin = (_vector(d['origin'], 3, f'{where}.origin') if 'origin' in d
               else (0.0, 0.0, extent_z / 2))

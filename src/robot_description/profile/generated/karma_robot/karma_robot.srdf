@@ -8,26 +8,23 @@
         <joint name="joint_4"/>
         <joint name="joint_5"/>
         <joint name="joint_6"/>
-        <joint name="joint_7"/>
     </group>
     <!--GROUP STATES: named joint poses (profile: moveit.named_poses)-->
     <group_state name="home" group="robot_arm">
         <joint name="joint_1" value="0.0"/>
-        <joint name="joint_2" value="0.0"/>
-        <joint name="joint_3" value="0.8"/>
-        <joint name="joint_4" value="0.8"/>
-        <joint name="joint_5" value="0.0"/>
-        <joint name="joint_6" value="0.7"/>
-        <joint name="joint_7" value="0.1"/>
+        <joint name="joint_2" value="1.55"/>
+        <joint name="joint_3" value="1.25"/>
+        <joint name="joint_4" value="0.0"/>
+        <joint name="joint_5" value="-0.3"/>
+        <joint name="joint_6" value="0.0"/>
     </group_state>
     <group_state name="ready" group="robot_arm">
         <joint name="joint_1" value="0.0"/>
-        <joint name="joint_2" value="0.6"/>
-        <joint name="joint_3" value="1.0"/>
-        <joint name="joint_4" value="1.0"/>
-        <joint name="joint_5" value="0.8"/>
-        <joint name="joint_6" value="1.0"/>
-        <joint name="joint_7" value="0.1"/>
+        <joint name="joint_2" value="1.8"/>
+        <joint name="joint_3" value="0.8"/>
+        <joint name="joint_4" value="0.0"/>
+        <joint name="joint_5" value="1.0"/>
+        <joint name="joint_6" value="-0.5"/>
     </group_state>
     <!--VIRTUAL JOINT: fixes the robot base to the world frame-->
     <virtual_joint name="masa" type="fixed" parent_frame="world" child_link="base_link"/>
@@ -40,5 +37,4 @@
     <disable_collisions link1="link_3" link2="link_4" reason="Adjacent"/>
     <disable_collisions link1="link_4" link2="link_5" reason="Adjacent"/>
     <disable_collisions link1="link_5" link2="link_6" reason="Adjacent"/>
-    <disable_collisions link1="link_6" link2="link_7" reason="Adjacent"/>
 </robot>

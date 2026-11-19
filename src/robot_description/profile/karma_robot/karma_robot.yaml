@@ -1,20 +1,40 @@
-# Robot profile v3 of the KARMA robot (K8): 7 axes, a small desktop arm built from mixed actuators.
-#   joint_1  base yaw          28BYJ-48 (step, open loop)
-#   joint_2  shoulder pitch    28BYJ-48 (step, open loop)
-#   joint_3  elbow pitch       2 x SG90, mirrored pair, one joint
-#   joint_4  wrist pitch       2 x SG90, mirrored pair, one joint
-#   joint_5  wrist roll        SG90
-#   joint_6  wrist bend        SG90
-#   joint_7  gripper jaw       A4988 step (open loop); in the chain, but `jog: locked`
-# The mechanical/electrical data lives in karma_robot/hardware.profile.yaml; the quality tags in
-# karma_robot/quality.profile.yaml. Generated files: robot_description/profile/generated/karma_robot/
-#   python3 -m robot_core.profile_gen --profile ../robot_description/profile/karma_robot/karma_robot.yaml
+# Robot profile v3 of the KARMA robot ("KUCUK_ROBOT", Ferhat's SolidWorks model): a 6-axis desktop
+# arm built from mixed actuators. A2: kinematics taken from the CAD (STL exports of the assembly).
+#   joint_1  base yaw          28BYJ-48 + 4:1    (step, open loop)
+#   joint_2  shoulder pitch    28BYJ-48 + 16:1   (step, open loop)
+#   joint_3  elbow pitch       2 x SG90, MIRRORED PAIR, one joint
+#   joint_4  forearm roll      SG90
+#   joint_5  wrist pitch       2 x SG90, MIRRORED PAIR, one joint
+#   joint_6  flange roll       SG90
+#   gripper  NOT in the chain (not designed yet; it will be a sliding jaw). Its motor (small stepper +
+#            A4988) is a TOOL ACTUATOR in hardware.profile.yaml (`tool_actuators.joint_7`).
+# Mechanical/electrical data: karma_robot/hardware.profile.yaml; quality tags: karma_robot/
+# quality.profile.yaml; generated files: robot_description/profile/generated/karma_robot/
+#   cd src/robot_core && python3 -m robot_core.profile_gen --profile ../robot_description/profile/karma_robot/karma_robot.yaml
 # Same schema and rules as six_axis_robot.yaml (comments there); only what differs is explained here.
 #
-# !! EVERY number below is a PLACEHOLDER or an ESTIMATE of a robot that has not been built or
-# !! measured (tags: quality.profile.yaml). Nothing here is `measured`. Lengths are design guesses
-# !! for a ~35 cm desktop arm, masses are stand-ins, effort is a stand-in. Replace with real values
-# !! (CAD / scale / ruler) and re-tag before anything depends on them.
+# ---- where the numbers come from ----------------------------------------------------------------
+# Frames: the CAD is Y-up; here z is up, x is the robot's FRONT (the side the arm works on, away from
+# the J2 motor), origin = centre of the base footprint on the table, under joint_1.
+# Zero pose (all joints 0) = the CAD pose = the arm FOLDED BACK (upper arm horizontal towards the
+# back, forearm folded over it). It is the ALIGNMENT reference for the CAD meshes only, never a
+# commanded pose: it lies at the servo/arm end stops, so it is 0.05 rad OUTSIDE the joint limits.
+# Joint positions at zero (mm, from the bore centres of the STL parts):
+#   J1 (0, 0, 61)   J2 (0, 0, 121)   J3 (-120, 0, 171)   J4 (-40, 0, 171)   J5 (-15, 0, 171)   J6 (35, 0, 171)
+#   The elbow plate is fixed to the upper arm: J3 sits 50 mm above the upper arm's end bore.
+#   J4 / J6 (roll) may sit anywhere on their axis line; the part joints were used.
+#   Hand-measured numbers (78.5 / 23.5 / 48.5 mm) are each 1.5 mm (= the bore radius) shorter than
+#   the CAD: the CAD numbers are used.
+# !! Tags (quality.profile.yaml): CAD lengths are `estimated` (a design, the printed robot is not
+# !! measured); masses / efforts / limits are placeholders or estimates. Nothing is `measured`.
+#
+# ---- assumptions still to be confirmed by Ferhat (A2 PR, "Denenmeyenler") ------------------------
+#   * the elbow plate is fixed to the upper arm and J3 turns at its upper bore (photo reading)
+#   * front = the side away from the J2 motor
+#   * J2 and J3 run 0 -> 180 deg from the folded zero pose; J4, J5, J6 are centred (+-90 deg)
+#   * signs: J1 counter-clockwise seen from above; J2 / J3 / J5 positive = the arm lifts / unfolds;
+#     J4 / J6 right-hand rule about the forearm direction. A wrong sign is `direction: -1` /
+#     the servo pulse map in hardware.profile.yaml, not a change here.
 profile_version: 3
 robot: karma_robot
 
@@ -29,114 +49,115 @@ mount:
   child: base_link
 
 # ---- kinematics (m) ---------------------------------------------------------------------------
+# Shapes are the bounding boxes of the STL parts of each link (until the meshes of PR B replace
+# them). `length: 0` = the next joint is placed by its `offset` only (horizontal links).
+# Masses: PLACEHOLDER = solid PLA volume of the STL + motors/servos; real parts are infilled.
 links:
-  base_link:
-    length: 0.03
-    shape: {type: cylinder, radius: 0.05, length: 0.06}
-    origin: [0.0, 0.0, 0.0]
+  base_link:                    # J1_taban (base column, J1 motor)
+    length: 0.061
+    shape: {type: box, size: [0.1149, 0.1203, 0.071]}
+    origin: [0.0055, 0.0, 0.0355]
     material: gray
-    mass: 0.3                   # PLACEHOLDER
-  link_1:                       # shoulder column
-    length: 0.07
-    shape: {type: cylinder, radius: 0.025}
-    material: orange
     mass: 0.15                  # PLACEHOLDER
-  link_2:                       # upper arm
-    length: 0.10
-    shape: {type: box, size: [0.03, 0.03]}
-    material: gray
-    mass: 0.1                   # PLACEHOLDER
-  link_3:                       # forearm
-    length: 0.09
-    shape: {type: box, size: [0.025, 0.025]}
+  link_1:                       # j2_taban_n_ustu (turret, J2 motor + 16:1)
+    length: 0.060
+    shape: {type: box, size: [0.122, 0.0959, 0.0899]}
+    origin: [-0.013, 0.0, 0.045]
     material: orange
-    mass: 0.08                  # PLACEHOLDER
-  link_4:                       # wrist
-    length: 0.03
-    shape: {type: cylinder, radius: 0.015}
-    material: blue
-    mass: 0.04                  # PLACEHOLDER
-  link_5:
-    length: 0.03
-    shape: {type: box, size: [0.02, 0.02]}
+    mass: 0.22                  # PLACEHOLDER
+  link_2:                       # j2-j3_kol + 2 elbow plates (upper arm; plates fixed to it)
+    length: 0.050
+    shape: {type: box, size: [0.1674, 0.048, 0.1021]}
+    origin: [-0.0588, 0.0, 0.0189]
     material: gray
-    mass: 0.03                  # PLACEHOLDER
-  link_6:                       # gripper body (fixed jaw)
-    length: 0.05
-    shape: {type: box, size: [0.03, 0.02]}
+    mass: 0.26                  # PLACEHOLDER
+  link_3:                       # j3-j4_kol_2Xsg90 (forearm, J3 servo pair)
+    length: 0.0
+    shape: {type: box, size: [0.1, 0.026, 0.0397]}
+    origin: [0.03, 0.0, 0.0]
     material: orange
-    mass: 0.05                  # PLACEHOLDER
-  link_7:                       # moving jaw = the flange / tip link
-    length: 0.04
-    shape: {type: box, size: [0.008, 0.012]}
+    mass: 0.11                  # PLACEHOLDER
+  link_4:                       # j4-j5_1Xsg90_ara-parca (wrist piece, J4 servo)
+    length: 0.0
+    shape: {type: box, size: [0.03, 0.0332, 0.028]}
+    origin: [0.015, 0.0, 0.0]
     material: blue
-    mass: 0.01                  # PLACEHOLDER
+    mass: 0.022                 # PLACEHOLDER
+  link_5:                       # j5-j6_2Xsg90_kol (wrist arm, J5 servo pair)
+    length: 0.0
+    shape: {type: box, size: [0.065, 0.024, 0.026]}
+    origin: [0.0175, 0.0, 0.0]
+    material: gray
+    mass: 0.063                 # PLACEHOLDER
+  link_6:                       # j6_kiskac_tutucu (flange plate; the gripper will mount here)
+    length: 0.0
+    shape: {type: box, size: [0.006, 0.024, 0.026]}
+    origin: [0.003, 0.0, 0.0]
+    material: orange
+    mass: 0.013                 # PLACEHOLDER
 
 joints:
-  joint_1:
+  joint_1:                      # base yaw; +-170 deg PLACEHOLDER (cables), relative to the bench zero
     type: revolute
     parent: base_link
     child: link_1
     axis: [0, 0, 1]
-    limits: {position: [-3.0, 3.0], velocity: 0.5, acceleration: 0.5, effort: 1.0}
-  joint_2:
+    limits: {position: [-2.967, 2.967], velocity: 0.3, acceleration: 0.3, effort: 0.13}
+  joint_2:                      # shoulder pitch; 0 = upper arm horizontal to the BACK, + lifts it
     type: revolute
     parent: link_1
     child: link_2
     axis: [0, 1, 0]
-    limits: {position: [-1.4, 1.4], velocity: 0.5, acceleration: 0.5, effort: 1.0}
-  joint_3:
+    limits: {position: [0.05, 3.09], velocity: 0.08, acceleration: 0.1, effort: 0.5}
+  joint_3:                      # elbow pitch; 0 = forearm folded over the upper arm, + unfolds it
     type: revolute
     parent: link_2
     child: link_3
-    axis: [0, 1, 0]
-    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 1.0}
-  joint_4:
+    axis: [0, -1, 0]
+    offset: [-0.120, 0.0, 0.0]
+    limits: {position: [0.05, 3.09], velocity: 0.8, acceleration: 1.0, effort: 0.35}
+  joint_4:                      # forearm roll
     type: revolute
     parent: link_3
     child: link_4
-    axis: [0, 1, 0]
-    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 1.0}
-  joint_5:
+    axis: [1, 0, 0]
+    offset: [0.080, 0.0, 0.0]
+    limits: {position: [-1.52, 1.52], velocity: 0.8, acceleration: 1.0, effort: 0.18}
+  joint_5:                      # wrist pitch; + lifts the flange
     type: revolute
     parent: link_4
     child: link_5
-    axis: [0, 0, 1]
-    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 0.5}
-  joint_6:
+    axis: [0, -1, 0]
+    offset: [0.025, 0.0, 0.0]
+    limits: {position: [-1.52, 1.52], velocity: 0.8, acceleration: 1.0, effort: 0.35}
+  joint_6:                      # flange roll
     type: revolute
     parent: link_5
     child: link_6
-    axis: [0, 1, 0]
-    limits: {position: [-1.5, 1.5], velocity: 1.0, acceleration: 1.0, effort: 0.5}
-  joint_7:                      # gripper jaw: opens/closes, never moved by the Cartesian jog
-    type: revolute
-    parent: link_6
-    child: link_7
-    axis: [0, 1, 0]
-    jog: locked
-    limits: {position: [0.0, 0.8], velocity: 0.5, acceleration: 0.5, effort: 0.5}
+    axis: [1, 0, 0]
+    offset: [0.050, 0.0, 0.0]
+    limits: {position: [-1.52, 1.52], velocity: 0.8, acceleration: 1.0, effort: 0.18}
 
 # ---- MoveIt -----------------------------------------------------------------------------------
 moveit:
   planning_group: robot_arm
   default_velocity_scaling: 0.3
   default_acceleration_scaling: 0.3
-  initial_positions: {joint_1: 0.0, joint_2: 0.0, joint_3: 0.8, joint_4: 0.8, joint_5: 0.0, joint_6: 0.7, joint_7: 0.1}   # = home
-  named_poses:                  # joint values in chain order [joint_1 .. joint_7]
-    # home: INSIDE the safe box (tip ~[0.16, 0, 0.23]), >= 0.7 rad from every arm joint limit. Wrist
-    # roll (joint_5) is 0 on purpose: an easy physical reference. Three parallel pitch axes + roll 0
-    # = singular for the Cartesian jog: use `ready` (joint_5 != 0) to start a jog.
-    home: [0.0, 0.0, 0.8, 0.8, 0.0, 0.7, 0.1]
-    # ready: inside the box (tip ~[0.17, 0.03, 0.09]), >= 0.5 rad from the arm joint limits,
-    # sigma_min ~0.036 (small arm: below jog sigma_slow 0.06 -> the jog runs slowed; scale effect).
-    ready: [0.0, 0.6, 1.0, 1.0, 0.8, 1.0, 0.1]
+  initial_positions: {joint_1: 0.0, joint_2: 1.55, joint_3: 1.25, joint_4: 0.0, joint_5: -0.3, joint_6: 0.0}   # = home
+  named_poses:                  # joint values in chain order [joint_1 .. joint_6]
+    # home: upper arm ~vertical; tool point ~[0.19, 0, 0.18] INSIDE the safe box; every joint
+    # >= 1.2 rad from its limits. The simulation starts here (F4b lesson), never at the zero pose.
+    home: [0.0, 1.55, 1.25, 0.0, -0.3, 0.0]
+    # ready: start of a Cartesian jog; inside the box (~[0.19, 0, 0.14]), >= 0.5 rad from the
+    # limits, sigma_min ~0.074 (above jog sigma_slow 0.06).
+    ready: [0.0, 1.8, 0.8, 0.0, 1.0, -0.5]
   collision:
     allow_extra: []
 
+# TCP = the face of the flange plate; W-P-R turns the tool z axis (approach) to the flange's +x.
 tcp:
-  offset: [0.0, 0.0, 0.0]
-  wpr: [0.0, 0.0, 0.0]
+  offset: [0.006, 0.0, 0.0]
+  wpr: [0.0, 1.5708, 0.0]
 
 # Tool library (Q2) goes here; `tools: {}` = the bare flange.
 tools: {}
@@ -144,8 +165,8 @@ tools: {}
 # ---- safety -----------------------------------------------------------------------------------
 safety:
   frame: world
-  box:                          # m; small on purpose (placeholder); must lie inside the reach
-    x: [0.06, 0.20]
-    y: [-0.12, 0.12]
-    z: [0.02, 0.26]
+  box:                          # m; PLACEHOLDER sized for THIS small arm, in front of it
+    x: [0.06, 0.22]
+    y: [-0.10, 0.10]
+    z: [0.02, 0.22]
   max_velocity_scale: 0.3

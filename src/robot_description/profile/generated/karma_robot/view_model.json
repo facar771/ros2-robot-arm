@@ -16,7 +16,7 @@
       "origin": [
         0.0,
         0.0,
-        0.03
+        0.061
       ],
       "axis": [
         0.0,
@@ -24,9 +24,9 @@
         1.0
       ],
       "limit": {
-        "lower": -3.0,
-        "upper": 3.0,
-        "velocity": 0.5
+        "lower": -2.967,
+        "upper": 2.967,
+        "velocity": 0.3
       }
     },
     {
@@ -36,7 +36,7 @@
       "origin": [
         0.0,
         0.0,
-        0.07
+        0.06
       ],
       "axis": [
         0.0,
@@ -44,9 +44,9 @@
         0.0
       ],
       "limit": {
-        "lower": -1.4,
-        "upper": 1.4,
-        "velocity": 0.5
+        "lower": 0.05,
+        "upper": 3.09,
+        "velocity": 0.08
       }
     },
     {
@@ -54,19 +54,19 @@
       "parent": "link_2",
       "child": "link_3",
       "origin": [
+        -0.12,
         0.0,
-        0.0,
-        0.1
+        0.05
       ],
       "axis": [
         0.0,
-        1.0,
+        -1.0,
         0.0
       ],
       "limit": {
-        "lower": -1.5,
-        "upper": 1.5,
-        "velocity": 1.0
+        "lower": 0.05,
+        "upper": 3.09,
+        "velocity": 0.8
       }
     },
     {
@@ -74,19 +74,19 @@
       "parent": "link_3",
       "child": "link_4",
       "origin": [
+        0.08,
         0.0,
-        0.0,
-        0.09
+        0.0
       ],
       "axis": [
-        0.0,
         1.0,
+        0.0,
         0.0
       ],
       "limit": {
-        "lower": -1.5,
-        "upper": 1.5,
-        "velocity": 1.0
+        "lower": -1.52,
+        "upper": 1.52,
+        "velocity": 0.8
       }
     },
     {
@@ -94,19 +94,19 @@
       "parent": "link_4",
       "child": "link_5",
       "origin": [
+        0.025,
         0.0,
-        0.0,
-        0.03
+        0.0
       ],
       "axis": [
         0.0,
-        0.0,
-        1.0
+        -1.0,
+        0.0
       ],
       "limit": {
-        "lower": -1.5,
-        "upper": 1.5,
-        "velocity": 1.0
+        "lower": -1.52,
+        "upper": 1.52,
+        "velocity": 0.8
       }
     },
     {
@@ -114,39 +114,19 @@
       "parent": "link_5",
       "child": "link_6",
       "origin": [
+        0.05,
         0.0,
-        0.0,
-        0.03
+        0.0
       ],
       "axis": [
-        0.0,
         1.0,
+        0.0,
         0.0
       ],
       "limit": {
-        "lower": -1.5,
-        "upper": 1.5,
-        "velocity": 1.0
-      }
-    },
-    {
-      "name": "joint_7",
-      "parent": "link_6",
-      "child": "link_7",
-      "origin": [
-        0.0,
-        0.0,
-        0.05
-      ],
-      "axis": [
-        0.0,
-        1.0,
-        0.0
-      ],
-      "limit": {
-        "lower": 0.0,
-        "upper": 0.8,
-        "velocity": 0.5
+        "lower": -1.52,
+        "upper": 1.52,
+        "velocity": 0.8
       }
     }
   ],
@@ -155,14 +135,17 @@
       "name": "base_link",
       "joint": null,
       "shape": {
-        "type": "cylinder",
-        "radius": 0.05,
-        "length": 0.06
+        "type": "box",
+        "size": [
+          0.1149,
+          0.1203,
+          0.071
+        ]
       },
       "origin": [
+        0.0055,
         0.0,
-        0.0,
-        0.0
+        0.0355
       ],
       "material": "gray",
       "color": [
@@ -176,14 +159,17 @@
       "name": "link_1",
       "joint": "joint_1",
       "shape": {
-        "type": "cylinder",
-        "radius": 0.025,
-        "length": 0.07
+        "type": "box",
+        "size": [
+          0.122,
+          0.0959,
+          0.0899
+        ]
       },
       "origin": [
+        -0.013,
         0.0,
-        0.0,
-        0.035
+        0.045
       ],
       "material": "orange",
       "color": [
@@ -199,15 +185,15 @@
       "shape": {
         "type": "box",
         "size": [
-          0.03,
-          0.03,
-          0.1
+          0.1674,
+          0.048,
+          0.1021
         ]
       },
       "origin": [
+        -0.0588,
         0.0,
-        0.0,
-        0.05
+        0.0189
       ],
       "material": "gray",
       "color": [
@@ -223,15 +209,15 @@
       "shape": {
         "type": "box",
         "size": [
-          0.025,
-          0.025,
-          0.09
+          0.1,
+          0.026,
+          0.0397
         ]
       },
       "origin": [
+        0.03,
         0.0,
-        0.0,
-        0.045
+        0.0
       ],
       "material": "orange",
       "color": [
@@ -245,14 +231,17 @@
       "name": "link_4",
       "joint": "joint_4",
       "shape": {
-        "type": "cylinder",
-        "radius": 0.015,
-        "length": 0.03
+        "type": "box",
+        "size": [
+          0.03,
+          0.0332,
+          0.028
+        ]
       },
       "origin": [
+        0.015,
         0.0,
-        0.0,
-        0.015
+        0.0
       ],
       "material": "blue",
       "color": [
@@ -268,15 +257,15 @@
       "shape": {
         "type": "box",
         "size": [
-          0.02,
-          0.02,
-          0.03
+          0.065,
+          0.024,
+          0.026
         ]
       },
       "origin": [
+        0.0175,
         0.0,
-        0.0,
-        0.015
+        0.0
       ],
       "material": "gray",
       "color": [
@@ -292,15 +281,15 @@
       "shape": {
         "type": "box",
         "size": [
-          0.03,
-          0.02,
-          0.05
+          0.006,
+          0.024,
+          0.026
         ]
       },
       "origin": [
+        0.003,
         0.0,
-        0.0,
-        0.025
+        0.0
       ],
       "material": "orange",
       "color": [
@@ -309,79 +298,53 @@
         0.0,
         1.0
       ]
-    },
-    {
-      "name": "link_7",
-      "joint": "joint_7",
-      "shape": {
-        "type": "box",
-        "size": [
-          0.008,
-          0.012,
-          0.04
-        ]
-      },
-      "origin": [
-        0.0,
-        0.0,
-        0.02
-      ],
-      "material": "blue",
-      "color": [
-        0.0,
-        0.5,
-        1.0,
-        1.0
-      ]
     }
   ],
   "tcp": {
     "offset": [
-      0.0,
+      0.006,
       0.0,
       0.0
     ],
     "wpr": [
       0.0,
-      0.0,
+      1.5708,
       0.0
     ],
-    "frame": "link_7"
+    "frame": "link_6"
   },
   "tool": null,
   "safe_box": {
     "frame": "world",
     "x": [
       0.06,
-      0.2
+      0.22
     ],
     "y": [
-      -0.12,
-      0.12
+      -0.1,
+      0.1
     ],
     "z": [
       0.02,
-      0.26
+      0.22
     ]
   },
   "named_poses": {
     "home": [
       0.0,
+      1.55,
+      1.25,
       0.0,
-      0.8,
-      0.8,
-      0.0,
-      0.7,
-      0.1
+      -0.3,
+      0.0
     ],
     "ready": [
       0.0,
-      0.6,
-      1.0,
-      1.0,
+      1.8,
       0.8,
+      0.0,
       1.0,
-      0.1
+      -0.5
     ]
   }
 }

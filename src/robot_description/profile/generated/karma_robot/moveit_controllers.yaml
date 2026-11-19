@@ -16,6 +16,5 @@ moveit_simple_controller_manager:
       - joint_4
       - joint_5
       - joint_6
-      - joint_7
     action_ns: follow_joint_trajectory
     default: true
