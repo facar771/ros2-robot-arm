@@ -2,9 +2,8 @@
 # Initial positions of the ros2_control fake/sim system
 initial_positions:
   joint_1: 0.0
-  joint_2: 0.0
-  joint_3: 0.8
-  joint_4: 0.8
-  joint_5: 0.0
-  joint_6: 0.7
-  joint_7: 0.1
+  joint_2: 1.55
+  joint_3: 1.25
+  joint_4: 0.0
+  joint_5: -0.3
+  joint_6: 0.0

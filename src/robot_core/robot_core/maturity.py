@@ -105,10 +105,11 @@ def parse_quality(data: Any, profile: Profile) -> Quality:
     if not isinstance(fields, Mapping):
         raise _fail('fields', f'eşleme (alan yolu: etiket) olmalı, bulunan: {fields!r}')
     known = set(known_paths(profile))
+    tool_fields = set(AXIS_CRITICAL)
     tags: Dict[str, Optional[str]] = {}
     pins: Dict[str, Any] = {}
     for path, entry in fields.items():
-        if path not in known:
+        if path not in known and not _is_tool_path(path, tool_fields):
             raise _fail(f'fields.{path}', 'bilinmeyen alan yolu (yazım hatası mı? örnek: '
                                           'links.link_2.length, axes.joint_1.gear_ratio)')
         if isinstance(entry, Mapping):
@@ -120,6 +121,16 @@ def parse_quality(data: Any, profile: Profile) -> Quality:
                         f"{' | '.join(TAGS)} ya da null olmalı, bulunan: {entry!r}")
         tags[path] = entry
     return Quality(tags, pins)
+
+
+def _is_tool_path(path: Any, fields: set) -> bool:
+    """``tool_actuators.<name>.<axis field>`` (K8): the robot profile alone does not know the
+    hardware's tool actuators, so the name is only checked for shape here."""
+    if not isinstance(path, str):
+        return False
+    parts = path.split('.', 2)
+    return (len(parts) == 3 and parts[0] == 'tool_actuators' and parts[1].isidentifier()
+            and parts[2] in fields)
 
 
 def load_quality(path: Union[str, Path, None], profile: Profile) -> Quality:
@@ -171,6 +182,10 @@ def field_value(profile: Profile, hardware: Optional[HardwareProfile], path: str
                 'limits.effort': joint.effort}[suffix]
     if hardware is None:
         return None
+    if kind == 'tool_actuators':
+        if name not in hardware.tool_actuator_names:
+            return None
+        return _axis_value(hardware.tool_actuator(name).axis, suffix)
     return _axis_value(hardware.axis(name), suffix)
 
 
@@ -266,6 +281,8 @@ def _critical_paths(profile: Profile, hardware: Optional[HardwareProfile]) -> Li
             if getattr(axis, 'mirror', None) is not None:
                 extra += SERVO_MIRROR_CRITICAL
             paths += [f'axes.{joint.name}.{f}' for f in SERVO_CRITICAL + extra]
+    for tool in (hardware.tool_actuators if hardware is not None else ()):
+        paths += [f'tool_actuators.{tool.name}.{f}' for f in AXIS_CRITICAL]   # K8: same rule
     return paths
 
 
