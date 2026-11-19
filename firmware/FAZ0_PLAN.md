@@ -20,13 +20,13 @@ Bir Arduino Uno + bir NodeMCU, TX/RX ile bağlı. Uno'da 6 servo + A4988 ile sü
 |---|---|---|---|
 | 1 | taban | 28BYJ-48 #1 (ULN2003 #1) | step |
 | 2 | ana kol | 28BYJ-48 #2 (ULN2003 #2) | step |
-| 3 | bir üst | **2× SG90** birlikte (tek biri yetmez), **ters yönlü** | servo çifti |
-| 4 | bir üst | **2× SG90** birlikte | servo çifti |
-| 5 | bir üst | 1× SG90 | servo |
-| 6 | bir üst | 1× SG90 | servo |
+| 3 | bir üst (pitch) | **2× SG90** birlikte (tek biri yetmez), **ters yönlü** | servo çifti |
+| 4 | bir üst (roll) | **1× SG90** (yerinde döner, yükü az) | servo |
+| 5 | bir üst (pitch) | **2× SG90** birlikte, ters yönlü | servo çifti |
+| 6 | bir üst (roll) | 1× SG90 | servo |
 | 7 | uç, kıskaç | A4988 ile step | step; yol haritası profilindeki `joint_1..6`'da yok, K8 (Robot_2) kararı |
 
-Toplam: **3 step** (2× 28BYJ-48 + 1 A4988), **6 SG90** (eksen 3 ve 4 çift). 7 eyleyici eksen, protokolde `eksen_sayısı = 7`.
+Toplam: **3 step** (2× 28BYJ-48 + 1 A4988), **6 SG90** (eksen 3 ve 5 çift; 4 ve 6 tek; 2026-11-19 düzeltmesi, eskiden 3 ve 4 sanılıyordu). 7 eyleyici eksen, protokolde `eksen_sayısı = 7`.
 (Bu, yol haritasındaki "2 step SBT0811" bilgisini geçersiz kılar; SBT0811 son listede yok.)
 
 ## 2. Pin ve bağlantı tablosu (ONAY BEKLİYOR)
@@ -38,14 +38,15 @@ Toplam: **3 step** (2× 28BYJ-48 + 1 A4988), **6 SG90** (eksen 3 ve 4 çift). 7 
 | D0 (RX), D1 (TX) | ESP/NodeMCU UART'ı (bkz. §3) | – |
 | D2–D5 | ULN2003 #1 IN1–IN4 → 28BYJ-48 | 1 |
 | D6–D9 | ULN2003 #2 IN1–IN4 → 28BYJ-48 | 2 |
-| A0, A1 | SG90 çifti sinyalleri (iki AYRI pin) | 3 |
-| A2, A3 | SG90 çifti sinyalleri (iki AYRI pin) | 4 |
-| A4 | SG90 | 5 |
-| A5 | SG90 | 6 |
+| A0, A1 | SG90 çifti sinyalleri (iki AYRI pin) | 3 (**ONAYSIZ**) |
+| A2 | SG90 | 4 (**ONAYSIZ**) |
+| A3, A4 | SG90 çifti sinyalleri (iki AYRI pin) | 5 (**ONAYSIZ**) |
+| A5 | SG90 | 6 (**ONAYSIZ**) |
 | D10 / D11 / D12 | A4988 STEP / DIR / EN (aktif düşük) | 7 |
-| D13 | boş (durum LED'i) | – |
+| D13 | NC acil dur döngüsü okuma, `INPUT_PULLUP` (LOW = kapalı/OK) | – |
 
-- **Servo çifti:** iki servo aynı sinyal pinine paralel BAĞLANMAZ. Ters yön ve çift akım yüzünden iki ayrı pin; ikinci servoya `toplam − θ` aynalı açı yazılır (kalibrasyon K6b/K7). Servolar Faz 2'de **kullanılmaz**.
+- **Servo çifti:** iki servo aynı sinyal pinine paralel BAĞLANMAZ. Ters yön ve çift akım yüzünden iki ayrı pin; ikinci servoya `toplam − θ` aynalı açı yazılır (kalibrasyon K6b/K7). Servolar Faz 2a'da **kullanılmaz**; servo firmware'i yazılmadı, aktifleştirme mekanik gelene kadar kapalı (`K9_SERVO=0`, 1 yapılırsa derleme durur).
+- **Tek kaynak:** eksen→pin eşlemesi artık yalnız `firmware/uno/src/k9_pinmap.h` tablosundadır (kodda sabit pin yok). Step pinleri tezgâhta doğrulandı (`confirmed=1`); **servo pinleri ONAYSIZ**, Ferhat teyit edince yalnız o tablo değişir (`firmware/host/pinmap_check.cpp` testi step pinlerini kilitler, servo sayısını ve çift/tek yapıyı denetler).
 - `EN` hattı donanımda çekme direnciyle **varsayılan KAPALI** olmalı (HARDWARE.md §6: `EN_etkin = NC_kapalı AND firmware_izin`).
 - Motor ve servo gücü Uno'nun 5 V'undan ALINMAZ; ayrı besleme, ortak GND. NC acil dur butonu motor gücünü/EN hattını yazılımdan bağımsız keser (§6). Servo besleme kesimi K7.
 - AccelStepper `HALF4WIRE` için ULN2003 pin sırası (IN1,IN3,IN2,IN4) Faz 2'de doğrulanır.
@@ -113,7 +114,7 @@ Açık (Faz 2 öncesi, kod yazmayı bloklamaz): (1) D2–D12/A0–A5 pin numaral
 ## Yol haritasına öneri
 
 - K9 satırındaki "Ferhat'ın mevcut kodu bozulmaz" ifadesi artık geçersiz (eski panel kodu kapsam dışı). Sahip adı: yol haritası Robot_9 diyor, görev Robot_10'a verildi; müdür günceller.
-- Bağlantı çelişkisi: "2 step SBT0811" bilgisi geçersiz; gerçek liste 3 step + 6 SG90 (eksen 3 ve 4 servo çifti).
+- Bağlantı çelişkisi: "2 step SBT0811" bilgisi geçersiz; gerçek liste 3 step + 6 SG90 (eksen 3 ve 5 servo çifti, 4 ve 6 tek).
 - `HARDWARE.md` §2: 921600 baud Uno hedefinde geçerli değil (Uno 115200; Robot_4 not düşebilir). Protokol değişmez.
 - B3 bulgusu (`HELLO_REQ` seq sıfırlama) Uno firmware'inde Faz 1'de uygulanır; protokole eklemeli öneri Robot_4/Robot_1 onayına bağlı.
 - Çift servo ve kıskaç (eksen 7) için profil/protokol kararı K6b (Robot_4) ve K8 (Robot_2) işi.

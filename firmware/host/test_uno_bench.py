@@ -248,3 +248,24 @@ def test_disable_states(b):
     assert b.result(MsgType.CMD_DISABLE).result == Result.BAD_STATE               # UNHOMED
     b.result(MsgType.CMD_HOME, mask=1 << J1)
     assert b.result(MsgType.CMD_DISABLE).result == Result.OK                      # HOMED: zaten kapalı
+
+
+def test_pinmap_table_consistent(tmp_path):
+    """Eksen->pin tek tablo (k9_pinmap.h): çakışma yok, 6 servo (J3,J5 çift; J4,J6 tek, ONAYSIZ), step pinleri kilitli."""
+    import subprocess
+    from k9_hostlib import CORE, HERE
+    exe = tmp_path / 'pinmap_check'
+    subprocess.run(['g++', '-std=c++11', '-Wall', '-Wextra', '-Werror', f'-I{CORE}', str(HERE / 'pinmap_check.cpp'),
+                    '-o', str(exe)], check=True)
+    out = subprocess.run([str(exe)], capture_output=True, text=True)
+    assert out.stdout.strip() == 'OK', out.stdout
+
+
+def test_servo_stays_disabled_at_compile_time(tmp_path):
+    import subprocess
+    from k9_hostlib import CORE, HERE
+    src = tmp_path / 'x.cpp'
+    src.write_text('#include "../uno/src/k9_pinmap.h"\nint main(){return 0;}\n')
+    r = subprocess.run(['g++', '-std=c++11', '-DK9_SERVO=1', f'-I{HERE}', f'-I{CORE}', str(src), '-o', str(tmp_path / 'x')],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and 'K9_SERVO=1' in r.stderr
