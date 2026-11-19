@@ -11,7 +11,8 @@
 #include <simavr/avr_uart.h>
 
 static avr_t* avr;
-static int dump_tx = 0;
+static int dump_tx = 0, dump_pins = 0;
+static void pin_notify(avr_irq_t* irq, uint32_t value, void* p) { (void)irq; if (dump_pins) printf("P %s %u\n", (const char*)p, value & 1); }
 static void tx_notify(avr_irq_t* irq, uint32_t value, void* p) { (void)irq; (void)p; if (dump_tx) printf("U %u\n", value & 0xFF); }
 static uint64_t last_j1 = 0;
 
@@ -42,6 +43,12 @@ int main(int argc, char** argv) {
   avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ('B'), 2), j7_notify, NULL);
   dump_tx = getenv("JITTER_DUMP_TX") != NULL;  // hata ayıklama: MCU'nun seri çıkışını da yaz
   avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('0'), UART_IRQ_OUTPUT), tx_notify, NULL);
+  dump_pins = getenv("JITTER_DUMP_PINS") != NULL;  // hata ayıklama/regresyon: D2..D11 pin değişim SIRASINI yaz
+  static const char* names[10] = {"D2", "D3", "D4", "D5", "D6", "D7", "D8", "D9", "D10", "D11"};
+  for (int i = 0; i < 10; i++) {
+    int d = i + 2;
+    avr_irq_register_notify(avr_io_getirq(avr, AVR_IOCTL_IOPORT_GETIRQ(d < 8 ? 'D' : 'B'), d < 8 ? d : d - 8), pin_notify, (void*)names[i]);
+  }
   avr_irq_t* rx = avr_io_getirq(avr, AVR_IOCTL_UART_GETIRQ('0'), UART_IRQ_INPUT);
 
   FILE* sch = fopen(argv[2], "r");
