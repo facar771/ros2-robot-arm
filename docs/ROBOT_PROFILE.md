@@ -295,8 +295,40 @@ tork, servo darbe aralıkları ve anahtar konumları **yer tutucu**. Hiçbir ala
 - **Doğrulanacak varsayımlar:** dirsek plakası üst kola sabit ve J3 üst delikte; ön taraf; J2/J3
   0→180°, J4–J6 ortalanmış ±90°; işaretler (yanlış işaret donanım profilinde `direction: -1` / darbe
   eşlemesi). 28BYJ-48 sürücüsü ULN2003 varsayıldı.
-- **Kapsam dışı:** mesh'ler (PR B), kıskaç (tasarlanmadı; kayar eklem desteği ayrı iş), karma için
+- **Kapsam dışı:** mesh'lerin URDF/RViz'e bağlanması (B'den sonraki PR), kıskaç (tasarlanmadı; kayar eklem desteği ayrı iş), karma için
   launch/MoveIt, `hardware_gen` (servo içeren profili reddeder: K6b), köprü/firmware.
+
+## CAD mesh'leri (PR B): `robot_core.mesh_import`
+
+CAD dışa aktarımlarını (STL) link çerçevesine taşır; **görsel** mesh ile **çarpışma** şeklini ayırır;
+CAD sıfır pozunun profilin sıfır pozuyla uyuştuğunu denetler. Yalnız numpy + PyYAML (yeni bağımlılık
+yok).
+
+```
+cd src/robot_core && python3 -m robot_core.mesh_import --profile ../robot_description/profile/karma_robot/karma_robot.yaml [--check]
+```
+
+- **Girdi:** `profile/<robot>/meshes.yaml` (mesh haritası) + `meshes/<robot>/cad/*.stl`. CAD dosyaları
+  montaj koordinatında, birimi `cad.units`, tüm eklemler profilin **sıfır pozunda** olmalı. Harita: CAD
+  → robot dönüşümü (`origin`: robot orijininin CAD koordinatı, `axes`: robot ekseni = ±CAD ekseni;
+  sol el/ayna dönüşümü reddedilir), link → dosyalar (bir parça tek linke; yalnız `cad/` altında göreli
+  yol), `joint_tolerance`.
+- **Çıktı:** `meshes/<robot>/link/<link>.stl` (metre, link çerçevesi, ikili, normaller yeniden
+  hesaplanır) ve `profile/generated/<robot>/meshes.yaml` raporu: üçgen sayısı, **çarpışma kutusu** (görsel
+  mesh'in sınır kutusu, 0.1 mm ızgaraya **dışa** yuvarlanır: asla mesh'ten küçük değil) ve uyarılar.
+- **Sıfır poz denetimi (uyarı, düzeltme yok):** her eklem, bağladığı iki linkin mesh sınır kutusunun
+  içinde ya da `joint_tolerance` kadar yakınında olmalı. Ayrıca: birim/ölçek (mesh boyu / zincir boyu
+  0.25–4 dışında → **hata**), ters yüzlü parça (işaretli hacim < 0, ör. aynalanmış dışa aktarım →
+  uyarı), mesh'i olmayan link (primitif kalır → uyarı), 50 000 üçgen üstü (uyarı).
+- **Bilinen kör nokta:** bir parçanın **kendi eklem ekseni etrafında** dönük dışa aktarılması (ör. +90°)
+  eklemi kutunun içinde bırakır, **yakalanmaz** (testte belgelendi). Bunu fotoğraf/CAD eksenleri gösterir.
+- **Mesh ölçüm değildir:** importer kalite etiketlerini, güvenli kutuyu, eklem limitlerini ve kapıları
+  okumaz/değiştirmez (test: modül `maturity`/`safezone` içe aktarmaz). Görüntü ne kadar gerçekçi olursa
+  olsun `measured` yalnız robottaki ölçümle verilir.
+- **karma_robot:** 9 CAD parçası (~0.9 MB, Git'te, LFS yok), 7 link, 18 732 üçgen; **uyarı yok**: CAD sıfır
+  pozu A2 kinematiğiyle uyuşuyor. `.gitattributes`: `*.stl binary`.
+- **Henüz yok:** URDF `<mesh>` (visual) + çarpışma kutuları, view_model.json, RViz/MoveIt'te görünüm,
+  CMake kurulumu (`meshes/`). Sonraki PR.
 
 ## Bu aşamada olmayanlar
 Servo protokolü/simülatörü/`HARDWARE.md` durum makinesi (K6b), servo firmware (K3), servo güç ve tork denetimi (K7), karma/tam step robot profilleri (K8), step eksende `manual_zero` (karar bekliyor);

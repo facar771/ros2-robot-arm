@@ -1,0 +1,35 @@
+# Mesh map of the KARMA robot (PR B): which CAD export belongs to which link, and how the CAD frame
+# maps onto the robot frame. Read by `python3 -m robot_core.mesh_import` ONLY:
+#   cd src/robot_core && python3 -m robot_core.mesh_import --profile ../robot_description/profile/karma_robot/karma_robot.yaml [--check]
+# It writes one link-frame mesh per link (robot_description/meshes/karma_robot/link/<link>.stl) and
+# a report (robot_description/profile/generated/karma_robot/meshes.yaml: collision boxes + warnings).
+#
+# !! A mesh is a PICTURE of the design, not a measurement: nothing here changes a quality tag, the
+# !! safe box, a joint limit or a readiness gate (all of those come from the robot profile).
+#
+# CAD exports (SolidWorks, KUCUK_ROBOT.SLDASM): every part in the ASSEMBLY frame, mm, every joint at
+# the profile's ZERO pose (arm folded back). The SLDASM itself is not in the repository.
+mesh_version: 1
+robot: karma_robot
+
+cad:
+  units: mm
+  # CAD point p (mm) -> robot frame (m): axes(p - origin) / 1000. `origin` = the robot origin in CAD
+  # coordinates: centre of the J1 base ring (x, z) on the table plane (y = underside of the base).
+  origin: [700.86, 884.38, 1311.26]
+  # robot axis = +-CAD axis. The CAD is Y-up; the robot's front (x) is the CAD's -z.
+  axes: {x: -z, y: -x, z: y}
+
+# link -> CAD exports (relative to robot_description/meshes/karma_robot/cad/)
+links:
+  base_link: [j1_taban_28byj48.stl]
+  link_1: [j2_taban_ustu_28byj48.stl]
+  link_2: [j2-j3_kol.stl, j3_dirsek_plakasi_1.stl, j3_dirsek_plakasi_2.stl]   # plates fixed to the upper arm
+  link_3: [j3-j4_kol_2xsg90.stl]
+  link_4: [j4-j5_ara_parca_1xsg90.stl]
+  link_5: [j5-j6_kol_2xsg90.stl]
+  link_6: [j6_kiskac_tutucu_1xsg90.stl]
+
+# Zero-pose check: every joint must lie inside (or within `joint_tolerance` m of) the bounding box of
+# BOTH meshes it connects. A miss is a WARNING (wrong export pose / frame / offset), never a fix.
+joint_tolerance: 0.005
