@@ -294,7 +294,8 @@ tork, servo darbe aralıkları ve anahtar konumları **yer tutucu**. Hiçbir ala
   için bu gerçek bir uyarıdır, J1 (dikey eksen) için denetimin muhafazakârlığıdır.
 - **Doğrulanacak varsayımlar:** dirsek plakası üst kola sabit ve J3 üst delikte; ön taraf; J2/J3
   0→180°, J4–J6 ortalanmış ±90°; işaretler (yanlış işaret donanım profilinde `direction: -1` / darbe
-  eşlemesi). 28BYJ-48 sürücüsü ULN2003 varsayıldı.
+  eşlemesi). 28BYJ-48 sürücüsü ULN2003: Ferhat bench'te **doğruladı** (A2b; kalite etiketi
+  `axes.joint_1/2.driver.model: measured`; `driver.model` yalnız bilgi etiketidir, hiçbir kapıyı açmaz).
 - **Kapsam dışı:** mesh'ler (PR B), kıskaç (tasarlanmadı; kayar eklem desteği ayrı iş), karma için
   launch/MoveIt, `hardware_gen` (servo içeren profili reddeder: K6b), köprü/firmware.
 

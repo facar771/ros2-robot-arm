@@ -12,8 +12,8 @@
 # !! EVERY value is a PLACEHOLDER (or a datasheet-class estimate): no part was measured. Speeds,
 # !! microsteps and pulse ranges are meant to be edited later (no code change needed).
 # !! 28BYJ-48: `steps_per_rev` = steps per turn of the motor's OUTPUT shaft (its own gearbox
-# !! included, full step); `gear_ratio` = the robot's extra reduction. Driver ULN2003 is an ASSUMPTION
-# !! (unipolar 28BYJ-48); `microstep: 2` would be half-step.
+# !! included, full step); `gear_ratio` = the robot's extra reduction. Driver ULN2003: VERIFIED on the
+# !! bench build (Ferhat, A2b; quality tag `driver.model: measured`); `microstep: 2` would be half-step.
 #
 # !! STEP AXES WITHOUT A REAL LIMIT SWITCH: joint_1, joint_2 and the gripper (joint_7) are OPEN LOOP;
 # !! the rule (HARDWARE.md §7, NO_REFERENCE) demands a home switch. The `homing:` blocks below DECLARE
@@ -28,7 +28,7 @@ robot: karma_robot
 axes:
   joint_1:                         # base yaw
     motor: {type: step, steps_per_rev: 2048, model: 28BYJ-48}
-    driver: {microstep: 1, model: ULN2003}
+    driver: {microstep: 1, model: ULN2003}   # ULN2003 verified on the bench
     direction: 1
     zero_offset: 0.0
     gear_ratio: 4.0
@@ -38,7 +38,7 @@ axes:
     homing: {method: switch, direction: -1, speed: 0.05, position: 0.0, backoff: 0.05}   # switch NOT built yet
   joint_2:                         # shoulder pitch: very slow on purpose (16:1)
     motor: {type: step, steps_per_rev: 2048, model: 28BYJ-48}
-    driver: {microstep: 1, model: ULN2003}
+    driver: {microstep: 1, model: ULN2003}   # ULN2003 verified on the bench
     direction: 1
     zero_offset: 0.0
     gear_ratio: 16.0

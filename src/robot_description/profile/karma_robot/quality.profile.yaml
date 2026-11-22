@@ -2,13 +2,15 @@
 # see ../quality.profile.yaml (six-axis robot) and docs/ROBOT_PROFILE.md. Read by robot_core.maturity
 # ONLY; it changes no generated file.
 #
-# NOTHING below is `measured`: the printed robot was never measured, weighed or calibrated.
+# No PHYSICAL VALUE below is `measured`: the printed robot was never measured, weighed or calibrated.
 #   estimated   = a design number: link lengths / joint positions from the SolidWorks CAD (STL bore
 #                 centres), joint ranges Ferhat stated (180 deg), motor types and reductions he
 #                 stated (4:1, 16:1), the 28BYJ-48 datasheet step count. NOT verified on the robot.
 #   placeholder = a stand-in: masses (solid-PLA volume + motors), efforts, J1 +-170 deg, every
 #                 servo pulse range / slew limit / rest pose, microsteps, the (not yet built) switch
 #                 positions, the whole gripper actuator.
+#   measured    = only `driver.model` of joint_1 / joint_2 (ULN2003): verified by Ferhat on the bench
+#                 build (A2b). An informational tag: it opens no gate and closes no gap.
 # A mesh or a CAD number never makes a field `measured` (only a measurement on the robot does).
 # Hardware readiness stays closed (it needs every critical field `measured` + the torque check).
 quality_version: 1
@@ -84,3 +86,5 @@ fields:
   tool_actuators.joint_7.gear_ratio: placeholder
   tool_actuators.joint_7.limits.position: placeholder
   tool_actuators.joint_7.homing.position: placeholder
+  axes.joint_1.driver.model: measured
+  axes.joint_2.driver.model: measured

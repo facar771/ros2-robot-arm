@@ -81,6 +81,11 @@ class Quality:
         return Quality({**self.tags, path: tag}, pins)
 
 
+# Informational tags (A2b): may be tagged, but are NOT critical (no gate, no gap). E.g. which driver
+# chip is fitted: `measured` = seen / verified on the real robot.
+AXIS_INFO = ('driver.model',)
+
+
 def known_paths(profile: Profile) -> List[str]:
     """Every field path a tag may name (hardware axes follow the robot's joint names)."""
     paths = [f'links.{n.name}.{f}' for n in profile.links for f in LINK_CRITICAL]
@@ -88,7 +93,7 @@ def known_paths(profile: Profile) -> List[str]:
         paths += [f'joints.{j.name}.{f}' for f in JOINT_CRITICAL]
         paths += [f'axes.{j.name}.{f}'
                   for f in AXIS_CRITICAL + SERVO_CRITICAL + SERVO_REAL_CRITICAL
-                  + SERVO_MIRROR_CRITICAL]
+                  + SERVO_MIRROR_CRITICAL + AXIS_INFO]
     return paths
 
 
