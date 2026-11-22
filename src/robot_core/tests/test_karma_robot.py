@@ -328,12 +328,26 @@ def test_load_maturity_reads_the_sidecar_beside_the_files():
     assert not any(g.status == 'measured' for g in m.gaps)
 
 
-def test_quality_file_names_only_known_fields_and_nothing_measured(profile):
+def test_quality_file_names_only_known_fields_and_no_physical_value_measured(profile):
     data = yaml.safe_load(QUALITY.read_text(encoding='utf-8'))
     assert data['robot'] == 'karma_robot'
-    assert 'measured' not in set(data['fields'].values())
+    measured = {p for p, t in data['fields'].items() if t == 'measured'}
+    assert measured == {'axes.joint_1.driver.model', 'axes.joint_2.driver.model'}   # A2b: bench
     assert data['fields']['links.link_2.length'] == 'estimated'           # CAD = estimate
-    assert data['fields']['joints.joint_1.limits.position'] == 'placeholder'
+    assert data['fields']['joints.joint_1.limits.position'] == 'estimated'   # Ferhat: cables OK
+
+
+def test_driver_model_tag_is_informational_only(profile, hw):
+    """ULN2003 verified on the bench (A2b): recorded, but it is no critical field, so it neither
+    opens a gate nor removes a gap; untagging it changes nothing either."""
+    data = yaml.safe_load(QUALITY.read_text(encoding='utf-8'))
+    tagged = maturity(profile, hw, parse_quality(data, profile))
+    for path in ('axes.joint_1.driver.model', 'axes.joint_2.driver.model'):
+        del data['fields'][path]
+    untagged = maturity(profile, hw, parse_quality(data, profile))
+    assert tagged.level == untagged.level == SIM_READY
+    assert [str(g) for g in tagged.gaps] == [str(g) for g in untagged.gaps]
+    assert not any('driver.model' in g.field for g in tagged.gaps)
 
 
 # ---- generated files --------------------------------------------------------------------------

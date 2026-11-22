@@ -84,6 +84,13 @@ def test_link_meshes_sit_in_their_link_frames(profile, real):
                 (joint.name, link)
 
 
+def test_front_is_away_from_the_turret_protrusion(real):
+    """Ferhat's check for the robot's front (+x): the protrusion on the turret (link_1, the J2
+    motor side) points to the BACK."""
+    pts = real.meshes['link_1'].reshape(-1, 3)
+    assert -pts[:, 0].min() > pts[:, 0].max() + 0.02
+
+
 def test_cad_was_exported_in_mm_and_the_arm_is_desktop_sized(real):
     pts = np.concatenate([m.reshape(-1, 3) for m in real.meshes.values()])
     assert 0.1 < np.ptp(pts[:, 2]) < 0.5                           # metres after the import

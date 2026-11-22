@@ -292,9 +292,13 @@ tork, servo darbe aralıkları ve anahtar konumları **yer tutucu**. Hiçbir ala
   cevaplanana kadar kural değişmedi.
 - **Tork denetimi** (bilerek kaba: eksen yönünü yok sayar) J1 ve J2'de başarısız; J2 (28BYJ-48 + 16:1)
   için bu gerçek bir uyarıdır, J1 (dikey eksen) için denetimin muhafazakârlığıdır.
-- **Doğrulanacak varsayımlar:** dirsek plakası üst kola sabit ve J3 üst delikte; ön taraf; J2/J3
-  0→180°, J4–J6 ortalanmış ±90°; işaretler (yanlış işaret donanım profilinde `direction: -1` / darbe
-  eşlemesi). 28BYJ-48 sürücüsü ULN2003 varsayıldı.
+- **Ferhat onayladı (A2b, tasarım niyeti; ölçüm değil → `estimated` kalır):** dirsek plakası üst kola
+  sabit ve J3 üst delikte; ön taraf J2 motorunun tersi (işaret: dönen gövdedeki (link_1) çıkıntı
+  **arkaya** bakar; testte mesh'ten denetlenir); J1 ±170° kablolar için yeterli; J2/J3 0→180°, J4–J6
+  ortalanmış ±90°; işaretler: J1 yukarıdan saat yönünün tersi, J2/J3/J5 kol kalkar/açılır, J4/J6
+  tabandan uca bakınca saat yönü (robotta yanlış çıkan işaret donanım profilinde `direction: -1` /
+  darbe eşlemesi). 28BYJ-48 sürücüsü ULN2003: Ferhat bench'te **doğruladı** (A2b; kalite etiketi
+  `axes.joint_1/2.driver.model: measured`; `driver.model` yalnız bilgi etiketidir, hiçbir kapıyı açmaz).
 - **Kapsam dışı:** mesh'lerin URDF/RViz'e bağlanması (B'den sonraki PR), kıskaç (tasarlanmadı; kayar eklem desteği ayrı iş), karma için
   launch/MoveIt, `hardware_gen` (servo içeren profili reddeder: K6b), köprü/firmware.
 
