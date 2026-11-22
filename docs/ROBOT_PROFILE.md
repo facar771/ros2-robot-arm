@@ -299,8 +299,8 @@ tork, servo darbe aralıkları ve anahtar konumları **yer tutucu**. Hiçbir ala
   tabandan uca bakınca saat yönü (robotta yanlış çıkan işaret donanım profilinde `direction: -1` /
   darbe eşlemesi). 28BYJ-48 sürücüsü ULN2003: Ferhat bench'te **doğruladı** (A2b; kalite etiketi
   `axes.joint_1/2.driver.model: measured`; `driver.model` yalnız bilgi etiketidir, hiçbir kapıyı açmaz).
-- **Kapsam dışı:** mesh'lerin URDF/RViz'e bağlanması (B'den sonraki PR), kıskaç (tasarlanmadı; kayar eklem desteği ayrı iş), karma için
-  launch/MoveIt, `hardware_gen` (servo içeren profili reddeder: K6b), köprü/firmware.
+- **Kapsam dışı:** karma için MoveIt/Gazebo launch, kıskaç (tasarlanmadı; kayar eklem desteği ayrı
+  iş), `hardware_gen` (servo içeren profili reddeder: K6b), köprü/firmware.
 
 ## CAD mesh'leri (PR B): `robot_core.mesh_import`
 
@@ -318,8 +318,11 @@ cd src/robot_core && python3 -m robot_core.mesh_import --profile ../robot_descri
   sol el/ayna dönüşümü reddedilir), link → dosyalar (bir parça tek linke; yalnız `cad/` altında göreli
   yol), `joint_tolerance`.
 - **Çıktı:** `meshes/<robot>/link/<link>.stl` (metre, link çerçevesi, ikili, normaller yeniden
-  hesaplanır) ve `profile/generated/<robot>/meshes.yaml` raporu: üçgen sayısı, **çarpışma kutusu** (görsel
-  mesh'in sınır kutusu, 0.1 mm ızgaraya **dışa** yuvarlanır: asla mesh'ten küçük değil) ve uyarılar.
+  hesaplanır) ve `profile/generated/<robot>/meshes.yaml` raporu: üçgen sayısı, **çarpışma kutuları**
+  (C: **CAD parçası başına bir kutu**: parçanın sınır kutusu, 0.1 mm ızgaraya **dışa** yuvarlanır, asla
+  parçadan küçük değil; link başına tek kutu L biçimli linklerde (üst kol + dirsek plakaları) komşu
+  olmayan linkleri yutuyordu) ve uyarılar. Test: sıfır, home ve ready pozlarında komşu olmayan hiçbir
+  link çifti kutularıyla çakışmaz (MoveIt'in kendi çarpışma denetimi böyle görür).
 - **Sıfır poz denetimi (uyarı, düzeltme yok):** her eklem, bağladığı iki linkin mesh sınır kutusunun
   içinde ya da `joint_tolerance` kadar yakınında olmalı. Ayrıca: birim/ölçek (mesh boyu / zincir boyu
   0.25–4 dışında → **hata**), ters yüzlü parça (işaretli hacim < 0, ör. aynalanmış dışa aktarım →
@@ -331,8 +334,24 @@ cd src/robot_core && python3 -m robot_core.mesh_import --profile ../robot_descri
   olsun `measured` yalnız robottaki ölçümle verilir.
 - **karma_robot:** 9 CAD parçası (~0.9 MB, Git'te, LFS yok), 7 link, 18 732 üçgen; **uyarı yok**: CAD sıfır
   pozu A2 kinematiğiyle uyuşuyor. `.gitattributes`: `*.stl binary`.
-- **Henüz yok:** URDF `<mesh>` (visual) + çarpışma kutuları, view_model.json, RViz/MoveIt'te görünüm,
-  CMake kurulumu (`meshes/`). Sonraki PR.
+- **URDF'te (C):** `profile_gen`, robotun mesh raporu varsa (`load_mesh_report`) URDF linklerine
+  `<visual><mesh filename="package://robot_description/meshes/<robot>/link/<link>.stl"/>` ve parça
+  başına `<collision><box/>` yazar. Rapor **kapalı okunur**: başka robota ait, bilinmeyen link, eksik
+  mesh dosyası, bozuk/boş kutu → `ProfileError` (URDF var olmayan dosyayı göstermez). Yalnız URDF
+  değişir: `inertial` profilden (yer tutucu kütle), limitler, SRDF, güvenli kutu, kontrolcüler ve
+  view_model.json mesh'i görmez (test). Raporu olmayan robot (six_axis_robot) bayt bayt aynı.
+  Sıra: önce `mesh_import`, sonra `profile_gen --profile …` (ikisinin de `--check`'i testte).
+- **XML başlığı (C düzeltmesi):** K8'den beri karma robotun URDF/SRDF/xacro başlığında `--profile`
+  geçiyordu; XML yorumunda `--` yasak olduğu için bu dosyalar **ayrıştırılamıyordu**. Artık XML
+  başlığı seçeneği yazıyla verir (YAML/JSON başlıkları gerçek komutu korur); her XML çıktısı testte
+  ayrıştırılır.
+- **RViz'de görmek:** `ros2 launch robot_description display.launch.py robot:=karma_robot`
+  (varsayılan `six_axis_robot`, eski davranış). Karma için: kurulu `profile/generated/karma_robot/robot.urdf`,
+  kaydırıcılar `home`'dan başlar (`initial_positions.yaml` → joint_state_publisher `zeros`; sıfır poz
+  limit dışıdır), RViz `rviz/karma_robot.rviz` ile (Fixed Frame `base_link`, RobotModel; çarpışma
+  kutuları RobotModel > Collision Enabled). CMake bunları ve `meshes/karma_robot/link`'i kurar; ham CAD
+  (`cad/`) kurulmaz.
+- **Henüz yok:** view_model.json'da mesh (Hub görünümü primitif kalır), karma için MoveIt/Gazebo.
 
 ## Bu aşamada olmayanlar
 Servo protokolü/simülatörü/`HARDWARE.md` durum makinesi (K6b), servo firmware (K3), servo güç ve tork denetimi (K7), karma/tam step robot profilleri (K8), step eksende `manual_zero` (karar bekliyor);

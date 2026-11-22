@@ -23,7 +23,15 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-install(DIRECTORY urdf launch DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY urdf launch rviz DESTINATION share/${PROJECT_NAME})
+# Karma robot (KUCUK_ROBOT): generated URDF + home pose for display.launch.py robot:=karma_robot,
+# and its link-frame CAD meshes (package://robot_description/meshes/karma_robot/link/*.stl).
+# The raw CAD exports (meshes/karma_robot/cad) are inputs of robot_core.mesh_import: not installed.
+install(FILES profile/generated/karma_robot/robot.urdf
+              profile/generated/karma_robot/initial_positions.yaml
+        DESTINATION share/${PROJECT_NAME}/profile/generated/karma_robot)
+install(DIRECTORY meshes/karma_robot/link
+        DESTINATION share/${PROJECT_NAME}/meshes/karma_robot)
 # L9b: the Robot API serves this read-only view model (GET /api/model)
 install(FILES profile/generated/view_model.json
         DESTINATION share/${PROJECT_NAME}/profile/generated)

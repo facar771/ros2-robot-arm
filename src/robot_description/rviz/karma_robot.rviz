@@ -1,0 +1,57 @@
+# RViz layout for the karma robot (KUCUK_ROBOT) with its CAD meshes:
+#   ros2 launch robot_description display.launch.py robot:=karma_robot
+# robot_state_publisher publishes /robot_description; joint_state_publisher_gui starts at `home`.
+# Collision boxes: RobotModel > Collision Enabled (off by default).
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Reference Frame: base_link
+      Plane Cell Count: 10
+      Cell Size: 0.05
+      Enabled: true
+      Value: true
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      Visual Enabled: true
+      Collision Enabled: false
+      Alpha: 1
+      Enabled: true
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Show Names: false
+      Marker Scale: 0.1
+      Enabled: false
+      Value: false
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: base_link
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 0.9
+      Focal Point:
+        X: 0.05
+        Y: 0.0
+        Z: 0.12
+      Name: Current View
+      Pitch: 0.35
+      Target Frame: base_link
+      Yaw: -2.3
+Window Geometry:
+  Height: 900
+  Width: 1400

@@ -16,10 +16,13 @@ import argparse
 import json
 import math
 import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional, Sequence
+from typing import Dict, Optional, Sequence, Tuple
 
-from robot_core.profile import Joint, Link, Profile, Tool, ToolShape, load_profile
+import yaml
+
+from robot_core.profile import Joint, Link, Profile, ProfileError, Tool, ToolShape, load_profile
 from robot_core.se3 import matrix_from_wpr
 
 SRC = Path(__file__).resolve().parents[2]            # .../src
@@ -93,7 +96,16 @@ def _header_text(p: Profile) -> str:
 
 
 def _xml_header(p: Profile) -> str:
-    return f'<!-- {_header_text(p)} -->'
+    # An XML comment must not contain "--" (the URDF / SRDF would not parse): the command line
+    # option is spelled out instead of `--profile` (the YAML / JSON headers keep the real command).
+    text = _header_text(p)
+    if p.robot != DEFAULT_ROBOT:
+        text = text.replace(f'`python3 -m robot_core.profile_gen --profile {profile_rel(p.robot)}`',
+                            f'`python3 -m robot_core.profile_gen` (profile seçeneği: '
+                            f'{profile_rel(p.robot)})')
+    if '--' in text:
+        raise ValueError(f'XML yorumu "--" içeremez: {text!r}')
+    return f'<!-- {text} -->'
 
 
 def _yaml_header(p: Profile) -> str:
@@ -107,13 +119,23 @@ def _geometry(link: Link) -> str:
     return f'<box size="{vec(link.dims)}"/>'
 
 
-def _link_xml(link: Link) -> str:
+def _link_xml(link: Link, mesh: Optional[LinkMesh] = None) -> str:
     origin = f'<origin xyz="{vec(link.origin)}"/>'
     geometry = f'<geometry>{_geometry(link)}</geometry>'
     ixx, iyy, izz = link.inertia
+    if mesh is None:
+        visual = f'    <visual>{geometry}<material name="{link.material}"/>{origin}</visual>\n'
+        collision = f'    <collision>{geometry}{origin}</collision>\n'
+    else:
+        visual = (f'    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box '
+                  f'per CAD part (robot_core.mesh_import) -->\n'
+                  f'    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="{mesh.uri}"/>'
+                  f'</geometry><material name="{link.material}"/></visual>\n')
+        collision = ''.join(f'    <collision name="{b.part}"><origin xyz="{vec(b.origin)}"/>'
+                            f'<geometry><box size="{vec(b.size)}"/></geometry></collision>\n'
+                            for b in mesh.boxes)
     return (f'  <link name="{link.name}">\n'
-            f'    <visual>{geometry}<material name="{link.material}"/>{origin}</visual>\n'
-            f'    <collision>{geometry}{origin}</collision>\n'
+            f'{visual}{collision}'
             f'    <!-- placeholder mass; inertia = solid primitive of this shape and mass '
             f'(replace with real CAD values) -->\n'
             f'    <inertial>{origin}<mass value="{f(link.mass)}"/><inertia ixx="{f(ixx)}" ixy="0" '
@@ -165,7 +187,65 @@ def _tool_xml(p: Profile, tool: Tool) -> str:
             f'<origin xyz="0.0 0.0 0.0"/>\n  </joint>\n')
 
 
-def gen_urdf(p: Profile) -> str:
+# ---- CAD meshes (robot_core.mesh_import report) -----------------------------------------------
+@dataclass(frozen=True)
+class MeshBox:
+    part: str
+    size: Tuple[float, float, float]
+    origin: Tuple[float, float, float]
+
+
+@dataclass(frozen=True)
+class LinkMesh:
+    uri: str                                 # package://robot_description/meshes/...
+    boxes: Tuple[MeshBox, ...]
+
+
+def mesh_report_path(robot: str) -> str:
+    """The mesh importer's report, relative to ``src`` (a robot without one keeps primitives)."""
+    return f'robot_description/profile/generated/{robot}/meshes.yaml'
+
+
+def load_mesh_report(profile: Profile, src: Path = SRC) -> Optional[Dict[str, LinkMesh]]:
+    """link -> mesh + collision boxes from the committed report; None if the robot has none.
+    Fails closed: a report for another robot, an unknown link, a missing mesh file or a bad box
+    is a ProfileError (the URDF must never point at a file that is not there)."""
+    path = src / mesh_report_path(profile.robot)
+    if not path.exists():
+        return None
+    where = mesh_report_path(profile.robot)
+    try:
+        data = yaml.safe_load(path.read_text(encoding='utf-8'))
+    except yaml.YAMLError as exc:
+        raise ProfileError(f'{where}: YAML hatası: {exc}') from exc
+    if not isinstance(data, dict) or data.get('robot') != profile.robot:
+        raise ProfileError(f'{where}: robot {profile.robot!r} için değil')
+    known = {link.name for link in profile.links}
+    out: Dict[str, LinkMesh] = {}
+    for name, entry in (data.get('links') or {}).items():
+        if name not in known:
+            raise ProfileError(f'{where}: links.{name}: robot profilinde böyle bir link yok '
+                               f'(mesh_import yeniden çalıştırılmalı)')
+        rel = entry.get('mesh', '') if isinstance(entry, dict) else ''
+        if not (src / 'robot_description' / rel).is_file() or '..' in rel.split('/'):
+            raise ProfileError(f'{where}: links.{name}.mesh: dosya yok: {rel!r}')
+        boxes = []
+        for box in entry.get('collision_boxes') or []:
+            size, origin = box.get('size'), box.get('origin')
+            if (not isinstance(size, list) or len(size) != 3 or not all(
+                    isinstance(v, (int, float)) and v > 0 for v in size)
+                    or not isinstance(origin, list) or len(origin) != 3):
+                raise ProfileError(f'{where}: links.{name}.collision_boxes: bozuk kutu {box!r}')
+            part = Path(str(box.get('part', 'box'))).stem
+            boxes.append(MeshBox(part, tuple(size), tuple(origin)))
+        if not boxes:
+            raise ProfileError(f'{where}: links.{name}: çarpışma kutusu yok (çarpışmasız link '
+                               f'MoveIt\'te görünmez olur)')
+        out[name] = LinkMesh(f'package://robot_description/{rel}', tuple(boxes))
+    return out
+
+
+def gen_urdf(p: Profile, meshes: Optional[Dict[str, LinkMesh]] = None) -> str:
     parts = ['<?xml version="1.0"?>\n', _xml_header(p) + '\n', f'<robot name="{p.robot}">\n']
     for name, rgba in p.materials.items():
         parts.append(f'  <material name="{name}"><color rgba="{vec(rgba)}"/></material>\n')
@@ -175,7 +255,7 @@ def gen_urdf(p: Profile) -> str:
         f'(robot_moveit_config) puts a massless `world` link above it, so KDL never sees an '
         f'inertia on the root link. -->\n')
     for i, link in enumerate(p.links):
-        parts.append('\n' + _link_xml(link))
+        parts.append('\n' + _link_xml(link, (meshes or {}).get(link.name)))
         if i < len(p.joints):
             parts.append(_joint_xml(p.joints[i]))
     if p.tool:
@@ -385,9 +465,13 @@ GENERATORS = {
 }
 
 
-def generate(profile: Profile) -> Dict[str, str]:
-    """Generated file key -> text."""
-    return {key: gen(profile) for key, gen in GENERATORS.items()}
+def generate(profile: Profile, meshes: Optional[Dict[str, LinkMesh]] = None) -> Dict[str, str]:
+    """Generated file key -> text. ``meshes`` (``load_mesh_report``) dresses the URDF links in
+    their CAD meshes; nothing else depends on them (limits, safe box, SRDF, view model)."""
+    out = {key: gen(profile) for key, gen in GENERATORS.items()}
+    if meshes:
+        out['urdf'] = gen_urdf(profile, meshes)
+    return out
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -400,7 +484,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     profile = load_profile(args.profile)
     paths = output_paths(profile.robot)
     stale = []
-    for key, text in generate(profile).items():
+    for key, text in generate(profile, load_mesh_report(profile, args.src)).items():
         path = args.src / paths[key]
         current = path.read_text(encoding='utf-8') if path.exists() else None
         if current == text:
