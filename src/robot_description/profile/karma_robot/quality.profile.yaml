@@ -4,9 +4,9 @@
 #
 # No PHYSICAL VALUE below is `measured`: the printed robot was never measured, weighed or calibrated.
 #   estimated   = a design number: link lengths / joint positions from the SolidWorks CAD (STL bore
-#                 centres), joint ranges Ferhat stated (180 deg), motor types and reductions he
+#                 centres), joint ranges Ferhat stated / confirmed (J1 +-170, 180 deg), motor types and reductions he
 #                 stated (4:1, 16:1), the 28BYJ-48 datasheet step count. NOT verified on the robot.
-#   placeholder = a stand-in: masses (solid-PLA volume + motors), efforts, J1 +-170 deg, every
+#   placeholder = a stand-in: masses (solid-PLA volume + motors), efforts, every
 #                 servo pulse range / slew limit / rest pose, microsteps, the (not yet built) switch
 #                 positions, the whole gripper actuator.
 #   measured    = only `driver.model` of joint_1 / joint_2 (ULN2003): verified by Ferhat on the bench
@@ -30,7 +30,7 @@ fields:
   links.link_5.mass: placeholder
   links.link_6.length: estimated
   links.link_6.mass: placeholder
-  joints.joint_1.limits.position: placeholder
+  joints.joint_1.limits.position: estimated
   joints.joint_1.limits.effort: placeholder
   axes.joint_1.motor.type: estimated
   axes.joint_1.motor.steps_per_rev: estimated

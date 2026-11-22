@@ -334,7 +334,7 @@ def test_quality_file_names_only_known_fields_and_no_physical_value_measured(pro
     measured = {p for p, t in data['fields'].items() if t == 'measured'}
     assert measured == {'axes.joint_1.driver.model', 'axes.joint_2.driver.model'}   # A2b: bench
     assert data['fields']['links.link_2.length'] == 'estimated'           # CAD = estimate
-    assert data['fields']['joints.joint_1.limits.position'] == 'placeholder'
+    assert data['fields']['joints.joint_1.limits.position'] == 'estimated'   # Ferhat: cables OK
 
 
 def test_driver_model_tag_is_informational_only(profile, hw):
