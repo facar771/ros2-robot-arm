@@ -1,0 +1,3 @@
+# Meshes are binary: never diff, merge or touch line endings.
+*.stl binary
+*.STL binary
