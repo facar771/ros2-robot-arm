@@ -247,48 +247,56 @@ gate('real', m)          # .open, .reasons ("donanıma hazır değil" + eksik al
 profille açılmaz (`maturity.F4B_DONE = False`; onu `True` yapmak F4b'yi bitiren PR'ın işidir). Kapıyı Robot API'ye /
 `mode: real`'e bağlamak ve Hub sihirbazı bu PR'da **yoktur**.
 
-## Karma robot (K8): `src/robot_description/profile/karma_robot/`
+## Karma robot (K8 → A2): `src/robot_description/profile/karma_robot/`
 
-İkinci robot profili: 7 eksenli küçük masaüstü kol. **Her sayısı yer tutucu ya da tahmindir; robot
-yapılmadı, hiçbir şey ölçülmedi** (`quality.profile.yaml`: hiçbir alan `measured` değil, donanım
-hazırlığı kapalı).
+İkinci robot profili = Ferhat'ın **KUCUK_ROBOT** SolidWorks modeli (A2'de K8'in tahmini yapısının
+yerine). 6 eklem; kıskaç henüz tasarlanmadı ve **zincirde değil**. Kinematik CAD'den (STL'lerdeki mil
+deliklerinin merkezleri) alındı: etiketi **`estimated`** (tasarım; basılmış robot ölçülmedi). Kütle,
+tork, servo darbe aralıkları ve anahtar konumları **yer tutucu**. Hiçbir alan `measured` değil.
 
-| Eklem | İş | Aktüatör |
-|---|---|---|
-| joint_1 | taban dönüşü | 28BYJ-48 + ULN2003 (step, açık döngü) |
-| joint_2 | omuz | 28BYJ-48 + ULN2003 (step, açık döngü) |
-| joint_3 | dirsek | 2 × SG90, **aynalı çift** |
-| joint_4 | bilek eğimi | 2 × SG90, **aynalı çift** |
-| joint_5 | bilek dönüşü | SG90 |
-| joint_6 | bilek bükümü | SG90 |
-| joint_7 | kıskaç çenesi | step + A4988 (açık döngü) |
+| Eklem | İş | Eksen (sıfır pozda) | Sıfır pozda konum (mm) | Aktüatör |
+|---|---|---|---|---|
+| joint_1 | taban dönüşü | z | (0, 0, 61) | 28BYJ-48 + 4:1 (step, açık döngü) |
+| joint_2 | omuz | y | (0, 0, 121) | 28BYJ-48 + 16:1 (step, açık döngü) |
+| joint_3 | dirsek | −y | (−120, 0, 171) | 2 × SG90, **aynalı çift** |
+| joint_4 | önkol dönüşü | x | (−40, 0, 171) | SG90 |
+| joint_5 | bilek | −y | (−15, 0, 171) | 2 × SG90, **aynalı çift** |
+| joint_6 | flanş dönüşü | x | (35, 0, 171) | SG90 |
+| (kıskaç) | — | — | — | `tool_actuators.joint_7`: küçük step + A4988 |
 
-- **Dosyalar:** `karma_robot.yaml`, `hardware.profile.yaml`, `quality.profile.yaml` (aynı dizinde;
-  `load_hardware` robot profilini yanında bulur). Üretilenler `profile/generated/karma_robot/`
-  altında: `output_paths(robot)` ilk robota dokunmaz (`six_axis_robot` yolları aynen), diğer her robot
-  kendi dizinine yazar; başlıkta profil yolu ve `--profile` komutu yazar.
-  `cd src/robot_core && python3 -m robot_core.profile_gen --profile ../robot_description/profile/karma_robot/karma_robot.yaml [--check]`
-- **`home` kutunun İÇİNDE** (uç ≈ [0.16, 0, 0.23], güvenli kutu x 0.06–0.20, y ±0.12, z 0.02–0.26),
-  kol eklemleri sınırdan ≥ 0.7 rad uzak; simülasyon `initial_positions` = `home` ile başlar (F4b
-  dersi). `ready` (joint_5 ≠ 0) jog başlatmak içindir: üç paralel eğim ekseni + bilek dönüşü 0 =
-  tekil. Küçük kolda σ_min ≈ 0.04 < `sigma_slow` 0.06: jog yavaşlatılmış çalışır (ölçek etkisi; eşikler
-  global, bu PR değiştirmez).
-- **Her referans `home` ile aynı:** step eksenlerinin `homing.position`'ı, servo eksenlerinin
-  `reference.pose` ve `rest.angle`'ı home açısıdır.
-- **`jog: locked` (eklem anahtarı, isteğe bağlı, varsayılan `free`):** `joint_7` zincirde kalır (FK,
-  URDF, MoveIt: tek 7 eklemli grup) ama `Chain` onun Jacobian sütununu sıfırlar; Kartezyen jog
-  kıskacı hiçbir koşulda oynatmaz. Eski profillerde alan yok → hiçbir şey değişmez.
-- **Aynalı çift (`servo.mirror.pulse_range`):** ikinci SG90'ın kendi darbe aralığı. Doğrulayıcı
-  ikinci servonun açısının darbe artarken **azalmasını** ister (aynı yönlü iki servo ortak eklemde
-  birbirine karşı çalışır) ve eklem limitlerinin her iki aralıkta da bulunmasını. API:
-  `ServoAxis.mirror_pulse_us(_int)`, `HardwareProfile.servo_mirror_pulses_us`. Kalite alanı
-  `axes.<j>.servo.mirror_pulse_range` yalnız aynalı eksenlerde kritiktir.
-- **GERÇEK LİMİT ANAHTARI YOK (joint_1, joint_2, joint_7):** açık döngü step'te home anahtarı ŞARTTIR
-  (HARDWARE.md §7). Profil bu anahtarları *tanımlar* ama **henüz yoktur** (yer tutucu; yapılmalı, konumu
-  ölçülmeli). Yani gerçek robotta bu üç eksenin referansı yok. Açık sorunun (K6a'dan) cevabı
-  gelene kadar kural değişmedi.
-- **Kapsam dışı:** fırlatma/MoveIt dosyaları hâlâ `six_axis_robot`'a sabit (karma için launch yok);
-  `hardware_gen` servo içeren profilde 2 koduyla reddeder (servo protokolü K6b); köprü/firmware yok.
+- **Çerçeve:** CAD Y-yukarı; profilde z yukarı, x robotun **önü** (J2 motorunun tersi), orijin tabanın
+  masadaki merkezi (J1'in altı). TCP = flanş plakasının yüzü (`tcp.offset` 6 mm, `wpr` ile takım z'si
+  flanşın +x'ine döner).
+- **Sıfır poz = CAD pozu = kol geriye tam katlı.** Yalnız **mesh hizalama referansı**dır, asla komut
+  verilen poz değil: J2/J3 eklem limitleri 0.05 rad içeride başlar, yani sıfır poz limit dışıdır.
+  Test, q = 0'da her eklemin CAD delik merkezinde olduğunu doğrular (`test_karma_robot.py`).
+- **`home`** güvenli kutunun **içinde** (uç ≈ [0.19, 0, 0.18]), her eklem limitten ≥ 1.2 rad uzak;
+  simülasyon `initial_positions` = `home` ile başlar. **`ready`** jog başlangıcı (σ_min ≈ 0.074).
+- **Güvenli kutu** bu küçük kol için yeni ve **yer tutucu**: x 0.06–0.22, y ±0.10, z 0.02–0.22 (önde).
+- **J1 ±170°** yer tutucu (kablolar), tezgâh sıfırına göre göreli.
+- **`length: 0` (A2, link anahtarı):** yatay linklerde sonraki eklem yalnız `offset` ile konur. Şekil z
+  boyunu kendisi vermeli (cylinder `length` / box `size: [x, y, z]`); 0 ile 0.001 m arası hâlâ hata.
+- **Takım aktüatörü (`tool_actuators`, donanım profili, A2):** zincirde olmayan bir takımın motoru
+  (`tool: gripper`). Kendi `travel` aralığı vardır (eklem limitinin yerine) ve motor tarafı bir step
+  ekseniyle **aynı kurallarla** doğrulanır (açık döngü → home anahtarı şart; `manual_zero` reddedilir).
+  Hiçbir eklem vektörüne girmez (`joints_to_steps` vb. onu görmez). Robot eklemiyle aynı adı alamaz.
+  Kalite yolları `tool_actuators.<ad>.<alan>` (step ekseninin kritik alanlarıyla aynı); donanım hazırlığı
+  bunları da `measured` ister.
+- **`jog: locked`** mekanizması kalır ama bu robotta kullanılmaz. Not: 6 eklemli bir kolda bir eklemi
+  kilitlemek Jacobian'ı 5 sütuna indirir; jog motoru bunu tekillik sayar ve hiçbir şey komut etmez
+  (güvenli taraf). Kilit, altıdan fazla eklemi olan zincir içindir.
+- **Aynalı çift (`servo.mirror.pulse_range`):** ikinci SG90'ın kendi darbe aralığı; açısı darbe artarken
+  **azalmalı**. API: `ServoAxis.mirror_pulse_us(_int)`, `HardwareProfile.servo_mirror_pulses_us`.
+- **GERÇEK LİMİT ANAHTARI YOK (joint_1, joint_2, kıskaç):** açık döngü step'te home anahtarı ŞARTTIR
+  (HARDWARE.md §7). Profil anahtarları *tanımlar* ama **henüz yoktur**. Açık soru (YAŞLI KURDA SORU)
+  cevaplanana kadar kural değişmedi.
+- **Tork denetimi** (bilerek kaba: eksen yönünü yok sayar) J1 ve J2'de başarısız; J2 (28BYJ-48 + 16:1)
+  için bu gerçek bir uyarıdır, J1 (dikey eksen) için denetimin muhafazakârlığıdır.
+- **Doğrulanacak varsayımlar:** dirsek plakası üst kola sabit ve J3 üst delikte; ön taraf; J2/J3
+  0→180°, J4–J6 ortalanmış ±90°; işaretler (yanlış işaret donanım profilinde `direction: -1` / darbe
+  eşlemesi). 28BYJ-48 sürücüsü ULN2003 varsayıldı.
+- **Kapsam dışı:** mesh'ler (PR B), kıskaç (tasarlanmadı; kayar eklem desteği ayrı iş), karma için
+  launch/MoveIt, `hardware_gen` (servo içeren profili reddeder: K6b), köprü/firmware.
 
 ## Bu aşamada olmayanlar
 Servo protokolü/simülatörü/`HARDWARE.md` durum makinesi (K6b), servo firmware (K3), servo güç ve tork denetimi (K7), karma/tam step robot profilleri (K8), step eksende `manual_zero` (karar bekliyor);

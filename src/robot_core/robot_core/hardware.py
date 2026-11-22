@@ -274,9 +274,37 @@ AnyAxis = Union[Axis, ServoAxis]
 
 
 @dataclass(frozen=True)
+class ToolTravel:
+    """What the tool may command (the role a robot joint's limits play for an axis)."""
+    name: str
+    lower: float
+    upper: float
+    velocity: float
+    acceleration: float
+
+
+@dataclass(frozen=True)
+class ToolActuator:
+    name: str
+    tool: str                        # which tool it drives (e.g. 'gripper')
+    travel: ToolTravel
+    axis: Axis                       # the motor side, validated exactly like a step joint axis
+
+
+@dataclass(frozen=True)
 class HardwareProfile:
     robot: str
     axes: Tuple[AnyAxis, ...]
+    # K8: actuators of a TOOL (e.g. the gripper), not joints of the chain: never in a joint vector,
+    # never in joints_to_steps & co.; each keeps its own travel. Step only (open loop -> switch).
+    tool_actuators: Tuple['ToolActuator', ...] = ()
+
+    @property
+    def tool_actuator_names(self) -> Tuple[str, ...]:
+        return tuple(t.name for t in self.tool_actuators)
+
+    def tool_actuator(self, name: str) -> 'ToolActuator':
+        return next(t for t in self.tool_actuators if t.name == name)
 
     @property
     def joint_names(self) -> Tuple[str, ...]:
@@ -336,6 +364,9 @@ class HardwareProfile:
             out.append(f"{OPEN_LOOP_WARNING} Eksenler: {', '.join(step_open)}.")
         if self.servo_axes:
             out.append(f"{SERVO_ESTIMATE_WARNING} Eksenler: {', '.join(self.servo_axes)}.")
+        tools_open = tuple(t.name for t in self.tool_actuators if t.axis.open_loop)
+        if tools_open:
+            out.append(f"{OPEN_LOOP_WARNING} Takım aktüatörleri: {', '.join(tools_open)}.")
         return tuple(out)
 
 
@@ -419,8 +450,8 @@ def _parse_homing(where: str, data: Any, encoder: str, joint_lower: float, joint
                   backoff=backoff)
 
 
-def _parse_axis(name: str, data: Any, joint) -> Axis:
-    where = f'axes.{name}'
+def _parse_axis(name: str, data: Any, joint, where: Optional[str] = None) -> Axis:
+    where = where or f'axes.{name}'
     d = _mapping(data, where, ('motor', 'driver', 'direction', 'zero_offset', 'gear_ratio',
                                'encoder', 'limits', 'margin', 'homing'),
                  ('motor', 'driver', 'direction', 'zero_offset', 'gear_ratio', 'limits', 'homing'))
@@ -638,9 +669,51 @@ def _check_step_ranges(axis: Axis, joint, where: str) -> None:
         raise _fail(f'{where}.homing.position', 'adım olarak int32 aralığını aşıyor')
 
 
+TOOL_KINDS = ('gripper',)
+
+
+def _parse_tool_actuators(data: Any, joint_names: Sequence[str]) -> Tuple[ToolActuator, ...]:
+    if data is None:
+        return ()
+    if not isinstance(data, Mapping):
+        raise _fail('tool_actuators', f'eşleme olmalı, bulunan: {data!r}')
+    out = []
+    for name, entry in data.items():
+        where = f'tool_actuators.{_name(name, "tool_actuators")}'
+        if name in joint_names:
+            raise _fail(where, 'robot eklemiyle aynı ad: takım aktüatörü zincirde değildir')
+        if not isinstance(entry, Mapping):
+            raise _fail(where, f'eşleme olmalı, bulunan: {entry!r}')
+        motor = entry.get('motor')
+        if not (isinstance(motor, Mapping) and motor.get('type') == STEP):
+            raise _fail(f'{where}.motor.type', "takım aktüatörü şimdilik yalnız 'step' olabilir")
+        tool = entry.get('tool')
+        if tool not in TOOL_KINDS:
+            raise _fail(f'{where}.tool', f'{list(TOOL_KINDS)} değerlerinden biri olmalı: {tool!r}')
+        tr = _mapping(entry.get('travel'), f'{where}.travel',
+                      ('position', 'velocity', 'acceleration'),
+                      ('position', 'velocity', 'acceleration'))
+        pos = tr['position']
+        if not isinstance(pos, (list, tuple)) or len(pos) != 2:
+            raise _fail(f'{where}.travel.position', f'[alt, üst] olmalı, bulunan: {pos!r}')
+        lo, hi = (_number(v, f'{where}.travel.position[{i}]', lo=-MAX_ANGLE, hi=MAX_ANGLE)
+                  for i, v in enumerate(pos))
+        if not lo < hi:
+            raise _fail(f'{where}.travel.position', f'alt sınır üstten küçük olmalı: {[lo, hi]}')
+        travel = ToolTravel(name, lo, hi,
+                            _number(tr['velocity'], f'{where}.travel.velocity', positive=True,
+                                    hi=MAX_SPEED),
+                            _number(tr['acceleration'], f'{where}.travel.acceleration',
+                                    positive=True, hi=MAX_ACCEL))
+        axis_data = {k: v for k, v in entry.items() if k not in ('tool', 'travel')}
+        out.append(ToolActuator(name, tool, travel,
+                                _parse_axis(name, axis_data, travel, where=where)))
+    return tuple(out)
+
+
 def parse_hardware(data: Any, robot: Profile) -> HardwareProfile:
-    top = ('hardware_version', 'robot', 'axes')
-    d = _mapping(data, 'donanım profili', top, top)
+    top = ('hardware_version', 'robot', 'axes', 'tool_actuators')
+    d = _mapping(data, 'donanım profili', top, ('hardware_version', 'robot', 'axes'))
     if d['hardware_version'] != HARDWARE_VERSION:
         raise _fail('hardware_version', f"{HARDWARE_VERSION} olmalı, bulunan: "
                                         f"{d['hardware_version']!r}")
@@ -655,7 +728,8 @@ def parse_hardware(data: Any, robot: Profile) -> HardwareProfile:
                             f'{list(axes_in) if isinstance(axes_in, Mapping) else axes_in!r}')
     joints = {j.name: j for j in robot.joints}
     return HardwareProfile(robot=name,
-                           axes=tuple(_parse_any_axis(n, axes_in[n], joints[n]) for n in names))
+                           axes=tuple(_parse_any_axis(n, axes_in[n], joints[n]) for n in names),
+                           tool_actuators=_parse_tool_actuators(d.get('tool_actuators'), names))
 
 
 def load_hardware(path: Union[str, Path], robot: Optional[Profile] = None) -> HardwareProfile:
@@ -738,6 +812,13 @@ def describe_hardware(path: Union[str, Path, None] = None) -> Dict[str, Any]:
                        'speed': a.homing.speed, 'position': a.homing.position,
                        'backoff': a.homing.backoff},
         })
+    tools = [{'name': t.name, 'tool': t.tool, 'motor': {'type': t.axis.motor_type,
+                                                         'model': t.axis.motor_model},
+              'driver': {'model': t.axis.driver_model, 'microstep': t.axis.microstep},
+              'loop': 'open' if t.axis.open_loop else 'closed',
+              'travel': {'position': [t.travel.lower, t.travel.upper],
+                         'velocity': t.travel.velocity, 'acceleration': t.travel.acceleration}}
+             for t in hw.tool_actuators]
     return {'ok': True, 'robot': hw.robot, 'open_loop': bool(hw.open_loop_axes),
             'open_loop_axes': list(hw.open_loop_axes), 'servo_axes': list(hw.servo_axes),
-            'warnings': list(hw.warnings), 'axes': axes}
+            'warnings': list(hw.warnings), 'axes': axes, 'tool_actuators': tools}
