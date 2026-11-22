@@ -96,13 +96,74 @@ def test_cad_was_exported_in_mm_and_the_arm_is_desktop_sized(real):
     assert 0.1 < np.ptp(pts[:, 2]) < 0.5                           # metres after the import
 
 
-def test_collision_box_is_never_smaller_than_the_visual_mesh(real):
-    for link, box in real.collision.items():
-        pts = real.meshes[link].reshape(-1, 3)
-        lo = np.subtract(box['origin'], np.divide(box['size'], 2))
-        hi = np.add(box['origin'], np.divide(box['size'], 2))
-        assert np.all(pts >= lo - 1e-9) and np.all(pts <= hi + 1e-9), link
-        assert np.all(hi - lo - np.ptp(pts, axis=0) < 2 * mi.GRID + 1e-9), link   # but tight
+def _box_bounds(box):
+    half = np.divide(box['size'], 2)
+    return np.subtract(box['origin'], half), np.add(box['origin'], half)
+
+
+def test_collision_boxes_cover_each_part_and_stay_tight(profile, mesh_map, real):
+    """One box per CAD part: never smaller than the part (outward rounding), at most one grid
+    step larger; together they cover the whole visual mesh."""
+    origins = zero_pose_link_origins(profile)
+    for link, boxes in real.collision.items():
+        assert [b['part'] for b in boxes] == list(mesh_map.links[link])
+        for box in boxes:
+            tris = read_stl(CAD / box['part'])
+            pts = ((tris - mesh_map.origin) * mesh_map.scale @ mesh_map.rotation.T
+                   - origins[link]).reshape(-1, 3)
+            lo, hi = _box_bounds(box)
+            assert np.all(pts >= lo - 1e-9) and np.all(pts <= hi + 1e-9), (link, box['part'])
+            assert np.all(hi - lo - np.ptp(pts, axis=0) < 2 * mi.GRID + 1e-9), (link, box['part'])
+
+
+def _obb_overlap(a, b):
+    """Separating-axis test of two oriented boxes (centre, rotation, half extents)."""
+    (ca, ra, ea), (cb, rb, eb) = a, b
+    axes = [ra[:, i] for i in range(3)] + [rb[:, i] for i in range(3)]
+    axes += [np.cross(ra[:, i], rb[:, j]) for i in range(3) for j in range(3)]
+    d = cb - ca
+    for ax in axes:
+        n = np.linalg.norm(ax)
+        if n < 1e-9:
+            continue
+        ax = ax / n
+        if (sum(ea[i] * abs(ra[:, i] @ ax) for i in range(3))
+                + sum(eb[i] * abs(rb[:, i] @ ax) for i in range(3))) < abs(d @ ax):
+            return False
+    return True
+
+
+def _link_transforms(profile, q):
+    out = {profile.links[0].name: np.eye(4)}
+    for j, qi in zip(profile.joints, q):
+        k = np.array(j.axis, float)
+        kx = np.array([[0, -k[2], k[1]], [k[2], 0, -k[0]], [-k[1], k[0], 0]])
+        a, b = np.eye(4), np.eye(4)
+        a[:3, 3] = j.origin
+        b[:3, :3] = np.eye(3) + np.sin(qi) * kx + (1 - np.cos(qi)) * kx @ kx
+        out[j.child] = out[j.parent] @ a @ b
+    return out
+
+
+@pytest.mark.parametrize('pose', ['zero', 'home', 'ready'])
+def test_no_self_collision_between_non_adjacent_links(profile, real, pose):
+    """MoveIt checks every non-adjacent pair: the boxes must not overlap in the reference poses
+    (the zero pose included: a single box around link_2 used to swallow link_4 / link_5)."""
+    q = [0.0] * 6 if pose == 'zero' else profile.named_poses[pose]
+    tf = _link_transforms(profile, q)
+    adjacent = {frozenset(pair) for pair in profile.adjacent_pairs()}
+    names = list(real.collision)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if frozenset((a, b)) in adjacent:
+                continue
+            for ba in real.collision[a]:
+                for bb in real.collision[b]:
+                    oa = (tf[a][:3, :3] @ ba['origin'] + tf[a][:3, 3], tf[a][:3, :3],
+                          np.divide(ba['size'], 2))
+                    ob = (tf[b][:3, :3] @ bb['origin'] + tf[b][:3, 3], tf[b][:3, :3],
+                          np.divide(bb['size'], 2))
+                    assert not _obb_overlap(oa, ob), (pose, a, ba['part'], b, bb['part'])
 
 
 def test_cad_exports_are_closed_outward_meshes():
@@ -202,7 +263,8 @@ def test_synthetic_cad_from_the_profile_imports_cleanly(tmp_path, profile, mesh_
     result = import_meshes(profile, parse_mesh_map(synthetic_map(raw_map, files), profile), cad)
     assert result.warnings == ()
     for link in profile.links:                             # the shape comes back in its frame
-        assert result.collision[link.name]['origin'] == pytest.approx(link.origin, abs=2e-4)
+        (box,) = result.collision[link.name]
+        assert box['origin'] == pytest.approx(link.origin, abs=2e-4)
 
 
 def test_a_part_exported_at_the_wrong_place_is_reported(tmp_path, profile, mesh_map, raw_map):

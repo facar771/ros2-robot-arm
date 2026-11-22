@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-<!-- ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen --profile src/robot_description/profile/karma_robot/karma_robot.yaml` ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler). -->
+<!-- ÜRETİLDİ: src/robot_description/profile/karma_robot/karma_robot.yaml dosyasından `python3 -m robot_core.profile_gen` (profile seçeneği: src/robot_description/profile/karma_robot/karma_robot.yaml) ile üretildi. ELLE DÜZENLEME: profili düzenle, yeniden üret (pytest güncel mi diye denetler). -->
 <robot name="karma_robot">
   <material name="gray"><color rgba="0.5 0.5 0.5 1.0"/></material>
   <material name="orange"><color rgba="1.0 0.5 0.0 1.0"/></material>
@@ -8,8 +8,9 @@
   <!-- base_link needs an <inertial>: without it Gazebo (sdformat) lumps the link into the world and the first joint loses its parent. The xacro wrapper (robot_moveit_config) puts a massless `world` link above it, so KDL never sees an inertia on the root link. -->
 
   <link name="base_link">
-    <visual><geometry><box size="0.1149 0.1203 0.071"/></geometry><material name="gray"/><origin xyz="0.0055 0.0 0.0355"/></visual>
-    <collision><geometry><box size="0.1149 0.1203 0.071"/></geometry><origin xyz="0.0055 0.0 0.0355"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/base_link.stl"/></geometry><material name="gray"/></visual>
+    <collision name="j1_taban_28byj48"><origin xyz="0.0055 0.0 0.03545"/><geometry><box size="0.115 0.1204 0.0711"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="0.0055 0.0 0.0355"/><mass value="0.15"/><inertia ixx="0.000244" ixy="0" ixz="0" iyy="0.000228" iyz="0" izz="0.000346"/></inertial>
   </link>
@@ -19,8 +20,9 @@
   </joint>
 
   <link name="link_1">
-    <visual><geometry><box size="0.122 0.0959 0.0899"/></geometry><material name="orange"/><origin xyz="-0.013 0.0 0.045"/></visual>
-    <collision><geometry><box size="0.122 0.0959 0.0899"/></geometry><origin xyz="-0.013 0.0 0.045"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/link_1.stl"/></geometry><material name="orange"/></visual>
+    <collision name="j2_taban_ustu_28byj48"><origin xyz="-0.01305 0.0 0.04495"/><geometry><box size="0.1221 0.096 0.0901"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="-0.013 0.0 0.045"/><mass value="0.22"/><inertia ixx="0.000317" ixy="0" ixz="0" iyy="0.000421" iyz="0" izz="0.000441"/></inertial>
   </link>
@@ -30,8 +32,11 @@
   </joint>
 
   <link name="link_2">
-    <visual><geometry><box size="0.1674 0.048 0.1021"/></geometry><material name="gray"/><origin xyz="-0.0588 0.0 0.0189"/></visual>
-    <collision><geometry><box size="0.1674 0.048 0.1021"/></geometry><origin xyz="-0.0588 0.0 0.0189"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/link_2.stl"/></geometry><material name="gray"/></visual>
+    <collision name="j2-j3_kol"><origin xyz="-0.05875 5e-05 -0.0036"/><geometry><box size="0.1675 0.0261 0.0572"/></geometry></collision>
+    <collision name="j3_dirsek_plakasi_1"><origin xyz="-0.12005 -0.01895 0.025"/><geometry><box size="0.0401 0.0101 0.09"/></geometry></collision>
+    <collision name="j3_dirsek_plakasi_2"><origin xyz="-0.12005 0.01905 0.025"/><geometry><box size="0.0401 0.0101 0.09"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="-0.0588 0.0 0.0189"/><mass value="0.26"/><inertia ixx="0.000276" ixy="0" ixz="0" iyy="0.000833" iyz="0" izz="0.000657"/></inertial>
   </link>
@@ -41,8 +46,9 @@
   </joint>
 
   <link name="link_3">
-    <visual><geometry><box size="0.1 0.026 0.0397"/></geometry><material name="orange"/><origin xyz="0.03 0.0 0.0"/></visual>
-    <collision><geometry><box size="0.1 0.026 0.0397"/></geometry><origin xyz="0.03 0.0 0.0"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/link_3.stl"/></geometry><material name="orange"/></visual>
+    <collision name="j3-j4_kol_2xsg90"><origin xyz="0.02995 5e-05 0.0"/><geometry><box size="0.1001 0.0261 0.0398"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="0.03 0.0 0.0"/><mass value="0.11"/><inertia ixx="2.1e-05" ixy="0" ixz="0" iyy="0.000106" iyz="0" izz="9.8e-05"/></inertial>
   </link>
@@ -52,8 +58,9 @@
   </joint>
 
   <link name="link_4">
-    <visual><geometry><box size="0.03 0.0332 0.028"/></geometry><material name="blue"/><origin xyz="0.015 0.0 0.0"/></visual>
-    <collision><geometry><box size="0.03 0.0332 0.028"/></geometry><origin xyz="0.015 0.0 0.0"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/link_4.stl"/></geometry><material name="blue"/></visual>
+    <collision name="j4-j5_ara_parca_1xsg90"><origin xyz="0.01495 5e-05 -5e-05"/><geometry><box size="0.0301 0.0333 0.0281"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="0.015 0.0 0.0"/><mass value="0.022"/><inertia ixx="3e-06" ixy="0" ixz="0" iyy="3e-06" iyz="0" izz="4e-06"/></inertial>
   </link>
@@ -63,8 +70,9 @@
   </joint>
 
   <link name="link_5">
-    <visual><geometry><box size="0.065 0.024 0.026"/></geometry><material name="gray"/><origin xyz="0.0175 0.0 0.0"/></visual>
-    <collision><geometry><box size="0.065 0.024 0.026"/></geometry><origin xyz="0.0175 0.0 0.0"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/link_5.stl"/></geometry><material name="gray"/></visual>
+    <collision name="j5-j6_kol_2xsg90"><origin xyz="0.01745 5e-05 -5e-05"/><geometry><box size="0.0651 0.0241 0.0261"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="0.0175 0.0 0.0"/><mass value="0.063"/><inertia ixx="7e-06" ixy="0" ixz="0" iyy="2.6e-05" iyz="0" izz="2.5e-05"/></inertial>
   </link>
@@ -74,8 +82,9 @@
   </joint>
 
   <link name="link_6">
-    <visual><geometry><box size="0.006 0.024 0.026"/></geometry><material name="orange"/><origin xyz="0.003 0.0 0.0"/></visual>
-    <collision><geometry><box size="0.006 0.024 0.026"/></geometry><origin xyz="0.003 0.0 0.0"/></collision>
+    <!-- visual: CAD mesh (a picture, not a measurement); collision: one box per CAD part (robot_core.mesh_import) -->
+    <visual><origin xyz="0.0 0.0 0.0"/><geometry><mesh filename="package://robot_description/meshes/karma_robot/link/link_6.stl"/></geometry><material name="orange"/></visual>
+    <collision name="j6_kiskac_tutucu_1xsg90"><origin xyz="0.00295 5e-05 -5e-05"/><geometry><box size="0.0061 0.0241 0.0261"/></geometry></collision>
     <!-- placeholder mass; inertia = solid primitive of this shape and mass (replace with real CAD values) -->
     <inertial><origin xyz="0.003 0.0 0.0"/><mass value="0.013"/><inertia ixx="1e-06" ixy="0" ixz="0" iyy="1e-06" iyz="0" izz="1e-06"/></inertial>
   </link>

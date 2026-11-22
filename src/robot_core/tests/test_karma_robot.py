@@ -5,6 +5,7 @@ The kinematics come from the CAD (STL bore centres); every physical value is sti
 an estimate. These tests guard the STRUCTURE (axes, CAD transcription, mapping, home inside the
 safe box, jog lock, fail-closed behaviour), never a physical truth."""
 import copy
+import xml.etree.ElementTree as ET
 
 import numpy as np
 import pytest
@@ -22,7 +23,14 @@ from robot_core.maturity import (
     parse_quality,
 )
 from robot_core.profile import ProfileError, load_profile, parse_profile
-from robot_core.profile_gen import PROFILE_PATH, generate, main, output_paths, profile_rel
+from robot_core.profile_gen import (
+    PROFILE_PATH,
+    generate,
+    load_mesh_report,
+    main,
+    output_paths,
+    profile_rel,
+)
 
 from tests.conftest import SRC
 
@@ -354,7 +362,7 @@ def test_driver_model_tag_is_informational_only(profile, hw):
 def test_generated_files_are_up_to_date(profile):
     """Fix: cd src/robot_core && python3 -m robot_core.profile_gen --profile
     ../robot_description/profile/karma_robot/karma_robot.yaml"""
-    for key, text in generate(profile).items():
+    for key, text in generate(profile, load_mesh_report(profile)).items():
         rel = output_paths(profile.robot)[key]
         assert (SRC / rel).read_text(encoding='utf-8') == text, f'{rel} güncel değil'
 
@@ -367,8 +375,19 @@ def test_karma_outputs_never_share_a_path_with_the_six_axis_robot(profile):
 
 
 def test_generated_headers_name_the_karma_profile_and_command(profile):
-    urdf = generate(profile)['urdf']
-    assert profile_rel('karma_robot') in urdf and '--profile' in urdf
+    out = generate(profile)
+    assert profile_rel('karma_robot') in out['urdf']
+    assert f"--profile {profile_rel('karma_robot')}" in out['joint_limits']     # YAML: real command
+
+
+@pytest.mark.parametrize('path', [PROFILE_PATH, KARMA], ids=['six_axis_robot', 'karma_robot'])
+def test_every_generated_xml_file_parses(path):
+    """An XML comment must not contain "--": a `--profile` in the header made the karma URDF,
+    SRDF and xacro unreadable for robot_state_publisher / MoveIt (fixed in C)."""
+    p = load_profile(path)
+    out = generate(p, load_mesh_report(p))
+    for key in ('urdf', 'srdf', 'ros2_control_xacro'):
+        ET.fromstring(out[key].encode('utf-8'))
 
 
 def test_check_mode_passes_for_karma_and_detects_a_stale_file(tmp_path, profile):
