@@ -38,3 +38,8 @@ Bayraksız `env:uno` bugünkü hareketsiz hali korur.
 * Watchdog 300 ms, host `ESTOP`, döngü açılması: adım üretimi durur, bobin/EN kapanır, kilitli; `CLEAR` + yeniden sıfır gerekir. Döngü açıkken `CLEAR` → `HW_LOOP_OPEN`.
 * Seri trafiğin adım darbesine etkisi (simavr **benzetimi**, gerçek ELF, 16 MHz): `python3 firmware/tools/simavr_jitter/run_jitter.py <fw.elf> <jitter>` (kaynak: `tools/simavr_jitter/`).
   Gerçek donanımda ölçülmedi.
+
+## Faz 3: pot telemetrisi (NodeMCU)
+
+J1/J2/J7 pot ham ADC'si, ayrı TCP portunda (8771) ve Uno'dan ayrı çerçeveyle yalnız PC'ye gider; röle (8770) ve Uno değişmez.
+Bağlantı tablosu, çerçeve ve ADC bölücü kontrolü: [`POT_TELEMETRI.md`](POT_TELEMETRI.md). Canlı bakış: `python tools\pot_view.py <IP>`.
