@@ -1,9 +1,11 @@
-/* Robot Kontrol Merkezi: düz JS, derleme yok. Veri her zaman textContent ile yazılır (innerHTML yok). */
+/* Robot Kontrol Merkezi: düz JS, derleme yok. Veri her zaman textContent ile yazılır (innerHTML yok).
+ * Bu dosya İSKELETİN çekirdeği: oturum, canlı akış (WS), üst çubuk (ACİL DUR, bağlantı, mod, erişim) ve
+ * uyarı bandı. Sayfalar web/pages/*.js içindedir (pages.js kaydı); yeni sayfa için bu dosyaya dokunulmaz. */
 'use strict';
 
 const $ = (id) => document.getElementById(id);
-const S = { session: null, ui: null, snap: null, ws: null, wsOk: false, events: [], armed: null,
-            buttons: {}, retry: 0, pollTimer: null };
+const S = { session: null, ui: null, snap: null, ws: null, wsOk: false, wsState: 'connecting', events: [],
+            retry: 0, pollTimer: null, started: false, liveAt: 0 };
 
 function el(tag, props = {}, children = []) {
   const e = document.createElement(tag);
@@ -52,6 +54,7 @@ async function init() {
   $('login-form').addEventListener('submit', onLogin);
   $('btn-estop').addEventListener('click', onEstop);
   $('btn-reset').addEventListener('click', onReset);
+  $('btn-menu').addEventListener('click', () => $('nav').classList.toggle('open'));
   try {
     S.session = await api('/api/session');
   } catch (e) { setConn('down'); toast(e.message, true); setTimeout(init, 3000); return; }
@@ -61,8 +64,8 @@ async function init() {
 }
 
 function showLogin() {
-  $('main').hidden = true; $('login').hidden = false; $('btn-logout').hidden = true;
-  closeWs(); $('pin').value = ''; $('pin').focus(); setConn('down', 'Giriş gerekli');
+  $('main').hidden = true; $('nav').hidden = true; $('login').hidden = false; $('btn-logout').hidden = true;
+  closeWs(); $('pin').value = ''; $('pin').focus(); setConn('down', 'Giriş gerekli'); renderTop(null);
 }
 
 async function onLogin(ev) {
@@ -71,6 +74,7 @@ async function onLogin(ev) {
   try {
     await api('/api/login', 'POST', { pin: $('pin').value.trim() });
     S.session = await api('/api/session');
+    if (S.started) { location.reload(); return; }       // oturum süresi dolduktan sonra: sayfalar temiz kurulsun
     start();
   } catch (e) {
     if (e.status === 429) $('login-error').textContent = `Çok fazla deneme. ${Math.ceil(e.body.retry_after_s || 60)} sn bekle.`;
@@ -80,7 +84,7 @@ async function onLogin(ev) {
   }
 }
 
-async function logout() { try { await api('/api/logout', 'POST'); } catch (e) { /* yok say */ } closeWs(); init(); }
+async function logout() { try { await api('/api/logout', 'POST'); } catch (e) { /* yok say */ } closeWs(); location.reload(); }
 
 async function start() {
   $('login').hidden = true;
@@ -88,78 +92,25 @@ async function start() {
     S.ui = await api('/api/ui');
     S.snap = await api('/api/state');
   } catch (e) { toast(e.message, true); return; }
-  buildUi();
-  $('main').hidden = false;
+  applyTheme(S.ui.theme);
+  document.documentElement.style.setProperty('--btn-h', S.ui.layout.button_height);
+  S.started = true;
+  S.events = [];
+  $('nav').hidden = false; $('main').hidden = false;
+  api('/api/events').then((r) => { S.events = r.events; HubPages.onEvents(S.events); }).catch(() => {});
+  await HubPages.build();
   render();
   connectWs();
 }
 
-/* ---------- arayüz iskeleti (yapılandırmadan) ---------- */
-function buildUi() {
-  const lay = S.ui.layout;
-  applyTheme(S.ui.theme);
-  document.documentElement.style.setProperty('--btn-h', lay.button_height);
-  const pos = lay.estop.position;
-  document.body.dataset.estopPos = pos;
-  const bar = $('estop-bar'); bar.dataset.pos = pos;
-  if (pos === 'top') $('estop-top-slot').append(bar); else document.body.append(bar);
-
-  const secs = $('sections'); secs.replaceChildren(); S.buttons = {};
-  for (const sec of lay.sections) {
-    const grid = el('div', { class: 'grid', style: { '--cols': String(sec.columns) } });
-    for (const id of sec.scenarios) {
-      const sc = S.ui.scenarios[id];
-      const b = el('button', { class: 'scn', type: 'button', 'data-id': id,
-        style: sc.color ? { '--c': sc.color } : {} }, [
-        el('span', { class: 'ic', text: sc.icon || '▶' }),
-        el('span', { class: 'lb', text: sc.label }),
-        el('span', { class: 'ds', text: sc.description }),
-        el('span', { class: 'bar' }),
-      ]);
-      b.addEventListener('click', () => onScenario(id));
-      S.buttons[id] = b; grid.append(b);
-    }
-    secs.append(el('section', { class: 'group' }, [sec.title ? el('h2', { text: sec.title }) : '', grid]));
-  }
-
-  const panels = $('panels'); panels.replaceChildren();
-  const builders = {
-    status: () => el('div', { class: 'card', id: 'p-status' }, [
-      el('h2', { text: 'Durum' }), el('div', { class: 'status-big', id: 'st-big' }),
-      el('div', { class: 'say', id: 'st-say' }), el('div', { class: 'say', id: 'st-last' }),
-      el('div', { class: 'row' }, [el('button', { class: 'small', id: 'btn-cancel', type: 'button',
-        text: 'Senaryoyu iptal et' })])]),
-    robot: () => el('div', { class: 'card', id: 'p-robot' }, [
-      el('h2', { text: 'Robot' }), el('dl', { class: 'kv', id: 'rb-kv' }), el('div', { class: 'joints', id: 'rb-joints' })]),
-    log: () => el('div', { class: 'card', id: 'p-log' }, [el('h2', { text: 'Olay günlüğü' }), el('ul', { class: 'log', id: 'lg' })]),
-  };
-  for (const p of lay.panels) panels.append(builders[p]());
-  const c = $('btn-cancel'); if (c) c.addEventListener('click', onCancel);
-  S.events = [];
-  if (window.AgentPanel) AgentPanel.mount();
-  if (window.JogPanel) JogPanel.mount();
-  if (window.RobotView) RobotView.mount();
-  if (window.BenchPanel) BenchPanel.mount();
-  api('/api/events').then((r) => { S.events = r.events; renderLog(); }).catch(() => {});
-}
-
 /* ---------- eylemler ---------- */
-async function onScenario(id) {
-  const sc = S.ui.scenarios[id];
-  if (sc.confirm && S.armed !== id) {
-    S.armed = id; render(); setTimeout(() => { if (S.armed === id) { S.armed = null; render(); } }, 3000); return;
-  }
-  S.armed = null;
-  try { await api(`/api/scenarios/${id}/run`, 'POST'); } catch (e) { toast(e.message, true); }
-  render();
-}
-async function onCancel() { try { await api('/api/scenarios/cancel', 'POST'); } catch (e) { toast(e.message, true); } }
 async function onEstop() {
   // Tek dokunuş, onay yok. Ağ hatasında da tekrar dene: durdurma sessizce başarısız olmamalı.
   for (let i = 0; i < 3; i++) {
     try {
       const r = await api('/api/estop', 'POST');
       if (r && r.interrupts_motion === false) toast('Dikkat: bu robot API v1 konuşmuyor; hareket ortasında kesilemeyebilir, sonraki adımlar iptal edildi.', true);
+      else toast('ACİL DUR gönderildi');
       return;
     } catch (e) {
       if (i === 2) toast('ACİL DUR gönderilemedi: ' + e.message + ' — robotun fiziksel durdurmasını kullan!', true);
@@ -171,25 +122,28 @@ async function onReset() {
 }
 
 /* ---------- çizim ---------- */
-function setConn(state, label) {
-  const p = $('pill-conn'); p.dataset.state = state;
-  p.textContent = label || ({ live: 'Canlı', down: 'Bağlantı yok', connecting: 'Bağlanıyor…' })[state];
-}
+function setConn(state, label) { S.wsState = state; S.connLabel = label || null; renderConn(); }
 const fmt = (v) => (v == null ? '—' : v.toFixed(3));
 const hhmmss = (ts) => new Date(ts * 1000).toLocaleTimeString('tr-TR', { hour12: false });
 
+function renderTop(s) {
+  const m = ShellLogic.modeInfo(s), pm = $('pill-mode');
+  pm.dataset.mode = m.key; pm.textContent = m.label; pm.title = m.title;
+  const mode = s ? s.access.mode : (S.session && S.session.mode);
+  const a = ShellLogic.accessInfo(mode, !!(s && s.me.authenticated) || !!(S.session && S.session.authenticated));
+  const pa = $('pill-access'); pa.dataset.access = a.key; pa.textContent = a.label; pa.title = a.title;
+  $('btn-logout').hidden = mode !== 'pin' || !(s && s.me.authenticated);
+}
+
+function renderConn() {
+  const c = ShellLogic.connInfo(S.wsState, S.snap);
+  const p = $('pill-conn'); p.dataset.state = c.state; p.textContent = S.connLabel || c.label;
+}
+
 function render() {
   const s = S.snap; if (!s || !S.ui) return;
-  if (window.AgentPanel) AgentPanel.onState(s);
-  if (window.JogPanel) JogPanel.onState(s);
-  if (window.RobotView) RobotView.onState(s);
-  const canControl = s.me.can_control && !s.estop.latched;
-  const run = s.runner;
+  renderTop(s); renderConn();
   const readOnly = s.access.mode === 'locked';
-
-  const mode = $('pill-mode');
-  mode.hidden = !readOnly; mode.textContent = 'Salt okunur'; mode.className = 'pill warn';
-  $('btn-logout').hidden = s.access.mode !== 'pin';
   const banner = $('banner');
   const rb = s.robot || {}, est = s.estop, rep = est.report;
   const show = (cls, text) => { banner.hidden = false; banner.className = 'banner ' + cls; banner.textContent = text; };
@@ -205,67 +159,15 @@ function render() {
     } else t += 'Güvenliyse “Kilidi aç”a bas.';
     show(rep && rep.stopped === false ? 'danger alarm' : 'danger', t);
   } else if (rb.compatible === false && rb.connected) show('', `Robot API uyumsuz: ${rb.problem}`);
-  else if (rb.connected === false) show('', `Robot bağlı değil: ${rb.problem || 'yanıt yok'}. Butonlar çalışmaz.`);
+  else if (rb.connected === false) show('', `Robot bağlı değil: ${rb.problem || 'yanıt yok'}. Hareket komutları çalışmaz.`);
   else if (readOnly) show('', 'Kontroller kilitli (salt okunur kip). ACİL DUR yine de çalışır.');
-  else if (rb.mode === 'real') show('', 'Gerçek robot: bu yazılım acil durdur; fiziksel acil durdurmanın yerine geçmez.');
+  else if (rb.mode === 'real') show('', 'Gerçek robot: bu yazılım acil durdurur; fiziksel acil durdurmanın yerine geçmez.');
   else banner.hidden = true;
-
-  for (const [id, b] of Object.entries(S.buttons)) {
-    const mine = run.running && run.scenario === id;
-    b.classList.toggle('running', mine);
-    b.classList.toggle('armed', S.armed === id);
-    b.disabled = !canControl || run.running || (s.robot && (s.robot.connected === false || s.robot.compatible === false));
-    if (mine) b.disabled = true;
-    b.querySelector('.ds').textContent = S.armed === id ? 'Emin misin? Tekrar dokun.' : S.ui.scenarios[id].description;
-    b.querySelector('.bar').style.width = mine && run.steps_total ? `${Math.round(((run.step - 1) / run.steps_total) * 100)}%` : '0';
-  }
 
   const bar = $('estop-bar'); bar.classList.toggle('latched', s.estop.latched);
   $('estop-label').textContent = s.estop.latched ? 'ACİL DUR AKTİF' : 'ACİL DUR';
   const reset = $('btn-reset'); reset.hidden = !s.estop.latched; reset.disabled = !s.me.can_control;
-
-  const big = $('st-big');
-  if (big) {
-    let text = 'Hazır', cls = 'ok';
-    if (s.estop.latched) { text = 'ACİL DUR'; cls = 'bad'; }
-    else if (run.running) { text = `${run.label} (adım ${run.step}/${run.steps_total})`; cls = 'busy'; }
-    big.textContent = text; big.className = 'status-big ' + cls;
-    $('st-say').textContent = run.running ? run.say : '';
-    const last = run.last;
-    $('st-last').textContent = !run.running && last ? `Son: ${last.label}: ${last.message}` : '';
-    const c = $('btn-cancel'); c.disabled = !run.running || !s.me.can_control; c.hidden = !run.running;
-  }
-
-  const kv = $('rb-kv');
-  if (kv && s.robot) {
-    const r = s.robot;
-    const STATE = { idle: 'hazır', busy: 'çalışıyor', estopped: 'ACİL DUR', error: 'hata (son komut)' };
-    const rows = [['Arka uç', r.mode && r.mode !== r.name ? `${r.name} (${r.mode})` : r.name],
-      ['Bağlantı', r.connected ? 'bağlı' : 'yok'],
-      ['Robot durumu', STATE[r.state] || '—'],
-      ['Hareket', r.moving === true ? 'hareket ediyor' : r.moving === false ? 'duruyor' : 'bilinmiyor'],
-      ['Uç konum (m)', r.tool ? r.tool.map(fmt).join('  ') : '—']];
-    if (s.bridge) {
-      const b = s.bridge;
-      rows.push(['ESP32 köprüsü', `${b.serial_connected ? 'seri bağlı' : 'seri YOK'}, ${b.client_connected ? 'istemci var' : 'istemci yok'} (${b.listen})`]);
-    }
-    if (r.current_job) rows.push(['Çalışan iş', `${r.current_job.id}: ${r.current_job.command}`]);
-    if (r.last_error) rows.push(['Son hata', r.last_error.message]);
-    if (r.safety && r.safety.zone) {
-      const z = r.safety.zone.box;
-      rows.push(['Güvenli kutu', ['x', 'y', 'z'].map((k) => `${k} ${z[k][0]}…${z[k][1]}`).join(', ')]);
-    }
-    kv.replaceChildren(...rows.flatMap(([k, v]) => [el('dt', { text: k }), el('dd', { text: String(v) })]));
-    $('rb-joints').replaceChildren(...(r.joints || []).map((j) => el('div', { class: 'joint' }, [
-      el('b', { text: j.deg == null ? '—' : `${j.deg.toFixed(1)}°` }), el('span', { text: j.name })])));
-  }
-  renderLog();
-}
-
-function renderLog() {
-  const ul = $('lg'); if (!ul) return;
-  ul.replaceChildren(...S.events.slice(-40).reverse().map((e) =>
-    el('li', { 'data-level': e.level }, [el('time', { text: hhmmss(e.ts) }), el('span', { text: e.message })])));
+  HubPages.onState(s);
 }
 
 /* ---------- canlı akış ---------- */
@@ -278,9 +180,9 @@ function connectWs() {
   ws.onopen = () => { S.wsOk = true; S.retry = 0; stopPoll(); setConn('live'); };
   ws.onmessage = (m) => {
     const d = JSON.parse(m.data);
-    if (window.RobotView) RobotView.onLive();      // durum da, tick de: canlılık işareti
+    S.liveAt = performance.now();                 // durum da, tick de: canlılık işareti (3B görünüm bayatlığı)
     if (d.type === 'state') { S.snap = d.state; render(); }
-    else if (d.type === 'events') { S.events.push(...d.events); S.events = S.events.slice(-200); renderLog(); }
+    else if (d.type === 'events') { S.events.push(...d.events); S.events = S.events.slice(-200); HubPages.onEvents(S.events); }
   };
   ws.onclose = (ev) => {
     S.wsOk = false; S.ws = null;

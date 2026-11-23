@@ -239,8 +239,11 @@ def agent_selftest() -> int:
         _check(st == 200 and doc.get('enabled') and doc.get('can_configure') and doc.get('csrf'),
                f'ajan durumu beklenmedik: {st} {str(doc)[:200]}')
         http.csrf = doc['csrf']
-        st, page = http.call('/')
-        _check('/agent.js' in page.get('_raw', ''), 'index.html agent.js yüklemiyor')
+        st, doc = http.call('/api/pages')
+        _check(st == 200 and any(x.get('id') == 'agent' for x in doc.get('pages', [])),
+               f'sayfa listesinde ajan sayfası yok: {st} {str(doc)[:200]}')
+        st, pg = http.call('/pages/agent.js')
+        _check(st == 200 and "'/agent.js'" in pg.get('_raw', ''), 'pages/agent.js ajan panelini yüklemiyor')
         st, js = http.call('/agent.js')
         _check(st == 200 and 'p-agent' in js.get('_raw', ''), 'agent.js (ajan kartı) gömülü değil')
         print('2. ajan kartı arayüz dosyaları gömülü; CSRF + yerel yetki tamam')

@@ -264,25 +264,31 @@ control_hub/
     hub.py            Hub: hepsini birleştirir + ACİL DUR kilidi
     access.py         open|pin|locked, PIN, oturum, deneme sınırı
     events.py         olay günlüğü
-  server/     FastAPI + WebSocket (çekirdeği HTTP'ye açar)
-  web/        düz HTML/CSS/JS, derleme yok, mobil öncelikli, PWA manifest
+  server/     FastAPI + WebSocket (çekirdeği HTTP'ye açar); <ad>_routes.py dosyaları otomatik yüklenir (registry.py)
+  web/        düz HTML/CSS/JS, derleme yok, mobil öncelikli, PWA manifest; pages/*.js = sayfalar, vendor/three = yerel Three.js
   desktop/    Windows .exe'nin pencere + servis + güvenlik duvarı mantığı (Tk yalnızca gui.py'de)
   hw/         ESP32 köprüsü: COM↔TCP (bayt şeffaf), yeniden bağlanma, token
   agent/      LLM ajanı: AgentService (robot_agent'ı sarar), anahtar deposu, onay kuyruğu, sahte Robot API portu
   paths.py    gömülü/kullanıcı yolları (PyInstaller _MEIPASS dahil)
-config/       scenarios.yaml (butonlar), ui.config.json (yerleşim + tema)
+config/       scenarios.yaml (senaryolar; arayüzde düğme YOK, ajan/API kullanır), ui.config.json (tema + panel seçimi)
 hub.spec, exe_entry.py, assets/   PyInstaller tek dosya derlemesi
 tools/        geliştirme araçları (üretimde kullanılmaz): robot_stub.py, e2e_check.py, smoke_check.py
 tests/
 ```
 
-## Arayüzü değiştirmek = küçük dosya değişikliği
+## Arayüzü değiştirmek = yeni dosya eklemek
 
-* **Yeni senaryo / buton:** `config/scenarios.yaml`'a blok ekle, sonra `config/ui.config.json`'daki
-  `layout.sections[].scenarios` listesine id'yi yaz. Adımlar `robot: <komut>` ya da `wait: <sn>`.
-* **Buton boyutu, sütun sayısı, ACİL DUR'un yeri (üst/alt), panel sırası, renkler:** `ui.config.json`.
+Arayüz **çok sayfalı bir iskelettir** (üst çubuk: ACİL DUR + bağlantı + mod + erişim kipi; sol menü; sayfalar).
+**Yeni sayfa = yeni dosya:** `web/pages/<ad>.js` (+ gerekirse `server/<ad>_routes.py`) eklenir, ortak dosyalara
+dokunulmaz; menü ve rota otomatik kurulur. Şablonlar ve kurallar: **`docs/UI_CONTRACT.md`** (şablonlar testle çalıştırılır).
+
+* **Tema renkleri, Robot sayfasındaki panel seçimi/sırası:** `config/ui.config.json` (`theme`, `layout.panels`).
+  Senaryo düğmeleri (`layout.sections`) kaldırıldı: yeşile git / isimli poz düğmeleri yok; hareket için Jog sayfası.
+  Senaryolar (`scenarios.yaml`) ajan ve API için durur. ACİL DUR her zaman üst çubukta (`layout.estop.position` artık
+  yalnız geçerlilik için denetlenir).
 * Hatalı dosya Hub'ı **açılışta** durdurur ve tüm hataları birlikte listeler:
-  `python -m control_hub --fake --check-config`.
+  `python -m control_hub --fake --check-config` (ayrıca iskelet öz denetimi: rota + sayfa keşfi).
+* 3B demo (CAD mesh'li, donanımsız): `python -m tools.ui_demo` → http://localhost:8767
 
 ## Güvenlik
 
@@ -330,14 +336,16 @@ Robot API'sinin `POST /api/jog` + `GET/PUT /api/frames` uçlarını (J2) Hub **g
 Panel: **artımlı varsayılan** (0.1 / 1 / 10 mm ya da °). Basılı-tut yalnızca `hold_allowed` ise açılır ve
 kullanıcı kutuyu işaretlerse çalışır; kapalıysa nedeni panelde yazar (gerçek mod, `jog_hold` kapalı, telefon,
 Docker NAT'ta robotun reddi: `403`). `409` = başka istemci/iş, `423` = ACİL DUR kilidi, `502` = robota ulaşılamıyor.
-**Robot görünümü (L9c):** `GET /api/model` (robotun `view_model.json`'u, salt-okunur geçiş) + durumdaki `joints` ile
-bağımlılıksız Canvas 2D, ortografik, sürükleyerek döner; link = çubuk/kapsül, turuncu kesikli kutu = modeldeki etkin
-güvenli kutu, beyaz nokta = çizilen zincirin ucu, yeşil halka = robotun bildirdiği TCP, eksenler = jog'da seçili çerçeve.
-**Bayatlık:** WS'ten gelen son mesaj ya da robot verisi 1 s'den eskiyse görünüm griye döner ve kırmızı "ACİL DUR" bandı
-çıkar (Hub WS'i durum değişmese de en geç 0,4 s'de bir `tick` yollar; WS yokken HTTP yoklaması görünümü "taze" yapmaz).
-`mode: real`'de çizim "KESTİRİM" etiketlidir (API eksen bazında encoder bilgisi vermez, hepsi kestirim sayılır);
-`--fake`'de "SAHTE ROBOT" (duruş kinematik değil). Model alınamazsa ya da eklem adları uyuşmazsa "Görünüm kullanılamıyor:
-<neden>" kartı çıkar. Görünüm komut yolu içermez ve ölçüm/güvenlik işlevi değildir; ACİL DUR Hub'ın kendi düğmesidir.
+Jog sayfasında 3B görünüm yanındadır; "Hazır pozuna git" gibi isimli poz düğmeleri Aşama 0'da kaldırıldı.
+**Robot 3B görünümü (Aşama 0):** Three.js (**yerel** kopya, `web/vendor/three/`, CDN yok), salt okunur; sürükle: döndür,
+tekerlek: yakınlaştır. Veri: `GET /api/model` (görünüm modeli) + `GET /api/meshes` (profildeki link STL'leri; yoksa model
+primitifleri çizilir) + Hub durumundaki eklem açıları (canlı hareket). Turuncu kutu = etkin güvenli kutu, beyaz nokta =
+modelin TCP'si, yeşil halka = robotun bildirdiği TCP, eksenler = jog'da seçili çerçeve.
+**Bayatlık:** WS'ten gelen son mesaj ya da robot verisi 1 s'den eskiyse görünüm griye döner, hareket donar ve kırmızı
+"ACİL DUR" bandı çıkar (Hub WS'i durum değişmese de en geç 0,4 s'de bir `tick` yollar; WS yokken HTTP yoklaması görünümü
+"taze" yapmaz). `mode: real`'de çizim "KESTİRİM" etiketlidir; `--fake`'de "SAHTE ROBOT" (duruş kinematik değil). Model
+alınamazsa ya da eklem adları uyuşmazsa "Görünüm kullanılamıyor: <neden>" çıkar; WebGL açılamazsa 3B kutusu nedenini
+yazar, diğer sayfalar çalışır. Görünüm komut yolu içermez ve ölçüm/güvenlik işlevi değildir.
 
 **Düzlem öğretme sihirbazı (L3):** "Düzlemler" kartı. Orijin, +X yönü ve XY düzlemi noktaları robot jog ile
 götürülüp "Şu anki TCP'yi kaydet" ile alınır (sihirbaz robotu hareket ettirmez); "Düzlemi kaydet" taze listeyi

@@ -11,53 +11,51 @@
   <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/style.css">
 </head>
-<body data-estop-pos="bottom">
-  <header class="top">
-    <h1 id="title">Robot Kontrol Merkezi</h1>
-    <div class="pills">
-      <span class="pill" id="pill-conn" data-state="connecting">Bağlanıyor…</span>
-      <span class="pill" id="pill-mode" hidden></span>
-      <button class="link" id="btn-logout" hidden>Çıkış</button>
+<body>
+  <!-- ÜST ÇUBUK: her ekranda (giriş dahil) sabit. ACİL DUR, bağlantı, mod (sim/tezgâh/gerçek), erişim kipi (PIN). -->
+  <header class="topbar" id="topbar">
+    <div class="top-row">
+      <button class="menu-btn" id="btn-menu" type="button" aria-label="Menü" aria-controls="nav">☰</button>
+      <h1 id="title">Robot Kontrol Merkezi</h1>
+      <div class="pills">
+        <span class="pill" id="pill-conn" data-state="connecting" title="Hub ve robot bağlantısı">Bağlanıyor…</span>
+        <span class="pill" id="pill-mode" data-mode="unknown" title="Çalışma modu">MOD —</span>
+        <span class="pill" id="pill-access" data-access="" title="Erişim kipi">ERİŞİM —</span>
+        <button class="link" id="btn-logout" hidden>Çıkış</button>
+      </div>
+    </div>
+    <div class="estop-bar" id="estop-bar" data-pos="top">
+      <button id="btn-estop" class="estop" type="button">
+        <span class="estop-icon" aria-hidden="true">⛔</span>
+        <span id="estop-label">ACİL DUR</span>
+      </button>
+      <button id="btn-reset" class="reset" type="button" hidden>Kilidi aç</button>
     </div>
   </header>
 
   <div class="banner" id="banner" hidden></div>
 
-  <!-- ACİL DUR üst konumdaysa buraya taşınır (ui.config.json: layout.estop.position) -->
-  <div id="estop-top-slot"></div>
+  <div class="shell">
+    <nav class="nav" id="nav" aria-label="Sayfalar" hidden></nav>
+    <main id="main" hidden>
+      <div id="page-host"></div>
+    </main>
 
-  <main id="main" hidden>
-    <div id="sections"></div>
-    <div id="panels"></div>
-  </main>
-
-  <section class="login" id="login" hidden>
-    <form id="login-form" class="card" autocomplete="off">
-      <h2>Giriş</h2>
-      <p class="muted">Bilgisayarda (terminal ya da masaüstü uygulaması) gösterilen PIN'i gir.</p>
-      <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="12"
-             autocomplete="one-time-code" placeholder="PIN" aria-label="PIN" required>
-      <button class="primary" type="submit">Giriş yap</button>
-      <p class="error" id="login-error" role="alert"></p>
-    </form>
-  </section>
-
-  <!-- ACİL DUR: her ekranda sabit; giriş ekranında da görünür (oturumsuz çalışır) -->
-  <div class="estop-bar" id="estop-bar" data-pos="bottom">
-    <button id="btn-estop" class="estop" type="button">
-      <span class="estop-icon" aria-hidden="true">⛔</span>
-      <span id="estop-label">ACİL DUR</span>
-    </button>
-    <button id="btn-reset" class="reset" type="button" hidden>Kilidi aç</button>
+    <section class="login" id="login" hidden>
+      <form id="login-form" class="card" autocomplete="off">
+        <h2>Giriş</h2>
+        <p class="muted">Bilgisayarda (terminal ya da masaüstü uygulaması) gösterilen PIN'i gir.</p>
+        <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="12"
+               autocomplete="one-time-code" placeholder="PIN" aria-label="PIN" required>
+        <button class="primary" type="submit">Giriş yap</button>
+        <p class="error" id="login-error" role="alert"></p>
+      </form>
+    </section>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="/shell.js" defer></script>
+  <script src="/pages.js" defer></script>
   <script src="/app.js" defer></script>
-  <script src="/agent.js" defer></script>
-  <script src="/jog.js" defer></script>
-  <script src="/view.js" defer></script>
-  <script src="/sphere.js" defer></script>
-  <script src="/frames.js" defer></script>
-  <script src="/bench.js" defer></script>
 </body>
 </html>

@@ -9,7 +9,7 @@ window.JogPanel = (() => {
   const AX = [['X', 'mm', 0], ['Y', 'mm', 1], ['Z', 'mm', 2], ['W', '°', 3], ['P', '°', 4], ['R', '°', 5]];
   const STEPS = [0.1, 1, 10];
   const HOLD_LIN = 0.02, HOLD_ANG = 0.10, BEAT_MS = 100, TTL_MS = 250;   // sunucu zaten kırpar; dar tutuyoruz
-  const J = { mounted: false, st: null, lease: newLease(), step: 1, hold: false, frame: 'World',
+  const J = { mounted: false, host: null, st: null, lease: newLease(), step: 1, hold: false, frame: 'World',
               frames: [], busy: false, beat: null, held: null, holdBlocked: null, snap: null, msg: null };
   const q = (id) => document.getElementById(id);
 
@@ -39,13 +39,14 @@ window.JogPanel = (() => {
 
   async function post(body) { return api('/api/jog', 'POST', { lease: J.lease, frame: J.frame, ...body }); }
 
-  function mount() {
+  function mount(host) {
     if (J.mounted) return;
+    if (host) J.host = host;                      // sayfa kutusu (yoksa eski #panels)
     api('/api/jog').then((st) => {
       if (!st || !st.enabled) return unavailable('robot jog\'u kapalı bildirdi (enabled=false)');
       const old = q('p-jog'); if (old) old.remove();
       J.st = st; J.mounted = true; build(); refreshFrames();
-      if (window.FrameWizard) FrameWizard.mount();
+      if (window.FrameWizard) FrameWizard.mount(J.host);
       if (J.snap) onState(J.snap); else apply();   // ilk durum mount'tan önce gelmiş olabilir
     }).catch((e) => {
       // Panel sessizce kaybolmaz: neden yazılır (robot yığını eski olabilir, robot kapalı olabilir…)
@@ -57,8 +58,8 @@ window.JogPanel = (() => {
   function unavailable(reason) {
     const prev = q('p-jog'); if (prev) prev.remove();
     const retry = el('button', { class: 'small', type: 'button', text: 'Yeniden dene' });
-    retry.addEventListener('click', () => { const c = q('p-jog'); if (c) c.remove(); mount(); });
-    q('panels').append(el('div', { class: 'card', id: 'p-jog' }, [
+    retry.addEventListener('click', () => { const c = q('p-jog'); if (c) c.remove(); mount(J.host); });
+    (J.host || q('panels')).append(el('div', { class: 'card', id: 'p-jog' }, [
       el('h2', { text: 'Jog (elle hareket)' }),
       el('div', { class: 'say bad', id: 'jg-off', text: `Jog kullanılamıyor: ${reason}` }),
       el('div', { class: 'row' }, [retry])]));
@@ -70,7 +71,7 @@ window.JogPanel = (() => {
       grid.append(el('div', { class: 'jg-ax', text: `${name} (${unit})` }),
         axisBtn(i, -1), el('output', { class: 'jg-val', id: `jg-v${i}`, text: '—' }), axisBtn(i, +1));
     }
-    q('panels').append(el('div', { class: 'card', id: 'p-jog' }, [
+    (J.host || q('panels')).append(el('div', { class: 'card', id: 'p-jog' }, [
       el('h2', { text: 'Jog (elle hareket)' }),
       el('div', { class: 'row' }, [
         el('label', { class: 'jg-f', text: 'Çerçeve ' }, [el('select', { id: 'jg-frame', 'aria-label': 'Çerçeve' })]),
@@ -80,7 +81,6 @@ window.JogPanel = (() => {
         el('input', { type: 'checkbox', id: 'jg-hold' }), document.createTextNode(' Basılı-tut modu (tuşa basılı tutarken hareket)')]),
       el('div', { class: 'say', id: 'jg-why' }),
       el('div', { class: 'row' }, [
-        el('button', { class: 'small', id: 'jg-ready', type: 'button', text: 'Hazır pozuna git' }),
         el('button', { class: 'small', id: 'jg-release', type: 'button', text: 'Jog’u bırak' })]),
       el('div', { class: 'say jg-msg', id: 'jg-msg', role: 'alert' }),
       el('div', { class: 'say', id: 'jg-info' })]));
@@ -92,7 +92,6 @@ window.JogPanel = (() => {
     q('jg-frame').addEventListener('change', (ev) => { J.frame = ev.target.value; });
     q('jg-hold').addEventListener('change', (ev) => { J.hold = ev.target.checked; stopHold(); apply(); });
     q('jg-release').addEventListener('click', () => release(true));
-    q('jg-ready').addEventListener('click', onReady);
     window.addEventListener('blur', () => stopHold());
     document.addEventListener('visibilitychange', () => { if (document.hidden) stopHold(); });
     window.addEventListener('pagehide', () => {
@@ -152,14 +151,6 @@ window.JogPanel = (() => {
     catch (e) { if (loud || e.status !== 423) say(explain(e), true); }
   }
 
-  async function onReady() {
-    // 'ready' bir senaryo adımıdır; tek adımlık senaryo yoksa Hub'a doğrudan iş vermeyiz.
-    const id = Object.keys((S.ui && S.ui.scenarios) || {}).find((k) => k === 'ready');
-    if (!id) { say('“ready” senaryosu yapılandırmada yok (scenarios.yaml).', true); return; }
-    try { await api(`/api/scenarios/${id}/run`, 'POST'); say('Hazır pozuna gidiliyor…'); }
-    catch (e) { say(explain(e), true); }
-  }
-
   /* ---- çerçeveler ---- */
   async function refreshFrames() {
     try {
@@ -185,7 +176,7 @@ window.JogPanel = (() => {
     const lock = !!why || (J.busy && !J.hold);
     for (const b of document.querySelectorAll('#jg-grid .jg-b')) b.disabled = !!why || (J.busy && !J.hold);
     for (const b of document.querySelectorAll('.jg-step')) b.classList.toggle('on', Number(b.dataset.step) === J.step);
-    q('jg-ready').disabled = !!why; q('jg-release').disabled = !!(s && !s.me.can_control);
+    q('jg-release').disabled = !!(s && !s.me.can_control);
     const allowed = !!(J.st && J.st.hold_allowed) && !J.holdBlocked;
     const hold = q('jg-hold'); hold.disabled = !allowed || !!why; hold.checked = J.hold && allowed;
     q('jg-why').textContent = why || (allowed ? '' : `Basılı-tut kapalı: ${J.holdBlocked || (J.st && J.st.hold_reason) || 'bilinmiyor'}`);

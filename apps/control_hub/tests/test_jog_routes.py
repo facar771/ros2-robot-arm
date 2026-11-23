@@ -152,7 +152,8 @@ def test_pin_mode_needs_login_for_jog(make_client):
 
 def test_static_panel_served_and_hub_never_writes_frames_file():
     web = Path(__file__).resolve().parents[1] / 'control_hub'
-    assert 'jog.js' in (web / 'web' / 'index.html').read_text(encoding='utf-8')
+    page = (web / 'web' / 'pages' / 'jog.js').read_text(encoding='utf-8')
+    assert "'/jog.js'" in page                 # sayfa jog.js'i yükler
     for f in ('server/jog_routes.py', 'hub_core/robot_api_backend.py', 'hub_core/fake_jog.py'):
         src = (web / f).read_text(encoding='utf-8')
         assert not re.search(r'\bopen\(|write_text|write_bytes', src), f
@@ -263,6 +264,6 @@ def test_frame_teaching_appends_and_deletes_whole_list(local):
 
 def test_wizard_assets_served(local):
     client, _ = local
-    assert 'frames.js' in client.get('/').text
+    assert "'/frames.js'" in client.get('/pages/jog.js').text
     js = client.get('/frames.js').text
     assert 'window.FrameWizard' in js and "'/api/frames', 'PUT'" in js and '.innerHTML' not in js

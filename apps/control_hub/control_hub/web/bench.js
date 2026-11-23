@@ -27,12 +27,12 @@ window.BenchPanel = (() => {
   const q = (id) => document.getElementById(id);
   const L = window.BenchLogic;
 
-  function mount() {
+  function mount(host) {
     if (B.mounted || !(S.snap && S.snap.bench && S.snap.bench.enabled)) return;
     B.mounted = true;
     const confirm = el('input', { type: 'checkbox', id: 'bn-confirm' });
     confirm.addEventListener('change', render);
-    q('panels').append(el('div', { class: 'card bn', id: 'p-bench' }, [
+    (host || q('panels')).append(el('div', { class: 'card bn', id: 'p-bench' }, [
       el('div', { class: 'bn-band', role: 'alert',
         text: 'TEZGÂH — gerçek robot DEĞİL. Yalnız yükten ayrık motor, operatör başında, güç kesmeye hazır.' }),
       el('h2', { text: 'Tezgâh (3 step motor)' }),

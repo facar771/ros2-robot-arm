@@ -14,6 +14,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import mimetypes
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -30,8 +31,12 @@ from control_hub import __version__
 from control_hub.hub_core import BusyError, EstopLatchedError, Hub, ResetRefusedError, UnknownScenarioError
 from control_hub.hub_core.access import Decision
 from control_hub.paths import web_dir
+from control_hub.server.registry import RouteContext, install_routes, page_files
 
 log = logging.getLogger('control_hub.server')
+# Windows kayıt defteri .js'i text/plain verebilir; nosniff + ES modülü bunu reddeder (three.js).
+mimetypes.add_type('text/javascript', '.js')
+mimetypes.add_type('model/stl', '.stl')
 COOKIE = 'hub_session'
 WEB_DIR = web_dir()
 WS_PERIOD_S = 0.2
@@ -237,13 +242,16 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
             raise ApiError(409, 'reset_refused', f'Robot kilidi açmayı reddetti: {exc}') from None
         return {'ok': True, 'estop': False}
 
-    from control_hub.server.jog_routes import install_jog_routes
-    install_jog_routes(app, hub, need_view=need_view, need_control=need_control)
-    from control_hub.server.bench_routes import install_bench_routes
-    install_bench_routes(app, hub, need_view=need_view, need_control=need_control,
-                         api_error=lambda st, code, msg: ApiError(st, code, msg))
-    from control_hub.server.agent_routes import install_agent_routes
-    install_agent_routes(app, hub, token_of=token_of, need_view=need_view, need_control=need_control)
+    # Rota modülleri otomatik yüklenir: server/<ad>_routes.py içindeki install(app, ctx) (registry.py).
+    ctx = RouteContext(hub=hub, need_view=need_view, need_control=need_control, token_of=token_of,
+                       api_error=lambda status, code, message: ApiError(status, code, message))
+    app.state.route_modules = install_routes(app, ctx)
+
+    @app.get('/api/pages')
+    async def pages(request: Request):
+        """Ön uç sayfaları: web/pages/*.js (ön uç hepsini yükler ve HubPages.register ile kaydeder)."""
+        need_view(request)
+        return {'ok': True, 'pages': [{'id': n[:-3], 'script': f'/pages/{n}'} for n in page_files(web_dir)]}
 
     # --- canlı akış ----------------------------------------------------------------------------
     @app.websocket('/ws')

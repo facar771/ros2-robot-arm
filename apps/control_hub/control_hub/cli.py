@@ -288,7 +288,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f'Hata: {exc}', file=sys.stderr)
         return 2
     if args.check_config:
-        print(f'Yapılandırma geçerli: {len(hub.scenarios)} senaryo.')
+        from control_hub.paths import web_dir
+        from control_hub.server.registry import page_files, route_module_names, selfcheck
+        bad = selfcheck(web_dir())
+        if bad:
+            print('Arayüz iskeleti eksik:\n  ' + '\n  '.join(bad), file=sys.stderr)
+            return 2
+        print(f'Yapılandırma geçerli: {len(hub.scenarios)} senaryo, {len(route_module_names())} rota modülü, '
+              f'{len(page_files(web_dir()))} sayfa.')
         return 0
     import uvicorn
 
