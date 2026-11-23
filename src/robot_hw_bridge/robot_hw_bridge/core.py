@@ -37,6 +37,7 @@ from robot_hw_bridge.protocol import (
     State,
     Status,
 )
+from robot_hw_bridge.telemetry import PotMonitor
 
 # control_msgs/FollowJointTrajectory.Result error codes (ROS'suz kopya; node.py sabitleri eşler)
 SUCCESSFUL, INVALID_GOAL, INVALID_JOINTS, OLD_HEADER_TIMESTAMP = 0, -1, -2, -3
@@ -94,8 +95,10 @@ class HwBridge:
     def __init__(self, hw: HardwareProfile, robot: Profile, config: Optional[BridgeConfig] = None,
                  on_estop: Optional[Callable[[str], None]] = None, *,
                  clock: Callable[[], float] = time.monotonic,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep, pot: Optional[PotMonitor] = None):
         self.hw, self.robot = hw, robot
+        # Faz 3 pot telemetrisi: yalnız varlık/tazelik kapısı (PR 1). ``required`` kanal yoksa etkisizdir.
+        self.pot = pot
         self.cfg = config or BridgeConfig()
         self._on_estop = on_estop
         self._clock, self._sleep = clock, sleep
@@ -196,6 +199,21 @@ class HwBridge:
             threading.Thread(target=self._on_estop, args=(reason,), name='hw-estop-report',
                              daemon=True).start()
 
+    # ------------------------------------------------------------------ pot telemetrisi kapısı
+    def _pot_block(self) -> Optional[str]:
+        """``required`` pot kanalı "veri yok" ise reddeden açık mesaj; None = kapı açık."""
+        return self.pot.blocked() if self.pot is not None else None
+
+    def _pot_guard(self) -> None:
+        """KONTROLLÜ DURDURMA (Robot_1): kapı kapalıyken hareket varsa eksenler durur, yörünge iptal olur.
+        homed KORUNUR; /api/stop ve API kilidi YOK (sert yol yalnızca PR 2'de gerçek sapmada)."""
+        why = self._pot_block()
+        if why is None:
+            return
+        st = self._status
+        if self.executing or (st is not None and any(a.flags & AxisFlag.MOVING for a in st.axes)):
+            self.stop(why)
+
     # ------------------------------------------------------------------ düğüm döngüsü bekçisi
     def tick(self) -> None:
         """Düğümün asıl döngüsü (zamanlayıcı) bunu sık sık çağırır. Susarsa kalp atışı kesilir ve MCU
@@ -207,6 +225,7 @@ class HwBridge:
 
     def _guard_loop(self) -> None:
         while not self._guard_stop.wait(0.05):
+            self._pot_guard()
             last = self._tick
             if last is not None and not self._stalled and self._clock() - last > self.cfg.loop_stall_s:
                 self._stalled = True
@@ -254,6 +273,8 @@ class HwBridge:
                 'fault': self.fault, 'executing': self.executing,
                 'open_loop_axes': list(self.hw.open_loop_axes), 'warnings': list(self.hw.warnings),
                 'watchdog_ms': self.cfg.watchdog_ms,
+                'pot': self.pot.snapshot() if self.pot is not None else None,
+                'pot_gate': self._pot_block(),
                 'note': 'yazılım acil durdurması donanım acil durdurmanın yerine geçmez'}
 
     # ------------------------------------------------------------------ yapılandırma, homing
@@ -314,6 +335,9 @@ class HwBridge:
             return False, 'hat yok'
         if self.executing:
             return False, 'yörünge çalışırken homing yapılmaz'
+        blocked = self._pot_block()
+        if blocked is not None:
+            return False, f'homing reddedildi: {blocked}'
         if not self._configured:
             ok, msg = self.configure()
             if not ok:
@@ -418,6 +442,9 @@ class HwBridge:
         if not self._homed_ok:
             return ExecResult(INVALID_GOAL, 'önce homing gerekli (açılışta ve her acil dur/hat kesintisinden '
                                             'sonra robot "unhomed"dır)')
+        blocked = self._pot_block()
+        if blocked is not None:
+            return ExecResult(INVALID_GOAL, f'hareket reddedildi: {blocked}')
         bad = self.validate(names, points)
         if bad is not None:
             return bad
@@ -441,6 +468,9 @@ class HwBridge:
             return ExecResult(INVALID_GOAL, 'ESP32 hattı yok')
         if not self._homed_ok:
             return ExecResult(INVALID_GOAL, 'önce homing gerekli')
+        blocked = self._pot_block()
+        if blocked is not None:
+            return ExecResult(INVALID_GOAL, f'jog reddedildi: {blocked}')
         bad = self.validate(names, points)
         if bad is not None:
             return bad

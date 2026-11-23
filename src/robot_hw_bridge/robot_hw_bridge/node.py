@@ -35,6 +35,8 @@ from trajectory_msgs.msg import JointTrajectory
 from robot_hw_bridge import core
 from robot_hw_bridge.host import HwLink
 from robot_hw_bridge.robot_api import EstopRelay, RobotApiClient
+from robot_hw_bridge.telemetry import PORT as POT_PORT
+from robot_hw_bridge.telemetry import PotLink, PotMonitor, pot_channels_from_profile
 from robot_hw_bridge.transport import SocketTransport
 
 ENV_PROFILE = 'ROBOT_HARDWARE_PROFILE'
@@ -70,6 +72,8 @@ class HwBridgeNode(Node):
         self.declare_parameter('loop_stall_ms', 250)        # 50..watchdog_ms; dar = daha güvenli
         self.declare_parameter('robot_api_url', 'http://127.0.0.1:8080')    # '' = bağ yok
         self.declare_parameter('joint_states_hz', 20.0)
+        self.declare_parameter('pot_host', '')              # NodeMCU IP; '' = pot telemetrisi bağlanmaz
+        self.declare_parameter('pot_port', POT_PORT)
         self.declare_parameter('action_name', 'arm_controller/follow_joint_trajectory')
         path = find_profile(str(self.get_parameter('hardware_profile').value))
         self.hw = load_hardware(path)
@@ -79,7 +83,16 @@ class HwBridgeNode(Node):
         cfg = core.BridgeConfig(watchdog_ms=int(self.get_parameter('watchdog_ms').value),
                                 loop_stall_s=int(self.get_parameter('loop_stall_ms').value) / 1000)
         self.relay: Optional[EstopRelay] = None
-        self.bridge = core.HwBridge(self.hw, self.robot, cfg, on_estop=self._report_estop)
+        pot_channels = pot_channels_from_profile(self.hw)        # profilden yalnız OKUNUR (Robot_2)
+        self.pot = PotMonitor(pot_channels) if pot_channels else None
+        self.bridge = core.HwBridge(self.hw, self.robot, cfg, on_estop=self._report_estop, pot=self.pot)
+        self.pot_link: Optional[PotLink] = None
+        pot_host = str(self.get_parameter('pot_host').value)
+        if self.pot is not None and pot_host:
+            self.pot_link = PotLink(pot_host, int(self.get_parameter('pot_port').value), self.pot).start()
+        elif self.pot is not None and self.pot.has_required:
+            self.get_logger().error('profilde required pot kanalı var ama pot_host boş: pot telemetrisi '
+                                    'gelmeyecek, hareket komutları reddedilecek (denetim kapalı sayılmaz)')
         url = str(self.get_parameter('robot_api_url').value)
         if url:
             self.relay = EstopRelay(RobotApiClient(url), hw_estop=self.bridge.estop,
@@ -211,6 +224,8 @@ class HwBridgeNode(Node):
         self._stop.set()
         if self.relay is not None:
             self.relay.close()
+        if self.pot_link is not None:
+            self.pot_link.stop()
         self.bridge.close()
 
 
