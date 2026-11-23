@@ -5,6 +5,7 @@ on:
     paths:
       - 'firmware/**'
       - 'tools/bench/**'
+      - 'tools/pot_view.py'
       - 'src/robot_hw_bridge/**'
       - '.github/workflows/firmware-ci.yml'
   push:
@@ -12,6 +13,7 @@ on:
     paths:
       - 'firmware/**'
       - 'tools/bench/**'
+      - 'tools/pot_view.py'
       - 'src/robot_hw_bridge/**'
       - '.github/workflows/firmware-ci.yml'
 
