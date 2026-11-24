@@ -18,9 +18,9 @@ from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 # `--check-config` ile doğrulanır (cli.py: selfcheck). Three.js yerel (web/vendor/three), CDN yok.
 # KM3 Tezgâh: tools/bench/bench_core.py (veri olarak) ve robot_hw_bridge (ROS'suz host/protocol/transport) gömülür.
 AGENT_PATHS = ['../../src/robot_agent', '../../src/robot_core', '../../src/robot_hw_bridge']
-CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'kinematics', 'models', 'ports', 'profile',
-                'safezone', 'scenario', 'se3', 'skills', 'supervisor', 'targets', 'waypointapi', 'waypoints',
-                'webcmd']
+CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'jog', 'jogapi', 'kinematics', 'modelapi', 'models',
+                'pathcheck', 'ports', 'profile', 'safezone', 'scenario', 'se3', 'skills', 'spheres', 'supervisor',
+                'targets', 'waypointapi', 'waypoints', 'webcmd']      # SİM (S1): jog, jogapi, modelapi, pathcheck, spheres
 
 # robot_hw_bridge/__init__ bunları içe aktarır (ROS'suz). collect_submodules derleme anında pakete erişemediği için sayılır.
 HW_MODULES = ['codec', 'crc', 'host', 'protocol', 'sim', 'transport']
@@ -37,6 +37,22 @@ MESH_DATAS = [(os.path.join(_MESHES, r, 'link'), os.path.join('robot_description
 if not MESH_DATAS:
     raise SystemExit('hub.spec: src/robot_description/meshes/<robot>/link bulunamadı; 3B görünüm mesh\'siz '
                      'paketlenirdi. Depoyu eksiksiz çıkar (git lfs/sığ klon değil).')
+
+# SİM (S1, --sim): profil YAML'ı + view_model.json gömülür; hub_core/sim_assets.py `_MEIPASS/robot_description/profile`
+# altında arar (<robot>/<robot>.yaml ve generated/<robot>/view_model.json). Robot yoksa derleme DURUR (SİM'siz .exe
+# sessizce çıkmasın).
+_PROFILE = os.path.normpath(os.path.join(SPECPATH, '..', '..', 'src', 'robot_description', 'profile'))
+PROFILE_DATAS = []
+if os.path.isdir(os.path.join(_PROFILE, 'generated')):
+    for _r in sorted(os.listdir(os.path.join(_PROFILE, 'generated'))):
+        _yaml = os.path.join(_PROFILE, _r, _r + '.yaml')
+        _view = os.path.join(_PROFILE, 'generated', _r, 'view_model.json')
+        if os.path.isfile(_yaml) and os.path.isfile(_view):
+            PROFILE_DATAS += [(_yaml, os.path.join('robot_description', 'profile', _r)),
+                              (_view, os.path.join('robot_description', 'profile', 'generated', _r))]
+if not PROFILE_DATAS:
+    raise SystemExit('hub.spec: src/robot_description/profile/<robot>/<robot>.yaml + generated/<robot>/view_model.json '
+                     'bulunamadı; --sim .exe\'de çalışmazdı. Depoyu eksiksiz çıkar.')
 
 # server/*_routes.py -> routes.manifest (registry.py: .exe'de pkgutil PYZ'yi listeleyemez). Elle liste YOK: dosyalar taranır.
 _SERVER = os.path.join(SPECPATH, 'control_hub', 'server')
@@ -76,7 +92,7 @@ a = Analysis(
     ['exe_entry.py'],
     pathex=['.'] + AGENT_PATHS,
     datas=[('control_hub/web', 'control_hub/web'), ('config', 'config'), ('../../tools/bench/bench_core.py', 'tools/bench')]
-          + MESH_DATAS + [(_MANIFEST, 'control_hub/server')] + copy_metadata('keyring'),
+          + MESH_DATAS + PROFILE_DATAS + [(_MANIFEST, 'control_hub/server')] + copy_metadata('keyring'),
     hiddenimports=hidden,
     excludes=['PIL', 'pytest', 'matplotlib', 'IPython'],
     noarchive=False,

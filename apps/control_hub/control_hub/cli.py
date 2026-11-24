@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog='control_hub', description='Robot Kontrol Merkezi (Hub)')
     p.add_argument('--fake', action='store_true',
                    help='sahte robot (ROS/donanım yok). Verilmezse gerçek robot API v1 kullanılır.')
+    p.add_argument('--sim', action='store_true',
+                   help='SİM: profildeki gerçek kinematik, eklem limitleri ve güvenli kutuyla çalışan '
+                        'simülasyon (gerçek robot DEĞİL; --fake aynen kalır). Robot: --robot.')
+    p.add_argument('--robot', default=os.environ.get('HUB_SIM_ROBOT'), metavar='AD',
+                   help='--sim için robot profili (varsayılan: generated/<robot>/ olan ilk robot)')
     p.add_argument('--robot-url', default=os.environ.get('HUB_ROBOT_URL', DEFAULT_ROBOT_URL),
                    help=f'robot API adresi (varsayılan {DEFAULT_ROBOT_URL}; robot yalnızca '
                         '127.0.0.1 dinler). --fake ile birlikte yok sayılır.')
@@ -54,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help='scenarios.yaml + ui.config.json klasörü (varsayılan: kullanıcı klasörü varsa '
                         'o, yoksa gömülü varsayılan)')
     p.add_argument('--fake-speed', type=float, default=1.0,
-                   help='sahte robot zaman ölçeği (0.1 = 10 kat hızlı; varsayılan 1)')
+                   help='sahte robot/SİM zaman ölçeği (0.1 = 10 kat hızlı; varsayılan 1)')
     p.add_argument('--allow-host', action='append', default=[],
                    help="Host başlığı olarak kabul edilecek ek ad (örn. robot.evim). Tekrarlanabilir.")
     p.add_argument('--no-qr', action='store_true', help='terminalde QR kodu gösterme')
@@ -151,7 +156,17 @@ def build_hub(args: argparse.Namespace) -> Hub:
     scenarios = load_scenarios(config_dir / 'scenarios.yaml')
     ui = load_ui_config(config_dir / 'ui.config.json', scenarios)
     access = AccessControl(args.access_mode, args.pin or None)   # boş string = rastgele PIN
-    if args.fake:
+    if args.fake and args.sim:
+        raise ValueError('--fake ve --sim birlikte verilemez')
+    if args.sim:
+        from control_hub.paths import ensure_robot_core_path
+        ensure_robot_core_path()
+        try:
+            from control_hub.hub_core.sim_backend import SimBackend
+        except ImportError as exc:           # robot_core/numpy yok: nedeni söyle
+            raise ValueError(f'--sim robot_core ve numpy ister: {exc}') from None
+        backend = SimBackend(args.robot, time_scale=args.fake_speed, autostart=not args.check_config)
+    elif args.fake:
         backend = FakeBackend(time_scale=args.fake_speed)
     else:
         backend = RobotApiBackend(args.robot_url, autostart=not args.check_config)
@@ -238,6 +253,9 @@ def _print_banner(hub: Hub, host: str, port: int, show_qr: bool) -> None:
                   'docker compose up demo)')
         if not backend.loopback:
             print('  UYARI: robot adresi loopback değil; robot API\'si yalnızca 127.0.0.1 kabul eder.')
+    elif backend.name == 'sim':
+        print(f'  Robot         : SİM ({backend.robot}) — gerçek robot DEĞİL; kinematik/limit/kutu '
+              'gerçek profilden')
     else:
         print('  Robot         : SAHTE (--fake)')
     if hub.bridge is not None:
@@ -294,6 +312,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         if bad:
             print('Arayüz iskeleti eksik:\n  ' + '\n  '.join(bad), file=sys.stderr)
             return 2
+        if hub.backend.name == 'sim':
+            try:
+                print(hub.backend.self_check())
+            except ValueError as exc:
+                print(f'Hata: {exc}', file=sys.stderr)
+                return 2
         print(f'Yapılandırma geçerli: {len(hub.scenarios)} senaryo, {len(route_module_names())} rota modülü, '
               f'{len(page_files(web_dir()))} sayfa.')
         return 0
