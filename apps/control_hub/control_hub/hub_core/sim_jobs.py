@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from control_hub.hub_core.sim_plan import Plan, PlanError
 
 MOVE_KEYS = {'joint': {'type', 'joints_deg', 'speed_pct'},
-             'linear': {'type', 'pos_m', 'rpy_deg', 'speed_pct'},
+             'linear': {'type', 'pos_m', 'rpy_deg', 'orientation', 'speed_pct'},
              'tool': {'type', 'open_pct', 'speed_pct'}}
 
 
@@ -56,7 +56,7 @@ def parse_move(body: Any, default_speed_pct: float) -> Tuple[str, tuple, float]:
     if kind == 'linear':
         if 'pos_m' not in body:
             raise PlanError('bad_request', 'linear hareket pos_m ister')
-        return kind, (body['pos_m'], body.get('rpy_deg')), float(speed)
+        return kind, (body['pos_m'], body.get('rpy_deg'), body.get('orientation', 'fixed')), float(speed)
     pct = body.get('open_pct')
     if isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 0 <= pct <= 100:
         raise PlanError('bad_request', 'open_pct 0-100 arasında bir sayı olmalı')

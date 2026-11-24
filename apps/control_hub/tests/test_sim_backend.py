@@ -327,7 +327,7 @@ def test_profile_resolution_default_and_errors(monkeypatch, tmp_path):
 
 def test_parse_move_defaults_and_speed_validation():
     assert parse_move({'type': 'joint', 'joints_deg': [1]}, 40) == ('joint', ([1],), 40.0)
-    assert parse_move({'type': 'linear', 'pos_m': [1, 2, 3]}, 40)[1] == ([1, 2, 3], None)
+    assert parse_move({'type': 'linear', 'pos_m': [1, 2, 3]}, 40)[1] == ([1, 2, 3], None, 'fixed')
     for bad in ({'type': 'tool', 'open_pct': -1}, {'type': 'joint', 'speed_pct': 101}):
         with pytest.raises(PlanError):
             parse_move(bad, 40)

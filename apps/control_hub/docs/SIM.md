@@ -30,3 +30,11 @@ Tick 50 Hz; `time_scale` (`--fake-speed`, 10 = 10× hızlı). Testlerde `SimCloc
 Gerçek eklem açıları (`rad/deg/min_deg/max_deg/near_limit` — aralığın %5'i içinde), robot_core FK ile `tcp`
 (`position`, `wpr_deg`, `pos_m`, `rpy_deg`), `gripper.open_pct`, `safe_zone`, `speed_pct`, `maturity:'tahmini'`,
 `note`.
+
+## Doğrusal hareket (S1.1)
+* IK çok tohumludur (önce önceki örnek, olmazsa limit ortası + sabit-rastgele tohumlar; en yakın çözüm seçilir).
+* `orientation:'free'`: yalnız konum hedeflenir, yönelimi çözücü belirler (`rpy_deg` ile birlikte **400**).
+  Home yakınında yönelim sabitken (`fixed`, varsayılan) kutunun çoğu ulaşılamaz; dokun-git için `free` kullan.
+* Yolda eklem sıçraması (> 0,35 rad) **409 `path_blocked`**; eklem-uzayı hareketine OTOMATİK düşülmez.
+* Hız: `speed_pct` x profil `max_velocity_scale` (karma_robot 0,3) x eklem hız sınırı; yüzde TEK kez uygulanır.
+  En yavaş eklem J2 (profilde 0,08 rad/s, tahmini) süreyi belirler: 11,2° ~ 10,8 s (%100), ~18 s (%60).

@@ -182,7 +182,7 @@ class SimBackend:
         if kind == 'joint':
             return kind, plan_joint(self.sm, q, args[0], speed), None
         if kind == 'linear':
-            return kind, plan_linear(self.sm, q, args[0], args[1], speed), None
+            return kind, plan_linear(self.sm, q, args[0], args[1], args[2], speed), None
         return kind, None, args[0]
 
     @staticmethod

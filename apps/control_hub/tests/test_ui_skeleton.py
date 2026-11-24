@@ -323,3 +323,11 @@ def test_contract_section9_documents_every_interface():
     for needle in needles:
         assert needle in section or needle in text, needle
     assert text.count('requires') >= 3 and "styles: ['/pages/<ad>.css']" in text
+
+
+def test_core_assets_cover_scene_modules_and_exist():
+    """S1.1 (Robot_11): sahne modülleri iskelet denetimine ve .exe duman testine girer."""
+    from control_hub.paths import web_dir
+    from control_hub.server.registry import CORE_ASSETS
+    for name in ('approach.js', 'scene_hub.js', 'scene_logic.js'):
+        assert name in CORE_ASSETS and (web_dir() / name).is_file()

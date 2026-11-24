@@ -182,7 +182,7 @@ ACİL DUR sonrası hiçbir iş kendiliğinden devam etmez.
 
 | Uç | Gövde → yanıt | Durum |
 |---|---|---|
-| `POST /api/move` | `{type:'joint', joints_deg:[...], speed_pct?}` veya `{type:'linear', pos_m:[x,y,z], rpy_deg?:[W,P,R], speed_pct?}` (`rpy_deg` yoksa yönelim korunur) → **202** `{ok:true, job_id}` | S1 |
+| `POST /api/move` | `{type:'joint', joints_deg:[...], speed_pct?}` veya `{type:'linear', pos_m:[x,y,z], rpy_deg?:[W,P,R], orientation?:'fixed\|free', speed_pct?}` (`rpy_deg` yoksa yönelim korunur; `orientation:'free'` = yalnız konum hedefi, yönelimi çözücü belirler, `rpy_deg` ile birlikte **400**) → **202** `{ok:true, job_id}` | S1 |
 | `POST /api/move/check` | `/api/move` ile AYNI gövde; **hareket ETMEZ** → **200** `{ok, violations:[{kind, at_pct, message}]}` (`ok:false` ise ihlal var; `at_pct` 0–100: yolun neresinde) | S1 |
 | `POST /api/move/stop` · `pause` · `resume` | `{}` → `{ok:true}`; çalışan iş yoksa **409** `not_running` | S1 |
 | `GET /api/move/{job_id}` | → `{ok, job:{id, type, state:'running\|paused\|done\|failed\|cancelled', progress_pct, error, message}}`; bilinmeyen **404** `unknown_job` | S1 |
@@ -210,6 +210,21 @@ Dünya çerçevesi Z yukarı, metre, derece, yönelim W-P-R. **Nesne kimlikleri 
 | `onPick(cb)` | `cb({objectId, point_m, normal})` → iptal işlevi |
 | `enableGizmo(id, {mode:'translate\|rotate', snap, space:'world\|local'})` · `onGizmoChange(cb)` | `cb({id, pose, phase:'start\|move\|end'})` → iptal işlevi |
 | `cameraPreset(ad)` · `focus(idVeya'robot')` · `measure(bool)` · `setTrail(bool)` | `ad` ∈ `iso\|top\|front\|side` |
+
+**S2'nin eklediği uçlar** (geriye uyumlu; `implemented === false` iken aynı `not_implemented` kuralı):
+
+| İşlev | Anlam |
+|---|---|
+| `updateObject(id, patch)` | `patch`: `{color?, opacity?, scale?` (yalnız mesh), `points_m?` (yalnız polyline)`}`; kimlik yoksa `not_found` |
+| `select(id\|null)` · `disableGizmo()` | seçili nesneyi vurgular · tutamacı kaldırır (nesne silinirse otomatik) |
+| `onMeasure(cb)` | `cb({a_m, b_m, distance_m})` → iptal işlevi; **model** mesafesidir, gerçek ölçüm değildir |
+| `ready(id)` | mesh yüklenince `{ok:true}` ya da `{ok:false, error:'load_failed'\|'not_found'}`; asla reddetmez |
+| `info(id)` | `{id, kind, layer, pose, attach, visible, loaded, error}` ya da `null` · `list()` → kimlik dizisi |
+| `tcpPose()` · `tcpOffset()` | flanş×TCP ofseti dünya pozu `{pos_m, rpy_deg}` · ofset; model yokken `null` |
+| `setPickLayers(katmanlar)` | `onPick`'in dikkate alacağı katmanlar (varsayılan `workpiece, tool, environment, markers`) |
+| `layerVisible(katman)` · `isGizmoDragging()` | görünürlük · tutamaç sürükleniyor mu |
+| `addObject`'te `geometry.scale` | yalnız mesh: pozitif ölçek çarpanı (varsayılan 1; sınırlar `scene_logic.js` `MIN_SCALE..MAX_SCALE`) |
+| `addObject`'te `attach:'flange'` | nesne dünyaya değil robot flanşına bağlanır (alet); yalnız `'flange'` ya da `null` |
 
 Katmanlar: `robot, workpiece, tool, environment, path, markers, safebox, grid`. Sabitler `scene.layers/kinds/presets`.
 Mevcut bayatlık/ACİL DUR davranışı (kırmızı bant, donma) sahne API'sinden bağımsızdır ve korunur.

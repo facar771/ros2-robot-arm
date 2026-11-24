@@ -38,8 +38,11 @@ IK_TOL_POS_M = 1e-4
 IK_TOL_ANG_RAD = 1e-3
 IK_DAMPING = 0.03
 IK_MAX_STEP_RAD = 0.25
+IK_EXTRA_SEEDS = 12                # çok tohumlu çözüm: ek tohum sayısı (sabit rastgelelik: tekrarlanabilir)
+IK_SEED_RNG = 20240601
 MAX_JOINT_JUMP_RAD = 0.35        # iki örnek arası eklem sıçraması: üstü "konfigürasyon atlaması"
 NEAR_LIMIT_FRACTION = 0.05       # EK-1/§9-A: limit aralığının %5'i içinde = near_limit
+ORIENTATIONS = ('fixed', 'free')     # 'free': yalnız konum hedefi, yönelimi çözücü belirler
 KINDS = ('outside_safe_zone', 'joint_limit', 'path_blocked', 'unreachable', 'bad_request')
 
 
@@ -196,6 +199,33 @@ def solve_ik(model: SimModel, target: np.ndarray, seed: Sequence[float],
     return None
 
 
+def _seeds(model: SimModel, seed: np.ndarray) -> List[np.ndarray]:
+    """Tohumlar: verilen + limit ortası + tohumun etrafında sabit-rastgele sapmalar (tekillikten çıkış)."""
+    rng = np.random.default_rng(IK_SEED_RNG)
+    mid = 0.5 * (model.lower + model.upper)
+    span = model.upper - model.lower
+    out = [mid]
+    for _ in range(IK_EXTRA_SEEDS):
+        out.append(np.clip(seed + rng.uniform(-0.25, 0.25, size=seed.shape) * span, model.lower, model.upper))
+    return out
+
+
+def solve_ik_multi(model: SimModel, target: np.ndarray, seed: Sequence[float],
+                   position_only: bool = False) -> Optional[np.ndarray]:
+    """Önce ``seed`` (süreklilik); yakınsamazsa ya da çok uzaksa ek tohumlarla dener, ``seed``'e EN YAKIN
+    çözümü döndürür. Hâlâ yoksa ``None``. Eklem-uzayına düşme YOK: sıçrama denetimi çağıranda."""
+    seed = np.asarray(seed, float)
+    first = solve_ik(model, target, seed, position_only)
+    if first is not None and float(np.max(np.abs(first - seed))) <= MAX_JOINT_JUMP_RAD:
+        return first
+    best = first
+    for s0 in _seeds(model, seed):
+        q = solve_ik(model, target, s0, position_only)
+        if q is not None and (best is None or np.linalg.norm(q - seed) < np.linalg.norm(best - seed)):
+            best = q
+    return best
+
+
 # ---- doğrusal hareket --------------------------------------------------------------------------
 def _pose_samples(start: np.ndarray, end: np.ndarray) -> List[np.ndarray]:
     """Konum doğrusu + yönelim slerp ile 4x4 örnekler (başlangıç dahil, bitiş dahil)."""
@@ -212,9 +242,18 @@ def _pose_samples(start: np.ndarray, end: np.ndarray) -> List[np.ndarray]:
 
 
 def plan_linear(model: SimModel, q0: Sequence[float], pos_m: Sequence[float],
-                rpy_deg: Optional[Sequence[float]], speed_pct: float) -> Plan:
+                rpy_deg: Optional[Sequence[float]], orientation: str, speed_pct: float) -> Plan:
     """TCP'yi doğrusal götürür. ``rpy_deg`` (W-P-R, derece) yoksa mevcut yönelim korunur; verilirse ve
-    sağlanamıyorsa hedef ``unreachable`` sayılır (yönelim sessizce bırakılmaz)."""
+    sağlanamıyorsa hedef ``unreachable`` sayılır (yönelim sessizce bırakılmaz). ``orientation='free'``: yalnız
+    konum hedeflenir, yönelimi çözücü belirler (``rpy_deg`` ile birlikte verilemez).
+
+    Yolda eklem sıçraması varsa ``path_blocked`` döner; eklem-uzayı hareketine OTOMATİK düşülmez (güvenlik:
+    TCP'nin doğrusal yolu kullanıcının onayladığı yoldur)."""
+    if orientation not in ORIENTATIONS:
+        raise PlanError('bad_request', "orientation 'fixed' ya da 'free' olmalı")
+    free = orientation == 'free'
+    if free and rpy_deg is not None:
+        raise PlanError('bad_request', "orientation:'free' ile rpy_deg birlikte verilemez")
     q0 = np.asarray(q0, float)
     pos = _finite(pos_m, 3, 'pos_m')
     _check_zone(model, pos, 100.0)
@@ -224,19 +263,19 @@ def plan_linear(model: SimModel, q0: Sequence[float], pos_m: Sequence[float],
     qs = [q0]
     for k, target in enumerate(samples[1:], start=1):
         at = 100.0 * k / (len(samples) - 1)
-        q = solve_ik(model, target, qs[-1])
+        q = solve_ik_multi(model, target, qs[-1], position_only=free)
         if q is None:
             raise PlanError('unreachable', 'Hedefe (ya da yolundaki bir noktaya) eklem sınırları içinde '
                             'ulaşılamıyor', at)
         if float(np.max(np.abs(q - qs[-1]))) > MAX_JOINT_JUMP_RAD:
             raise PlanError('path_blocked', 'Doğrusal yolda eklem sıçraması (tekilliğe yakın): hareket '
-                            'reddedildi', at)
+                            'reddedildi; eklem-uzayı hareketine otomatik geçilmez', at)
         qs.append(q)
     path = np.vstack(qs)
     _check_path(model, path)
     scale = model.scale_for(speed_pct)
     lin = float(np.linalg.norm(pos - start[:3, 3]))
-    ang = float(np.linalg.norm(rotvec_from_matrix(start[:3, :3].T @ rot)))
+    ang = 0.0 if free else float(np.linalg.norm(rotvec_from_matrix(start[:3, :3].T @ rot)))
     variation = np.sum(np.abs(np.diff(path, axis=0)), axis=0)
     t_joint = duration_for(variation, model.vmax, model.amax, scale)
     t_tcp = max(lin / (LINEAR_SPEED_M_S * scale), ang / (ANGULAR_SPEED_RAD_S * scale)) / (1.0 - RAMP)
