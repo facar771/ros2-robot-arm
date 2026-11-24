@@ -1,0 +1,11 @@
+/* Tezgâh sayfası: yalnız pot paneli (P4). Bu dosya yalnız /pages/bench.css; style.css'e dokunulmaz. */
+.pt-wrap { overflow-x: auto; }
+.pt-tbl { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.pt-tbl th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 8px; white-space: nowrap; }
+.pt-tbl td { padding: 6px 8px; border-top: 1px solid var(--border); white-space: nowrap; }
+.pt-num { text-align: right; font-variant-numeric: tabular-nums; }
+.pt-ok td:last-child { color: #7ee787; }
+.pt-warn td:last-child { color: #e3b341; }
+.pt-bad td:last-child { color: #ff9b97; font-weight: 600; }
+.pt-bad { background: rgba(218, 54, 51, .08); }
+.pt-note { font-size: .75rem; margin-top: 8px; }

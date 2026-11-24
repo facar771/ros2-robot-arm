@@ -1,0 +1,53 @@
+/* Parametreler sayfası (P4). Yalnız /pages/params.css; style.css'e dokunulmaz. Telefonda (<= 720 px) tablolar kart olur. */
+.pr-banner { background: rgba(210, 153, 34, .12); border: 1px solid #6a5113; color: #e3b341; border-radius: 12px; padding: 10px 14px; margin-bottom: 10px; }
+.pr-note { background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-bottom: 8px; font-size: .85rem; color: var(--muted); }
+.pr-card { margin-bottom: 12px; }
+.pr-wrap { overflow-x: auto; }
+.pr-tbl { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.pr-tbl th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; white-space: nowrap; }
+.pr-tbl td { padding: 4px 6px; border-top: 1px solid var(--border); vertical-align: middle; }
+.pr-num { text-align: right; font-variant-numeric: tabular-nums; }
+.pr-after { color: #7ee787; font-weight: 600; }
+.pr-more td { border-top: 0; padding-top: 0; }
+.pr-in { width: 7.2em; max-width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+         font: inherit; font-variant-numeric: tabular-nums; }
+.pr-in:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pr-in.bad { border-color: var(--danger); background: rgba(218, 54, 51, .12); }
+.pr-in.warn { border-color: var(--warn); }
+.pr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; margin: 8px 0; }
+.pr-lab { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; font-size: .85rem; }
+.pr-lab > span:first-child { grid-column: 1 / -1; color: var(--muted); }
+.pr-lab .pr-in { grid-column: 1; width: 100%; }
+.pr-errs { margin-top: 6px; font-size: .82rem; }
+.pr-errs .bad { color: #ff9b97; }
+.pr-errs .warn { color: #e3b341; }
+.pr-why { color: #e3b341; }
+.pr-derived { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pr-tag { font-size: .68rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+.pr-tag.est { color: #e3b341; border-color: #6a5113; }
+.pr-tag.ph { color: #ff9b97; border-color: #6e2724; }
+.pr-tag.ok { color: #7ee787; border-color: #23552f; }
+.pr-svgs { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.pr-svg { width: 240px; max-width: 100%; height: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; }
+.pr-box { fill: rgba(79, 140, 255, .14); stroke: var(--accent); stroke-width: 1.5; }
+.pr-dot { fill: #7ee787; }
+.pr-dot.out { fill: #ff9b97; }
+.pr-svg-t { fill: var(--muted); font-size: 10px; }
+.pr-3d { height: 280px; margin-top: 8px; border-radius: 10px; overflow: hidden; }
+.pr-live { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pr-caps { white-space: nowrap; }
+.pr-bar button.small { width: auto; padding: 8px 14px; }
+.pr-bar button.primary { background: var(--accent); color: #fff; border: 0; font-weight: 600; }
+.pr-bar { position: sticky; bottom: 0; z-index: 20; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+          background: rgba(13, 17, 23, .96); border-top: 1px solid var(--border); padding: 10px 4px calc(10px + env(safe-area-inset-bottom)); }
+@media (max-width: 720px) {
+  .pr-axes thead, .pr-pot thead { display: none; }
+  .pr-axes tr, .pr-pot tr { display: block; }
+  .pr-axes tr:not(.pr-more), .pr-pot tr:not(.pr-more) { border: 1px solid var(--border); border-radius: 12px; margin: 8px 0 0; padding: 4px 8px; background: var(--surface-2); }
+  .pr-axes td, .pr-pot td { display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 0; padding: 3px 0; }
+  .pr-axes td[data-label]::before, .pr-pot td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: .78rem; }
+  .pr-axes .pr-more td, .pr-pot .pr-more td { display: block; }
+  .pr-in { width: 8.5em; }
+  .pr-bar button.small { flex: 1 1 auto; padding: 6px 8px; font-size: .85rem; }
+  .pr-bar span { flex-basis: 100%; font-size: .8rem; }
+}

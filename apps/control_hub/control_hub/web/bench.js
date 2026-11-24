@@ -142,3 +142,92 @@ window.BenchPanel = (() => {
 
   return { mount, render, _state: B };
 })();
+
+/* Pot paneli (P4): firmware pot telemetrisini (ham 10 bit ADC, ~15 Hz) gösterir. Hub'da pot uç noktası henüz YOK
+ * (PR'da İSTEK: Robot_3 / Robot_10); veri varsa `S.snap.pot` ya da `GET /api/pot` gövdesinden okunur (biçim:
+ * pot_logic.js başı). 404 gelirse panel "uç nokta yok" yazar ve sorguyu keser; sayfa/Tezgâh etkilenmez.
+ * Açı, Parametreler sayfasındaki TASLAK kalibrasyondan (pot.<eksen>.*) hesaplanır; kalibrasyon yoksa açı "—". */
+window.PotPanel = (() => {
+  const P = { mounted: false, timer: null, rows: [], hz: null, missing: false, reason: '', cal: {}, names: {}, host: null };
+  const Z = () => window.PotLogic;
+  const q = (id) => document.getElementById(id);
+  const POLL_MS = 200;
+
+  /** Taslak düzenlemelerinden kanal -> {ad, kalibrasyon}. Anahtar: pot.<eksen>.<alan>. */
+  function calibrations(edits) {
+    const byJoint = {};
+    for (const [k, v] of Object.entries(edits || {})) {
+      const m = /^pot\.([a-z0-9_]+)\.(channel|raw_min|raw_max|angle_at_min_deg|angle_at_max_deg)$/.exec(k);
+      if (m && typeof v === 'number') (byJoint[m[1]] = byJoint[m[1]] || {})[m[2]] = v;
+    }
+    const out = {};
+    for (const [name, c] of Object.entries(byJoint)) if (Number.isInteger(c.channel)) out[c.channel] = { name, ...c };
+    return out;
+  }
+
+  async function loadCalibration() {
+    try { P.cal = calibrations(((await api('/api/params')).draft || {}).edits); } catch (e) { P.cal = {}; }
+  }
+
+  function mount(host) {
+    if (P.mounted || !Z()) return;
+    P.mounted = true; P.host = host || q('panels');
+    P.host.append(el('div', { class: 'card pt', id: 'p-pot' }, [
+      el('h2', { text: 'Pot (ham ADC, ~15 Hz)' }),
+      el('div', { class: 'say muted', id: 'pt-state', text: 'Veri bekleniyor…' }),
+      el('div', { class: 'pt-wrap' }, [el('table', { class: 'pt-tbl', id: 'pt-tbl' })]),
+      el('div', { class: 'muted pt-note',
+        text: `Ham ${Z().INVALID_LOW} ve altı / ${Z().INVALID_HIGH} ve üstü GEÇERSİZ (kablo/uç); ${Z().STALE_MS} ms'den eski örnek bayat. Açı için Parametreler → Pot kalibrasyonu.` })]));
+    loadCalibration();
+    render();
+  }
+
+  /** Sunucu gövdesini (ya da sahte veriyi) işler ve çizer. */
+  function feed(body) {
+    const n = Z().normalize(body);
+    P.rows = n.rows; P.hz = n.hz; P.reason = n.ok ? '' : (n.reason || 'pot verisi geçersiz');
+    render();
+  }
+
+  async function poll() {
+    if (typeof document.hidden !== 'undefined' && document.hidden) return;
+    if (S.snap && S.snap.pot) { feed(S.snap.pot); return; }
+    if (P.missing) return;
+    try { feed(await api('/api/pot')); }
+    catch (e) {
+      if (e.status === 404) { P.missing = true; P.rows = []; P.reason = 'Hub’da pot uç noktası yok (GET /api/pot): firmware verisi henüz Hub’a bağlı değil'; stop(); }
+      else { P.rows = []; P.reason = e.message || 'pot verisi alınamadı'; }
+      render();
+    }
+  }
+
+  function start() {
+    if (!P.mounted || P.timer) return;
+    if (P.missing && !(S.snap && S.snap.pot)) { render(); return; }      // uç nokta yok: boşuna sorgu açma
+    loadCalibration(); poll(); P.timer = setInterval(poll, POLL_MS);
+  }
+  function stop() { if (P.timer) { clearInterval(P.timer); P.timer = null; } }
+
+  function row(r) {
+    const st = Z().status(r), c = P.cal[r.ch];
+    const ang = c && r.raw !== null ? Z().angle(r.raw, c) : null;
+    return el('tr', { class: `pt-${st.level}` }, [
+      el('td', { text: `K${r.ch}${c ? ` · ${c.name}` : ''}` }),
+      el('td', { class: 'pt-num', text: r.raw === null ? '—' : String(r.raw) }),
+      el('td', { class: 'pt-num', text: ang === null ? '—' : `${ang.toFixed(1)}°` }),
+      el('td', { class: 'pt-num', text: r.ageMs === null ? '—' : `${Math.round(r.ageMs)} ms` }),
+      el('td', { text: st.text })]);
+  }
+
+  function render() {
+    if (!P.mounted) return;
+    const t = q('pt-tbl');
+    t.replaceChildren(el('thead', {}, [el('tr', {}, ['Kanal', 'Ham', 'Açı', 'Tazelik', 'Durum'].map((h) => el('th', { text: h })))]),
+      el('tbody', {}, P.rows.map(row)));
+    q('pt-state').textContent = P.reason || (P.rows.length
+      ? `${P.rows.length} kanal${P.hz ? ` · ${P.hz} Hz` : ''}${P.rows.some((r) => r.zone !== 'ok') ? ' · GEÇERSİZ ham değer var' : ''}`
+      : 'Kanal yok: firmware henüz pot örneği göndermedi');
+  }
+
+  return { mount, start, stop, feed, render, calibrations, _state: P };
+})();
