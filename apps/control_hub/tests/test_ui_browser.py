@@ -56,8 +56,14 @@ def test_skeleton_renders_3d_and_estop_works(server):
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto(url + '/#/robot')
         page.wait_for_selector('#nav a[data-page=robot]', timeout=10000)
-        assert [a.get_attribute('data-page') for a in page.query_selector_all('#nav a') if a.is_visible()] \
-            == ['robot', 'jog', 'parts']                         # ajan/tezgâh kapalı: menüde yok (parts: S2)
+        # Sabit liste YOK (her yeni sayfa kırardı): menü robot, jog ile başlar, program içerir, tekrar yok ve
+        # her öğe /api/pages'in bildirdiği bir sayfadır (bilinmeyen sayfa menüde olamaz).
+        menu = [a.get_attribute('data-page') for a in page.query_selector_all('#nav a') if a.is_visible()]
+        listed = page.evaluate("() => fetch('/api/pages').then(r => r.json()).then(j => j.pages)")
+        known = {pg['id'] for pg in listed}
+        assert menu[:2] == ['robot', 'jog'] and 'program' in menu, menu
+        assert len(menu) == len(set(menu)), menu
+        assert set(menu) <= known, f'/api/pages dışında menü öğesi: {sorted(set(menu) - known)}'
         pills = page.eval_on_selector_all('.pill', 'els => els.map(e => e.textContent)')
         assert pills[0].startswith('Canlı') and pills[1].startswith('SİM') and 'ERİŞİM' in pills[2]
         page.wait_for_function('() => window.Scene3D && Scene3D._V.nodes.size === 7', timeout=15000)

@@ -377,15 +377,10 @@
         sec('Program', [E('div', { class: 'row' }, [Q.dirty, Q.exp]), Q.fsFile]), sec('Waypoint tablosu', [Q.fsWp]), sec('Adımlar', [Q.fsSteps])])]));
   }
 
-  function loadCss() {                         // S1-0 `styles` alanı gelene kadar kendi stilini kendi yükler
-    const href = '/pages/program.css';
-    if (![...document.getElementsByTagName('link')].some((l) => l.getAttribute('href') === href)) document.head.append(E('link', { rel: 'stylesheet', href }));
-  }
-
   HubPages.register({
     id: 'program', title: 'Program', icon: '▶', order: 30, styles: ['/pages/program.css'], logic: L,
     mount(root) {
-      loadCss(); build(root); P.shown = true; render(); loadList();
+      build(root); P.shown = true; render(); loadList();
       refresh().then(() => { if (P.pose && P.pose.pos_m) setTarget(P.pose.pos_m, P.pose.rpy_deg, true); });
       HubPages.mountView(Q.view); bindScene(); P.timer = setInterval(refresh, POLL_MS);
     },
