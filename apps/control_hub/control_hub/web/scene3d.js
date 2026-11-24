@@ -292,3 +292,29 @@ function onState(snap) {
 }
 
 window.Scene3D = { attach, detach, onState, _V: V };
+
+/* ---------- HubScene: sahne API'si (İSKELET; UI_CONTRACT §9-C) ----------
+ * S1-0'da yalnız İMZALAR vardır: her işlev { ok:false, error:'not_implemented' } döner ve hiçbir şey çizmez.
+ * Gerçekleme S2'nindir (bu dosyanın sahibi S2). İmzalar değişmez: sayfalar bunlara göre (mock'la) yazılır.
+ * `implemented` S2 bitince true olur; sayfalar onu görürse düğmelerini açar. */
+const SCENE_LAYERS = Object.freeze(['robot', 'workpiece', 'tool', 'environment', 'path', 'markers', 'safebox', 'grid']);
+const SCENE_KINDS = Object.freeze(['mesh', 'box', 'sphere', 'frame', 'polyline', 'marker']);
+const SCENE_PRESETS = Object.freeze(['iso', 'top', 'front', 'side']);
+const notImplemented = (name) => ({ ok: false, error: 'not_implemented', message: `HubScene.${name} henüz gerçeklenmedi` });
+const stub = (name) => () => notImplemented(name);
+const stubSubscribe = (name) => () => { notImplemented(name); return () => {}; };      // abonelik iptal işlevi döner
+
+window.HubScene = Object.freeze({
+  implemented: false, layers: SCENE_LAYERS, kinds: SCENE_KINDS, presets: SCENE_PRESETS,
+  addObject: stub('addObject'),         // ({id, kind, layer, geometry, pose:{pos_m, rpy_deg}, color, opacity, label})
+  removeObject: stub('removeObject'),   // (id)
+  setPose: stub('setPose'),             // (id, {pos_m, rpy_deg})
+  setVisible: stub('setVisible'),       // (idVeyaKatman, bool)
+  onPick: stubSubscribe('onPick'),      // (cb({objectId, point_m, normal})) -> iptal işlevi
+  enableGizmo: stub('enableGizmo'),     // (id, {mode:'translate'|'rotate', snap, space:'world'|'local'})
+  onGizmoChange: stubSubscribe('onGizmoChange'),   // (cb({id, pose, phase:'start'|'move'|'end'})) -> iptal işlevi
+  cameraPreset: stub('cameraPreset'),   // ('iso'|'top'|'front'|'side')
+  focus: stub('focus'),                 // (id | 'robot')
+  measure: stub('measure'),             // (bool)
+  setTrail: stub('setTrail'),           // (bool)
+});

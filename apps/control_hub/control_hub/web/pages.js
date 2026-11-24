@@ -5,7 +5,10 @@
  *     id: 'jog',                 // dosya adıyla aynı (pages/jog.js) ve adres '#/jog'
  *     title: 'Jog', icon: '🕹', order: 20,
  *     scripts: ['/frames.js'],   // isteğe bağlı: ilk gösterimde sırayla yüklenen ek betikler
+ *     styles: ['/pages/jog.css'],// isteğe bağlı: yalnız KENDİ dosyası (/pages/<id>.css); style.css'e dokunulmaz
+ *     requires: ['sim'],         // isteğe bağlı: snap.caps'te yoksa menüde gizli (ör. SİM'e özgü sayfa)
  *     available(ctx) {},         // isteğe bağlı: false/Promise<false> ise menüde görünmez (neden: ctx.why)
+ *                                // (requires ve available birlikte: ikisi de uygunsa görünür)
  *     mount(root, ctx) {},       // ilk gösterimde BİR kez (root: sayfanın kutusu)
  *                                // 3B görünüm gerekiyorsa: HubPages.mountView(kutu) (mount ve onShow'da)
  *     onState(snap) {},          // mount'tan sonra her durum mesajında
@@ -19,10 +22,29 @@ window.HubPages = (() => {
   const P = { defs: new Map(), items: new Map(), current: null, started: false, loading: null };
 
   function register(def) {
-    if (!def || !/^[a-z][a-z0-9_]{0,31}$/.test(def.id || '') || typeof def.mount !== 'function') {
-      console.error('HubPages.register: geçersiz sayfa', def); return;
-    }
+    const bad = ShellLogic.checkDef(def);
+    if (bad) { console.error('HubPages.register: geçersiz sayfa', bad, def); return; }
     P.defs.set(def.id, def);
+  }
+
+  /* Stil dosyası: <link rel=stylesheet>, aynı kaynak (CSP style-src 'self'). Yüklenemezse sayfa kendi kutusunda hata yazar. */
+  const loadStyle = (href) => new Promise((resolve, reject) => {
+    for (const l of document.getElementsByTagName('link')) if (l.getAttribute('href') === href) { resolve(); return; }
+    const l = document.createElement('link');
+    l.rel = 'stylesheet'; l.href = href;
+    l.onload = () => resolve(); l.onerror = () => reject(new Error(`stil yüklenemedi: ${href}`));
+    document.head.append(l);
+  });
+
+  /* Görünürlük = sayfanın available() sonucu VE requires yeteneklerinin hepsi (snap.caps). Durum her
+   * değiştiğinde yeniden hesaplanır; böylece SİM sonradan bağlanırsa menü kendiliğinden güncellenir. */
+  function recompute(it, snap) {
+    it.capsOk = ShellLogic.missingCaps(it.def.requires, snap).length === 0;
+    const was = it.available;
+    it.available = it.capsOk && it.userOk;
+    it.link.hidden = !it.available;
+    if (was && !it.available && P.current === it.def.id) route();
+    else if (!was && it.available && P.started && !P.current) route();
   }
 
   const loadScript = (src) => new Promise((resolve, reject) => {
@@ -51,13 +73,13 @@ window.HubPages = (() => {
         const root = el('section', { class: 'page', id: `page-${def.id}`, hidden: true, 'data-page': def.id });
         const link = el('a', { class: 'nav-item', href: `#/${def.id}`, 'data-page': def.id }, [
           el('span', { class: 'nav-ic', text: def.icon || '▪', 'aria-hidden': 'true' }), el('span', { text: def.title || def.id })]);
-        const it = { def, root, link, mounted: false, failed: null, available: true, why: '' };
+        const it = { def, root, link, mounted: false, failed: null, available: true, why: '', userOk: true, capsOk: true };
         P.items.set(def.id, it);
         nav.append(link); host.append(root);
+        recompute(it, S.snap);                                 // requires: yetenek yoksa baştan gizli
         Promise.resolve().then(() => (def.available ? def.available(it) : true)).then((ok) => {
-          it.available = ok !== false; link.hidden = !it.available;
-          if (!it.available && P.current === def.id) route();
-        }).catch((e) => { it.available = true; it.why = String(e && e.message || e); });
+          it.userOk = ok !== false; recompute(it, S.snap);
+        }).catch((e) => { it.userOk = true; it.why = String(e && e.message || e); recompute(it, S.snap); });
       }
       window.addEventListener('hashchange', route);
       P.started = true; route();
@@ -82,6 +104,7 @@ window.HubPages = (() => {
     document.title = `${it.def.title || id} · ${S.session ? S.session.title : 'Robot Kontrol Merkezi'}`;
     if (!it.mounted && !it.failed) {
       try {
+        for (const href of it.def.styles || []) await loadStyle(href);
         for (const src of it.def.scripts || []) await loadScript(src);
         it.mounted = true;                                      // mount sırasında onState gelebilir
         await it.def.mount(it.root, { snap: S.snap, session: S.session });
@@ -107,12 +130,19 @@ window.HubPages = (() => {
 
   /* Paylaşılan 3B görünüm (tek tuval): ilk çağrıda scene_logic.js + scene3d.js (ES modülü) yüklenir; sonra tuval
    * `container` içine taşınır (aynı anda tek yerde). Başarısız olursa yalnız o kutuya neden yazılır. */
+  async function ensureView() {
+    if (window.Scene3D) return;
+    P.viewLoading = P.viewLoading || (async () => { await loadScript('/scene_logic.js'); await import('/scene3d.js'); })();
+    await P.viewLoading;
+  }
+
+  /* Sahne API'si (HubScene, UI_CONTRACT §9-C): 3B modül yüklenince döner. Başka sayfanın nesnelerini silmemek
+   * için her sayfa kendi nesne kimliklerine `<sayfa>:` önekini koyar. S1-0'da işlevler 'not_implemented' döner. */
+  async function scene() { await ensureView(); return window.HubScene; }
+
   async function mountView(container) {
     try {
-      if (!window.Scene3D) {
-        P.viewLoading = P.viewLoading || (async () => { await loadScript('/scene_logic.js'); await import('/scene3d.js'); })();
-        await P.viewLoading;
-      }
+      await ensureView();
       Scene3D.attach(container);
       if (S.snap) Scene3D.onState(S.snap);
     } catch (e) {
@@ -124,6 +154,7 @@ window.HubPages = (() => {
 
   /* app.js her durum mesajında çağırır: yalnız mount edilmiş sayfalara iletilir; sayfa hatası yutulur. */
   function onState(snap) {
+    for (const it of P.items.values()) recompute(it, snap);       // snap.caps değişmiş olabilir
     if (window.Scene3D) try { Scene3D.onState(snap); } catch (e) { console.error(e); }
     for (const it of P.items.values()) {
       if (it.mounted && it.def.onState) try { it.def.onState(snap); } catch (e) { console.error(e); }
@@ -137,5 +168,5 @@ window.HubPages = (() => {
     }
   }
 
-  return { register, build, onState, onEvents, show, loadScript, mountView, current: () => P.current, _P: P };
+  return { register, build, onState, onEvents, show, loadScript, mountView, scene, current: () => P.current, _P: P };
 })();

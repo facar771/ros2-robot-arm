@@ -233,6 +233,11 @@ def test_scene_and_shell_logic_in_node():
 
 
 @needs_node
+def test_hubscene_skeleton_in_node():
+    assert 'HUBSCENE_OK' in run_node('hubscene_check.js', WEB)
+
+
+@needs_node
 def test_page_registry_in_node():
     assert 'PAGES_JS_OK' in run_node('pages_check.js', WEB)
 
@@ -275,3 +280,45 @@ def test_contract_page_template_works(tmp_path):
     f = tmp_path / 'hello.js'
     f.write_text(template('page'), encoding='utf-8')
     assert 'PAGE_TEMPLATE_OK' in run_node('page_template_check.js', f)
+
+
+# --- S1-0: sayfalar arası sözleşme (UI_CONTRACT §9) -----------------------------------------------------
+def test_snapshot_carries_caps_list(make_client):
+    """snap.caps: sayfa `requires` için; arka uç tanımlamıyorsa boş liste (sahte robot SİM iddia etmez)."""
+    c, hub = make_client('open')
+    assert hub.snapshot()['caps'] == []
+    hub.backend.caps = ('sim',)                  # S1'in SimBackend'i bunu sınıf özniteliği olarak taşır
+    assert hub.snapshot()['caps'] == ['sim']
+
+
+def test_data_dir_env_and_subdirs(tmp_path):
+    from control_hub import paths
+    env = {'HUB_DATA_DIR': str(tmp_path / 'veri')}
+    assert paths.data_dir(env) == tmp_path / 'veri'
+    for name in paths.DATA_SUBDIRS:
+        p = paths.data_subdir(name, env)
+        assert p == tmp_path / 'veri' / name and p.is_dir()
+    for bad in ('../x', 'secrets', 'parts/../x', ''):
+        with pytest.raises(ValueError):
+            paths.data_subdir(bad, env)
+    for bad in ('göreli/yol', str(tmp_path / '..' / 'x')):
+        with pytest.raises(ValueError):
+            paths.data_dir({'HUB_DATA_DIR': bad})
+    default = paths.data_dir({}, platform='linux')               # ortam değişkeni yoksa kullanıcı klasörü
+    assert default.name == 'data' and default.parent.name == 'control_hub'
+    assert paths.data_dir({'APPDATA': r'C:\Users\x\AppData\Roaming'}, platform='win32').name == 'data'
+
+
+def test_contract_section9_documents_every_interface():
+    """§9, S1/S2/P2/P4'ün kodladığı arayüzlerin hepsini adıyla taşır (biri silinirse kırılır)."""
+    text = (APP / 'docs' / 'UI_CONTRACT.md').read_text(encoding='utf-8')
+    section = text[text.index('## 9. Sayfalar arası arayüzler'):]
+    needles = (
+        '9-A', '9-B', '9-C', '9-D', 'snap.caps', 'snap.estop.latched', 'pos_m', 'rpy_deg', 'near_limit',
+        '/api/move', '/api/move/check', '/api/move/stop', '/api/sim/reset', 'outside_safe_zone',
+        'joint_limit', 'path_blocked', 'unreachable', 'estop_latched', 'HubPages.scene()', 'addObject',
+        'onPick', 'enableGizmo', 'onGizmoChange', 'cameraPreset', 'setTrail', 'HUB_DATA_DIR',
+        'data_subdir', 'safebox', 'styles', 'requires')
+    for needle in needles:
+        assert needle in section or needle in text, needle
+    assert text.count('requires') >= 3 and "styles: ['/pages/<ad>.css']" in text

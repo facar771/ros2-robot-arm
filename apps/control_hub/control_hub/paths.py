@@ -72,3 +72,32 @@ def export_default_config(dest: Optional[Path] = None, overwrite: bool = False) 
         if overwrite or not target.exists():
             shutil.copyfile(bundled_config_dir() / name, target)
     return dest
+
+
+# --- kullanıcı VERİSİ (parçalar, programlar, profil taslakları): HUB_DATA_DIR (UI_CONTRACT §9-D) ---------
+DATA_ENV = 'HUB_DATA_DIR'
+DATA_SUBDIRS = ('parts', 'programs', 'profiles')        # başka ad yok: sayfa kendi alt klasörünü uyduramaz
+
+
+def data_dir(env: Optional[dict] = None, platform: Optional[str] = None) -> Path:
+    """Kullanıcı verisinin kökü. ``HUB_DATA_DIR`` (mutlak yol) ya da ``<kullanıcı klasörü>/data``.
+
+    Depo dosyalarına ASLA yazılmaz; ``config/`` ayardır, ``data/`` kullanıcının ürettiği veridir."""
+    env = os.environ if env is None else env
+    given = (env.get(DATA_ENV) or '').strip()
+    if given:
+        p = Path(given)
+        if not p.is_absolute() or '..' in p.parts:
+            raise ValueError(f'{DATA_ENV} mutlak yol olmalı ve ".." içermemeli: {given!r}')
+        return p
+    return user_dir(env, platform) / 'data'
+
+
+def data_subdir(name: str, env: Optional[dict] = None, create: bool = True) -> Path:
+    """``parts`` / ``programs`` / ``profiles`` alt klasörü (yoksa oluşturur)."""
+    if name not in DATA_SUBDIRS:
+        raise ValueError(f'bilinmeyen veri klasörü: {name!r} (izinli: {", ".join(DATA_SUBDIRS)})')
+    p = data_dir(env) / name
+    if create:
+        p.mkdir(parents=True, exist_ok=True)
+    return p

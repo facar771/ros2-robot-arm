@@ -159,6 +159,7 @@ class Hub:
                           'details': report.details}},
             'runner': self.runner.status(),
             'robot': robot,
+            'caps': sorted(getattr(self.backend, 'caps', ())),   # sayfa `requires` için (UI_CONTRACT §9-A)
             'bridge': self.bridge.status() if self.bridge is not None else None,
             'bench': self.bench.summary() if self.bench is not None else None,
             'agent': self.agent.summary() if self.agent is not None else None,

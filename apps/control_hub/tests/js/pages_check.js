@@ -23,13 +23,13 @@ const byId = { nav, 'page-host': host };
 global.window = global;
 const scripts = [];
 global.document = { title: '', createElement: (t) => new N(t), getElementById: (id) => byId[id],
-  getElementsByTagName: () => scripts, head: { append(s) { scripts.push(s); loaded.push(s.src); setTimeout(() => s.onload && s.onload(), 0); } } };
+  getElementsByTagName: () => scripts, head: { append(s) { scripts.push(s); (s.tagName === 'link' ? styled : loaded).push(s.tagName === 'link' ? s.href : s.src); setTimeout(() => s.onload && s.onload(), 0); } } };
 global.location = { hash: '' };
 global.history = { replaceState(_a, _b, h) { location.hash = h; } };
 const hashListeners = [];
 global.addEventListener = (t, f) => { if (t === 'hashchange') hashListeners.push(f); };
 global.removeEventListener = () => {};
-const loaded = [];
+const loaded = [], styled = [];
 global.$ = (id) => byId[id];
 global.el = (tag, props = {}, children = []) => {
   const e = document.createElement(tag);
@@ -51,7 +51,11 @@ const rec = (n, f) => (...a) => { calls.push(`${n}:${f}`); };
 (async () => {
   const err = console.error; let errors = 0; console.error = () => { errors += 1; };
   HubPages.register({ id: 'Bad Id', mount() {} }); HubPages.register({ id: 'nomount' }); HubPages.register(null);
-  assert.strictEqual(HubPages._P.defs.size, 0); assert.strictEqual(errors, 3);                     // geçersiz kayıtlar alınmaz
+  HubPages.register({ id: 'x1', mount() {}, styles: ['/pages/baska.css'] });                       // başkasının/ortak stili yasak
+  HubPages.register({ id: 'x2', mount() {}, styles: ['https://cdn.example/x.css'] });              // dış adres yasak
+  HubPages.register({ id: 'x3', mount() {}, requires: ['Büyük'] });                                // geçersiz yetenek adı
+  HubPages.register({ id: 'x4', mount() {}, requires: 'sim' });                                    // dizi olmalı
+  assert.strictEqual(HubPages._P.defs.size, 0); assert.strictEqual(errors, 7);                     // geçersiz kayıtlar alınmaz
 
   HubPages.register({ id: 'b', title: 'B', order: 20, scripts: ['/x1.js', '/x2.js'], mount: rec('b', 'mount'), onState: rec('b', 'state'),
     onShow: rec('b', 'show'), onHide: rec('b', 'hide') });
@@ -59,11 +63,13 @@ const rec = (n, f) => (...a) => { calls.push(`${n}:${f}`); };
   HubPages.register({ id: 'hidden', title: 'H', order: 5, available: () => false, mount: rec('hidden', 'mount') });
   HubPages.register({ id: 'boom', title: 'Boom', order: 30, mount() { throw new Error('patladı'); }, onState: rec('boom', 'state') });
   HubPages.register({ id: 'async_off', title: 'AO', order: 40, available: async () => false, mount: rec('ao', 'mount') });
+  HubPages.register({ id: 'simonly', title: 'Sim', order: 50, requires: ['sim'], mount: rec('simonly', 'mount') });
+  HubPages.register({ id: 'styled', title: 'St', order: 60, styles: ['/pages/styled.css'], scripts: ['/y.js'], mount: rec('styled', 'mount') });
 
   await HubPages.build(); await new Promise((r) => setTimeout(r, 5));
   const links = nav.children.map((c) => [c.attrs['data-page'], c.hidden]);
-  assert.deepStrictEqual(links.map((l) => l[0]), ['hidden', 'a', 'b', 'boom', 'async_off']);           // order sonra id
-  assert.deepStrictEqual(links.filter((l) => l[1]).map((l) => l[0]), ['hidden', 'async_off']);          // available() false -> menüde yok
+  assert.deepStrictEqual(links.map((l) => l[0]), ['hidden', 'a', 'b', 'boom', 'async_off', 'simonly', 'styled']);           // order sonra id
+  assert.deepStrictEqual(links.filter((l) => l[1]).map((l) => l[0]), ['hidden', 'async_off', 'simonly']);          // available() false / yetenek yok -> menüde yok
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(HubPages.current(), 'a');                                                         // ilk görünür sayfa
   assert.strictEqual(location.hash, '#/a');
@@ -93,6 +99,24 @@ const rec = (n, f) => (...a) => { calls.push(`${n}:${f}`); };
   assert.strictEqual(HubPages.current(), 'a');
   location.hash = '#/nope'; hashListeners[0](); await new Promise((r) => setTimeout(r, 5));
   assert.strictEqual(HubPages.current(), 'a');
+
+  /* requires: yetenek snap.caps'e gelince görünür, gidince gizlenir; şu an açıksa başka sayfaya düşer */
+  const linkOf = (id) => nav.children.find((c) => c.attrs['data-page'] === id);
+  assert.ok(linkOf('simonly').hidden);                                                               // durumda caps yok -> gizli
+  HubPages.onState({ caps: ['sim'] }); assert.ok(!linkOf('simonly').hidden);
+  location.hash = '#/simonly'; hashListeners[0](); await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(HubPages.current(), 'simonly');
+  HubPages.onState({ caps: [] }); await new Promise((r) => setTimeout(r, 10));
+  assert.ok(linkOf('simonly').hidden); assert.notStrictEqual(HubPages.current(), 'simonly');          // yetenek gitti -> sayfadan çıkar
+  HubPages.onState({ caps: 'sim' }); assert.ok(linkOf('simonly').hidden);                            // bozuk caps = yetenek yok
+
+  /* styles: ilk gösterimde, scripts'ten ÖNCE, bir kez yüklenir; mount ondan sonra */
+  assert.deepStrictEqual(styled, []);
+  await HubPages.show('styled');
+  assert.deepStrictEqual(styled, ['/pages/styled.css']); assert.ok(loaded.includes('/y.js'));
+  assert.ok(calls.includes('styled:mount'));
+  await HubPages.show('a'); await HubPages.show('styled');
+  assert.strictEqual(styled.length, 1);
 
   console.error = err;
   console.log('PAGES_JS_OK');
