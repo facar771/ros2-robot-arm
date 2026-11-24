@@ -1,8 +1,8 @@
 """SİM arka ucu: profildeki GERÇEK kinematik zincir, eklem limitleri, güvenli kutu ve çalışan hareketler.
 
-``--fake`` yalnız uç noktayı oynatır; burada ``robot_core.kinematics.Chain`` ileri
-kinematiği, ``DlsJogEngine`` + ``JogController`` jog'u (kiralama, ölü adam, çerçeveler), ``sim_plan`` hareket
-doğrulamasını (limit, kutu, yol) yapar. Bu bir SİMÜLASYONDUR: ölçüm değildir, gerçek robotu hareket ettirmez (``maturity`` hep ``tahmini``).
+``--fake`` yalnız uç noktayı oynatır; burada ``robot_core.kinematics.Chain`` ileri kinematiği,
+``DlsJogEngine`` + ``JogController`` jog'u, ``sim_plan`` hareket doğrulamasını (limit, kutu, yol) yapar.
+SİMÜLASYONDUR: ölçüm değil, gerçek robotu oynatmaz (``maturity`` ``tahmini``).
 
 Zaman deterministiktir: iş ve jog her ``tick_s``'te ilerler; testlerde ``autostart=False`` + ``SimClock`` ile
 ``advance(saniye)`` çağrılır (gerçek saat/iş parçacığı yok). ``time_scale`` süreyi çarpar (0.1 = 10× hızlı).
