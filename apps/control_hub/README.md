@@ -257,6 +257,7 @@ control_hub/
   hub_core/   GUI'siz, ROS'suz çekirdek (tüm mantık burada, test edilir)
     backend.py        RobotBackend protokolü (execute / emergency_stop / snapshot ...)
     fake_backend.py   donanımsız simülasyon (--fake)
+    sim_backend.py    gerçek kinematikli SİM (--sim, docs/SIM.md)
     robot_api_backend.py  robotun HTTP API v1'i (iş/stop/reset/state), yalnızca standart kütüphane
     commands.py       robot komut beyaz listesi (home | objects | above <renk> [m])
     scenarios.py      scenarios.yaml + ui.config.json okuma/doğrulama

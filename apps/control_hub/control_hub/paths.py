@@ -101,3 +101,13 @@ def data_subdir(name: str, env: Optional[dict] = None, create: bool = True) -> P
     if create:
         p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def ensure_robot_core_path() -> None:
+    """Depo çıkışından çalışırken (``python -m control_hub``) ``src/robot_core``'u yola ekler; kurulu paket,
+    PYTHONPATH ya da donmuş .exe (gömülü) varsa dokunmaz. SİM arka ucu ``robot_core``'u bununla bulur."""
+    if frozen():
+        return
+    path = Path(__file__).resolve().parents[3] / 'src' / 'robot_core'
+    if path.is_dir() and str(path) not in sys.path:
+        sys.path.append(str(path))

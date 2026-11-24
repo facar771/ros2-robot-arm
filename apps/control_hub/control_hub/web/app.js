@@ -162,6 +162,7 @@ function render() {
   else if (rb.connected === false) show('', `Robot bağlı değil: ${rb.problem || 'yanıt yok'}. Hareket komutları çalışmaz.`);
   else if (readOnly) show('', 'Kontroller kilitli (salt okunur kip). ACİL DUR yine de çalışır.');
   else if (rb.mode === 'real') show('', 'Gerçek robot: bu yazılım acil durdurur; fiziksel acil durdurmanın yerine geçmez.');
+  else if (rb.note) show('', rb.note);   // SİM (S1): "gerçek robot değil" notu her zaman görünür
   else banner.hidden = true;
 
   const bar = $('estop-bar'); bar.classList.toggle('latched', s.estop.latched);
