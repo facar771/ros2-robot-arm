@@ -1,7 +1,6 @@
 # SİM arka ucu (`--sim`) — sözleşme eki (S1)
 
-`UI_CONTRACT.md` §9-B hareket uçlarının SİM'deki gerçek davranışı. (Bu dosya ayrı tutuldu: §9, #103 ile
-geliyor; birleşince §9-B buraya bağlanır.) SİM **gerçek robot değildir**; değerler ölçüm değil, **tahmini**dir.
+`UI_CONTRACT.md` §9-B hareket uçlarının SİM'deki gerçek davranışı. (Kesin sözleşme §9-B; bu dosya SİM ayrıntısı.) SİM **gerçek robot değildir**; değerler ölçüm değil, **tahmini**dir.
 
 ## Çalıştırma
 ```

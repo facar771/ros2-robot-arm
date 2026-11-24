@@ -182,17 +182,18 @@ ACİL DUR sonrası hiçbir iş kendiliğinden devam etmez.
 
 | Uç | Gövde → yanıt | Durum |
 |---|---|---|
-| `POST /api/move` | `{type:'joint', joints_deg:[...], speed_pct?}` veya `{type:'linear', pos_m:[x,y,z], rpy_deg:[W,P,R], speed_pct?}` → **202** `{ok:true, job_id}` | S1 |
+| `POST /api/move` | `{type:'joint', joints_deg:[...], speed_pct?}` veya `{type:'linear', pos_m:[x,y,z], rpy_deg?:[W,P,R], speed_pct?}` (`rpy_deg` yoksa yönelim korunur) → **202** `{ok:true, job_id}` | S1 |
 | `POST /api/move/check` | `/api/move` ile AYNI gövde; **hareket ETMEZ** → **200** `{ok, violations:[{kind, at_pct, message}]}` (`ok:false` ise ihlal var; `at_pct` 0–100: yolun neresinde) | S1 |
 | `POST /api/move/stop` · `pause` · `resume` | `{}` → `{ok:true}`; çalışan iş yoksa **409** `not_running` | S1 |
 | `GET /api/move/{job_id}` | → `{ok, job:{id, type, state:'running\|paused\|done\|failed\|cancelled', progress_pct, error, message}}`; bilinmeyen **404** `unknown_job` | S1 |
+| `POST /api/sim/speed` | `{speed_pct}` (1–100) → `{ok, speed_pct}`; robotun genel hızı. Yalnız SİM | S1 |
 | `POST /api/sim/reset` | `{}` → home'a döner. Yalnız SİM'de; başka modda **409** `not_sim`; ACİL DUR'da **423** | S1 |
 | `POST /api/jog`, `/api/jog` (GET), `/api/frames*`, `/api/model` | mevcut jog uçları | VAR (korunur) |
 
 Ret kodları (`error`): **409** `outside_safe_zone` · `joint_limit` · `path_blocked` · `unreachable` · `busy`;
 **423** `estop_latched`; **400** `bad_request` (NaN, boyut, bilinmeyen alan); **401/403** oturum/kilit. `check`'in
 `violations[].kind` değerleri ret kodlarının ilk dördüyle AYNIDIR. `speed_pct` yoksa robotun genel hızı kullanılır;
-1–100 dışı **400**. Birim: metre, derece; yönelim W-P-R (§9-A). Programlar/sayfalar hareketi **yalnız bu uçlarla**
+1–100 dışı **400**. Ret/`check` gövdelerinde ek `at_pct` (0–100) bulunabilir; `--sim` ayrıntıları: `docs/SIM.md`. Birim: metre, derece; yönelim W-P-R (§9-A). Programlar/sayfalar hareketi **yalnız bu uçlarla**
 ister; arka uca doğrudan gitmez.
 
 ### 9-C 3B sahne API'si `HubScene` (sahibi S2; S1-0'da yalnız İSKELET)

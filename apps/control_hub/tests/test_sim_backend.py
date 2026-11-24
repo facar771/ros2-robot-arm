@@ -372,7 +372,7 @@ def test_http_move_flow_and_error_codes(api):
     assert c.post('/api/move', content=b'x' * 9000, headers=JSON).status_code == 413
     state = c.get('/api/state').json()
     assert state['robot']['mode'] == 'sim'
-    assert state.get('caps', ['sim']) == ['sim']                 # 'caps' anahtarı S1-0 (#103) ile gelir
+    assert state['caps'] == ['sim']
 
 
 def test_http_estop_returns_423_on_every_motion_path(api):
