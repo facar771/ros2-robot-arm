@@ -1,6 +1,14 @@
 """P4 Günlük sayfası (sunucu): süzgeçler, sıralama, CSV ve SIZINTI KURALI (PIN/anahtar/yol çıktıda yok)."""
 import csv
 import io
+import os
+import re
+import shutil
+import socket
+import subprocess
+import threading
+import time
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +16,7 @@ from control_hub.hub_core.events import LEVELS as HUB_LEVELS
 from control_hub.server import log_routes
 from control_hub.server.log_routes import MASK, PATH_MASK, redact, select, to_csv
 
+WEB = Path(__file__).resolve().parents[1] / 'control_hub' / 'web'
 PIN = '123456'
 SECRETS = ('123456', 'SUPERSECRET123', 'abc123def456ghi', 'ferhat', 'Ferhat Demir', 'pw123',
            'hub_session=abcd', 'ANTHROPIC-KEY')
@@ -165,3 +174,121 @@ def test_locked_mode_still_allows_viewing_the_log(make_client):
     emit_samples(hub)
     assert c.get('/api/log').status_code == 200
     assert c.get('/api/log.csv').status_code == 200
+
+
+# ----------------------------------------------------------------------------------------------- ön yüz
+
+def test_log_logic_and_page_in_node():
+    if shutil.which('node') is None:
+        pytest.skip('node yok')
+    script = Path(__file__).parent / 'js' / 'log_logic_check.js'
+    r = subprocess.run(['node', str(script), str(WEB)], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and 'LOG_LOGIC_JS_OK' in r.stdout, r.stdout + r.stderr
+
+
+def test_log_page_is_discovered_and_files_are_served(make_client):
+    c, _ = make_client('open')
+    pages = {p['id']: p for p in c.get('/api/pages').json()['pages']}
+    assert 'log' in pages
+    assert c.get('/pages/log.js').status_code == 200 and c.get('/pages/log.css').status_code == 200
+
+
+def test_log_page_files_are_csp_clean_and_under_k12_limit():
+    bad = re.compile(r'\.innerHTML|\.outerHTML|insertAdjacentHTML|\beval\(|new Function|document\.write'
+                     r'|\bon[a-z]+\s*=\s*["\']|https?://')
+    for name in ('pages/log.js', 'pages/log.css'):
+        text = (WEB / name).read_text(encoding='utf-8')
+        assert not bad.search(text), f'{name}: CSP/innerHTML kuralı'
+        assert len(text.splitlines()) < 400, f'{name}: K12 (< 400 satır)'
+    assert len((Path(log_routes.__file__)).read_text(encoding='utf-8').splitlines()) < 400
+
+
+def test_log_page_never_renders_raw_websocket_events():
+    code = re.sub(r'/\*.*?\*/', '', (WEB / 'pages' / 'log.js').read_text(encoding='utf-8'), flags=re.S)
+    assert 'S.events' not in code and '/api/events' not in code, 'ham olaylar ekrana yazılmamalı'
+    assert "api(LogLogic.url(L.f))" in code
+
+
+def serve(hub):
+    import uvicorn
+
+    from control_hub.server import create_app
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+    s.close()
+    srv = uvicorn.Server(uvicorn.Config(create_app(hub), host='127.0.0.1', port=port, log_level='warning'))
+    th = threading.Thread(target=srv.run, daemon=True)
+    th.start()
+    for _i in range(100):
+        if srv.started:
+            break
+        time.sleep(0.05)
+    return srv, th, f'http://127.0.0.1:{port}'
+
+
+def test_browser_flow_filters_live_update_csv_and_no_leak(make_client, tmp_path):
+    """Gerçek tarayıcıda (YEREL; Playwright + Chrome yoksa atlanır, CI'de koşmaz): satırlar yeni üstte ve
+    maskeli, süzgeç/arama çalışır, canlı olay gelince liste yenilenir (ham PIN ekrana HİÇ düşmez), CSV iner,
+    telefonda yatay taşma yok."""
+    pw = pytest.importorskip('playwright.sync_api')
+    _, hub = make_client('open')
+    emit_samples(hub)
+    srv, th, url = serve(hub)
+    try:
+        with pw.sync_playwright() as p:
+            try:
+                browser = p.chromium.launch(executable_path=os.environ.get('HUB_CHROME'), headless=True,
+                                            args=['--no-sandbox'])
+            except Exception as exc:                                  # noqa: BLE001
+                pytest.skip(f'tarayıcı açılamadı: {exc}')
+            ctx = browser.new_context(viewport={'width': 1280, 'height': 800}, accept_downloads=True)
+            page = ctx.new_page()
+            errors = []
+            page.on('pageerror', lambda e: errors.append(str(e)))
+            page.goto(url + '/#/log')
+            page.wait_for_selector('#page-log tr.lg-row', timeout=15000)
+            rows = page.locator('#page-log tr.lg-row')
+            assert rows.count() == 5 and 'safety' in rows.first.inner_text()      # en yeni üstte
+            text = page.inner_text('#page-log')
+            for secret in SECRETS:
+                assert secret not in text, secret
+            assert '5 / 5 olay' in text
+
+            page.select_option('#page-log select[data-role=level]', 'error')
+            page.wait_for_selector('#page-log .lg-count:has-text("2 / 5")', timeout=5000)
+            page.select_option('#page-log select[data-role=level]', 'info')
+            page.wait_for_selector('#page-log .lg-count:has-text("5 / 5")', timeout=5000)
+            page.fill('#page-log input[data-role=q]', 'basladi')
+            page.wait_for_selector('#page-log .lg-count:has-text("1 / 5")', timeout=5000)
+            page.fill('#page-log input[data-role=q]', '123456')
+            page.wait_for_selector('#page-log .lg-count:has-text("0 / 5")', timeout=5000)
+            assert page.locator('#page-log .lg-empty').is_visible()
+            page.fill('#page-log input[data-role=q]', '')
+            page.wait_for_selector('#page-log .lg-count:has-text("5 / 5")', timeout=5000)
+
+            hub.events.emit('canli', 'yeni canlı olay pin=123456 /home/ferhat/x', 'warning', pin=PIN)
+            page.wait_for_selector('#page-log td.lg-msg:has-text("yeni canlı olay")', timeout=10000)
+            assert 'canli' in page.locator('#page-log tr.lg-row').first.inner_text()
+            assert '123456' not in page.inner_text('body') and 'ferhat' not in page.inner_text('body')
+
+            page.select_option('#page-log select[data-role=level]', 'warning')
+            page.wait_for_selector('#page-log .lg-count:has-text("4 / 6")', timeout=5000)
+            with page.expect_download() as dl:
+                page.click('#page-log a[data-role=csv]')
+            assert dl.value.suggested_filename.startswith('gunluk-')
+            path = tmp_path / 'g.csv'
+            dl.value.save_as(str(path))
+            raw = path.read_bytes()
+            assert raw.startswith(b'\xef\xbb\xbf') and PIN.encode() not in raw and b'ferhat' not in raw
+
+            phone = ctx.new_page()
+            phone.set_viewport_size({'width': 390, 'height': 844})
+            phone.goto(url + '/#/log')
+            phone.wait_for_selector('#page-log tr.lg-row', timeout=15000)
+            assert phone.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+            assert errors == []
+            browser.close()
+    finally:
+        srv.should_exit = True
+        th.join(5)
