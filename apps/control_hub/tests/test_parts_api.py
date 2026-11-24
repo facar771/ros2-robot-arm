@@ -225,3 +225,16 @@ def test_no_part_module_writes_to_repo_files():
         text = (root / f).read_text(encoding='utf-8')
         assert 'src/robot_description' not in text and 'user_config_dir' not in text and 'exec(' not in text
         assert 'import_module' not in text and 'subprocess' not in text and 'pickle' not in text
+
+
+def test_invalid_data_dir_disables_only_the_parts_routes(tmp_path, monkeypatch, make_client):
+    """Göreli HUB_DATA_DIR: Hub AÇILIR, yalnız parça uçları anlaşılır 503 verir; dosya yazılmaz."""
+    monkeypatch.setenv('HUB_DATA_DIR', 'goreli/yol')
+    c, _ = make_client('open')
+    assert c.get('/api/state').status_code == 200
+    for method, path, kw in (('get', '/api/parts', {}), ('post', '/api/parts', {'json': body()}),
+                             ('get', '/api/parts/' + 'a' * 32 + '/mesh', {})):
+        r = getattr(c, method)(path, **kw)
+        assert r.status_code == 503 and r.json()['error'] == 'data_dir_invalid', path
+        assert r.json()['ok'] is False
+    assert not (tmp_path / 'goreli').exists()

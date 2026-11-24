@@ -33,7 +33,16 @@ UPLOAD_STATUS = {'too_large': 413, 'bad_extension': 415, 'step_unsupported': 415
 
 
 def install(app, ctx) -> None:
-    store = ps.PartsStore(ps.data_dir())
+    try:
+        store = ps.PartsStore(ps.parts_dir())
+        data_error = ''
+    except ValueError as exc:             # geçersiz HUB_DATA_DIR: Hub açılır, yalnız parça uçları 503 verir
+        store, data_error = None, str(exc)
+
+    def need_store():
+        if store is None:
+            raise ctx.api_error(503, 'data_dir_invalid', f'Veri klasörü geçersiz: {data_error}')
+        return store
 
     async def read_json(request: Request, limit: int) -> Any:
         """Gövdeyi parça parça okur; sınır aşılınca bellekte biriktirmeden keser (413)."""
@@ -62,7 +71,7 @@ def install(app, ctx) -> None:
     @app.get('/api/parts')
     async def parts_list(request: Request):
         ctx.need_view(request)
-        parts, problems = await run(store.list)
+        parts, problems = await run(need_store().list)
         return {'ok': True, 'parts': [ps.public_view(p) for p in parts], 'problems': problems,
                 'limits': {'max_parts': ps.MAX_PARTS, 'max_file_mb': mt.MAX_FILE_BYTES // (1024 * 1024),
                            'max_triangles': mt.MAX_TRIANGLES, 'formats': list(mt.ALLOWED_EXT),
@@ -72,7 +81,7 @@ def install(app, ctx) -> None:
     @app.get('/api/parts/{part_id}/mesh')
     async def part_mesh(part_id: str, request: Request):
         ctx.need_view(request)
-        data = await run(store.read_mesh, part_id)
+        data = await run(need_store().read_mesh, part_id)
         return Response(data, media_type='model/stl', headers={'Cache-Control': 'no-cache'})
 
     @app.post('/api/parts', status_code=201)
@@ -104,7 +113,7 @@ def install(app, ctx) -> None:
             raise part_error(exc) from None
         name = mt.clean_display_name(body.get('name'), fallback=mt.clean_display_name(
             filename.rsplit('.', 1)[0], fallback='Parça'))
-        meta = await run(store.add, name=name, kind=kind, unit=unit, filename=filename, mesh=mesh)
+        meta = await run(need_store().add, name=name, kind=kind, unit=unit, filename=filename, mesh=mesh)
         view = ps.public_view(meta)
         warnings: List[str] = list(mesh.warnings)
         if view['size_warning']:
@@ -117,12 +126,12 @@ def install(app, ctx) -> None:
     async def part_update(part_id: str, request: Request):
         ctx.need_control(request)
         patch = await read_json(request, 64 * 1024)
-        meta = await run(store.update, part_id, patch)
+        meta = await run(need_store().update, part_id, patch)
         return {'ok': True, 'part': ps.public_view(meta)}
 
     @app.delete('/api/parts/{part_id}')
     async def part_delete(part_id: str, request: Request):
         ctx.need_control(request)
-        await run(store.delete, part_id)
+        await run(need_store().delete, part_id)
         ctx.hub.events.emit('part_deleted', 'Parça silindi')
         return {'ok': True}

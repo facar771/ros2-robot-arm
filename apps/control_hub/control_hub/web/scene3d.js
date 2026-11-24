@@ -5,8 +5,11 @@
  * (profildeki link STL'leri, varsa) + Hub durumundaki eklem açıları (WS). Mesh yoksa model primitifleri
  * (silindir/kutu) çizilir. SALT OKUNUR: komut yolu yok. Bu görünüm bir ÖLÇÜM ya da güvenlik işlevi DEĞİLDİR.
  * BAYATLIK: durum 1 s'den eskiyse görünüm griye döner, hareket DONAR ve kırmızı bant çıkar (scene_logic.js).
- * Veri textContent ile yazılır (innerHTML yok). Dünya çerçevesi Z yukarı (kamera.up = +Z). */
+ * Veri textContent ile yazılır (innerHTML yok). Dünya çerçevesi Z yukarı (kamera.up = +Z).
+ * S2: sahne API'si (window.HubScene: nesne, tıklama, gizmo, katman) scene_hub.js'tedir; bu dosya yalnız çekirdek görünümü,
+ * girdiyi (döndür/yakınlaştır/dokun) ve çizim döngüsünü tutar. */
 import * as THREE from '/vendor/three/three.module.js';
+import '/scene_hub.js';                    // window.SceneHub (S2: HubScene; THREE dışarıdan verilir, node'da sınanır)
 
 const SL = window.SceneLogic;
 const V = { root: null, wrap: null, canvas: null, msg: null, band: null, tag: null, note: null,
@@ -14,7 +17,14 @@ const V = { root: null, wrap: null, canvas: null, msg: null, band: null, tag: nu
             modelKey: '', snap: null, stateAt: 0, q: {}, target: {}, dirty: true, raf: 0, last: 0, tries: 0,
             retry: null, yaw: -0.65, pitch: 0.45, dist: 1.5, center: new THREE.Vector3(0.3, 0, 0.3),
             drag: null, attached: null, frames: null, framesAt: 0, framesFor: null, overlay: null,
-            reported: null, glFailed: null, meshInfo: null, ro: null };
+            reported: null, glFailed: null, meshInfo: null, ro: null, grid: null, hub: null, pointers: new Map(), pinch: null, hubNote: '' };
+const MIN_DIST = 0.1, MAX_DIST = 5, ORBIT_RATE = 0.01;
+
+/* HubScene (UI_CONTRACT §9-C) MODÜL YÜKLENİRKEN kurulur: sayfa `await HubPages.scene()` ile 3B kurulmadan da nesne ekleyebilir;
+ * sahne (V.scene) ilk attach'ta build() ile gelir ve nesneleri alır. WebGL açılamazsa `implemented === false` olur. */
+V.hub = window.SceneHub.create({ THREE, V, SL, frame: (f) => frameCamera(f), refresh: () => refreshUi(),
+  loadGizmo: () => import('/vendor/three/TransformControls.js') });
+window.HubScene = V.hub;
 
 /* ---------- sahne ---------- */
 function build() {
@@ -47,19 +57,46 @@ function build() {
   V.scene.add(new THREE.HemisphereLight(0xdde6ff, 0x30343c, 1.5));
   const sun = new THREE.DirectionalLight(0xffffff, 1.7); sun.position.set(1.2, -0.8, 2); V.scene.add(sun);
   const grid = new THREE.GridHelper(1.6, 16, 0x3b4452, 0x232a34); grid.rotation.x = Math.PI / 2; grid.position.set(0.3, 0, 0);
-  V.scene.add(grid, new THREE.AxesHelper(0.15));
+  V.grid = grid; V.scene.add(grid, new THREE.AxesHelper(0.15));
   V.robot = new THREE.Group(); V.scene.add(V.robot);
   const el = V.canvas;
-  el.addEventListener('pointerdown', (ev) => { el.setPointerCapture(ev.pointerId); V.userMoved = true; V.drag = { x: ev.clientX, y: ev.clientY, yaw: V.yaw, pitch: V.pitch }; });
+  /* Girdi: tek parmak/fare = döndür, iki parmak = yakınlaştır, kısa dokunuş = seç (HubScene.onPick). Gizmo tutamacı
+   * sürüklenirken döndürme YOK (TransformControls kendi olaylarını işler; ona yalnız yol veririz). */
+  el.addEventListener('pointerdown', (ev) => {
+    el.setPointerCapture(ev.pointerId);
+    if (V.hub) V.hub._state.gizmoTouched = false;          // bu hareket gizmoyu tutarsa TransformControls işaretler
+    V.pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (V.pointers.size === 1) V.drag = { x: ev.clientX, y: ev.clientY, yaw: V.yaw, pitch: V.pitch, t: performance.now(), moved: false };
+    else if (V.pointers.size === 2) {
+      const [a, b] = [...V.pointers.values()]; V.drag = null;
+      V.pinch = { d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), dist0: V.dist };
+    }
+  });
   el.addEventListener('pointermove', (ev) => {
+    const p = V.pointers.get(ev.pointerId); if (!p) return;
+    p.x = ev.clientX; p.y = ev.clientY;
+    if (V.hub && V.hub.isGizmoDragging()) { V.drag = null; return; }
+    if (V.pinch && V.pointers.size === 2) {
+      const [a, b] = [...V.pointers.values()], d = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      V.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, V.pinch.dist0 * V.pinch.d0 / d)); V.userMoved = true; V.dirty = true; return;
+    }
     if (!V.drag) return;
-    V.yaw = V.drag.yaw - (ev.clientX - V.drag.x) * 0.01;
-    V.pitch = Math.max(-0.1, Math.min(1.5, V.drag.pitch + (ev.clientY - V.drag.y) * 0.01)); V.dirty = true; });
-  for (const t of ['pointerup', 'pointercancel']) el.addEventListener(t, () => { V.drag = null; });
-  el.addEventListener('wheel', (ev) => { ev.preventDefault(); V.userMoved = true; V.dist = Math.max(0.4, Math.min(5, V.dist * (ev.deltaY < 0 ? 0.9 : 1.1))); V.dirty = true; }, { passive: false });
+    const dx = ev.clientX - V.drag.x, dy = ev.clientY - V.drag.y;
+    if (!V.drag.moved && !SL.isClick(dx, dy, 0)) { V.drag.moved = true; V.userMoved = true; }      // eşik aşılınca sürükleme
+    if (!V.drag.moved) return;
+    V.yaw = V.drag.yaw - dx * ORBIT_RATE;
+    V.pitch = Math.max(-0.1, Math.min(1.5, V.drag.pitch + dy * ORBIT_RATE)); V.dirty = true; });
+  for (const t of ['pointerup', 'pointercancel']) el.addEventListener(t, (ev) => {
+    const had = V.pointers.delete(ev.pointerId), d = V.drag;
+    if (V.pointers.size < 2) V.pinch = null;
+    V.drag = null;
+    if (t === 'pointerup' && had && d && !d.moved && V.hub && SL.isClick(ev.clientX - d.x, ev.clientY - d.y, performance.now() - d.t)) V.hub._tap(ev.clientX, ev.clientY);
+  });
+  el.addEventListener('wheel', (ev) => { ev.preventDefault(); V.userMoved = true; V.dist = Math.max(MIN_DIST, Math.min(MAX_DIST, V.dist * (ev.deltaY < 0 ? 0.9 : 1.1))); V.dirty = true; }, { passive: false });
   el.addEventListener('webglcontextlost', (ev) => { ev.preventDefault(); });          // telefonda sekme değişince olur
   el.addEventListener('webglcontextrestored', () => { V.dirty = true; kick(); });
   V.ro = new ResizeObserver(() => { V.dirty = true; }); V.ro.observe(V.wrap);
+  V.hub._attach();                                          // modül yüklenirken kurulan HubScene nesneleri sahneye girer
   document.addEventListener('visibilitychange', kick);
   setInterval(pollFrames, 500);
 }
@@ -146,6 +183,7 @@ function buildRobot(model) {
   V.reported.visible = false; V.robot.add(V.reported);
   V.dirty = true;
   frameCamera();
+  if (V.hub) V.hub._onModel();                                  // flanşa bağlı takımlar yeni düğüme taşınır
 }
 
 /* Kamerayı sıfır duruşun (+ güvenli kutunun) sınır küresine göre ayarla; kullanıcı kamerayı oynattıysa dokunma. */
@@ -240,6 +278,7 @@ function frame(now) {
     }
   }
   updateBand(stale);
+  if (V.hub && !stale) V.hub._frame();                          // TCP izi (bayatken donuk: yeni nokta eklenmez)
   if (V.dirty && V.model && resize()) {
     V.dirty = false;
     for (const node of V.nodes.values()) {
@@ -267,14 +306,14 @@ function updateNote() {
   V.tag.textContent = tag; V.tag.classList.toggle('est', tag === 'KESTİRİM');
   const mesh = V.meshUsed ? `${V.meshUsed}/${V.model ? V.model.links.length : '?'} link CAD mesh'i` : 'primitif şekiller (mesh yok)';
   const bad = V.meshFailed && V.meshFailed.length ? ` Mesh hatası: ${V.meshFailed.join('; ')}.` : '';
-  V.note.textContent = `${txt} Çizim: ${mesh}.${bad} Sürükle: döndür · tekerlek: yakınlaştır · turuncu kutu: güvenli kutu · beyaz nokta: model TCP · yeşil halka: robotun bildirdiği TCP. Salt okunur; ölçüm değildir.`;
+  V.note.textContent = `${txt} Çizim: ${mesh}.${bad} Sürükle: döndür · tekerlek: yakınlaştır · turuncu kutu: güvenli kutu · beyaz nokta: model TCP · yeşil halka: robotun bildirdiği TCP. Salt okunur; ölçüm değildir.${V.hubNote ? ` ${V.hubNote}` : ''}`;
 }
 function refreshUi() {
   if (V.glFailed) return;
   const reason = V.model ? SL.jointProblem(V.model, V.snap, V.why) : (V.why || 'model yükleniyor…');
   if (V.model && !reason) V.msg.hidden = true;
   else { V.msg.hidden = false; V.msg.textContent = `Görünüm kullanılamıyor: ${reason}`; }
-  V.robot.visible = !reason;
+  V.robot.visible = !reason && (!V.hub || V.hub.layerVisible('robot'));
   updateNote(); V.dirty = true; kick();
 }
 
@@ -292,29 +331,3 @@ function onState(snap) {
 }
 
 window.Scene3D = { attach, detach, onState, _V: V };
-
-/* ---------- HubScene: sahne API'si (İSKELET; UI_CONTRACT §9-C) ----------
- * S1-0'da yalnız İMZALAR vardır: her işlev { ok:false, error:'not_implemented' } döner ve hiçbir şey çizmez.
- * Gerçekleme S2'nindir (bu dosyanın sahibi S2). İmzalar değişmez: sayfalar bunlara göre (mock'la) yazılır.
- * `implemented` S2 bitince true olur; sayfalar onu görürse düğmelerini açar. */
-const SCENE_LAYERS = Object.freeze(['robot', 'workpiece', 'tool', 'environment', 'path', 'markers', 'safebox', 'grid']);
-const SCENE_KINDS = Object.freeze(['mesh', 'box', 'sphere', 'frame', 'polyline', 'marker']);
-const SCENE_PRESETS = Object.freeze(['iso', 'top', 'front', 'side']);
-const notImplemented = (name) => ({ ok: false, error: 'not_implemented', message: `HubScene.${name} henüz gerçeklenmedi` });
-const stub = (name) => () => notImplemented(name);
-const stubSubscribe = (name) => () => { notImplemented(name); return () => {}; };      // abonelik iptal işlevi döner
-
-window.HubScene = Object.freeze({
-  implemented: false, layers: SCENE_LAYERS, kinds: SCENE_KINDS, presets: SCENE_PRESETS,
-  addObject: stub('addObject'),         // ({id, kind, layer, geometry, pose:{pos_m, rpy_deg}, color, opacity, label})
-  removeObject: stub('removeObject'),   // (id)
-  setPose: stub('setPose'),             // (id, {pos_m, rpy_deg})
-  setVisible: stub('setVisible'),       // (idVeyaKatman, bool)
-  onPick: stubSubscribe('onPick'),      // (cb({objectId, point_m, normal})) -> iptal işlevi
-  enableGizmo: stub('enableGizmo'),     // (id, {mode:'translate'|'rotate', snap, space:'world'|'local'})
-  onGizmoChange: stubSubscribe('onGizmoChange'),   // (cb({id, pose, phase:'start'|'move'|'end'})) -> iptal işlevi
-  cameraPreset: stub('cameraPreset'),   // ('iso'|'top'|'front'|'side')
-  focus: stub('focus'),                 // (id | 'robot')
-  measure: stub('measure'),             // (bool)
-  setTrail: stub('setTrail'),           // (bool)
-});

@@ -1,6 +1,8 @@
 """Parça deposu (S2): ``HUB_DATA_DIR/parts/<uuid>/{mesh.stl, meta.json}`` (UI_EMIRLER EK-1 D, K6).
 
-* Hub kullanıcı verisi REPO dosyalarına yazılmaz; yalnız ``HUB_DATA_DIR`` altına. Kullanıcı dosya adı ASLA yol
+* Hub kullanıcı verisi REPO dosyalarına yazılmaz; yalnız ``HUB_DATA_DIR`` altına
+  (``paths.data_subdir('parts')``).
+  Kullanıcı dosya adı ASLA yol
   olmaz: dizin adı ``uuid4().hex`` (``ID_RE`` ile doğrulanır), görünen ad yalnız ``meta.json``'dadır.
 * Yazım atomik: parça önce ``.new-<uuid>`` dizininde kurulur, sonra TEK ``os.replace`` ile yerine gelir;
   ``meta.json`` güncellemesi geçici dosya + ``os.replace``. Yarım parça asla görünmez.
@@ -29,7 +31,6 @@ from control_hub.hub_core.mesh_tools import (
     unit_factor,
 )
 
-DATA_DIR_ENV = 'HUB_DATA_DIR'
 MAX_PARTS = 20
 KINDS = ('workpiece', 'tool', 'environment')
 KIND_LABELS = {'workpiece': 'iş parçası', 'tool': 'takım', 'environment': 'ortam'}
@@ -50,11 +51,10 @@ class PartError(Exception):
         self.status, self.code = status, code
 
 
-def data_dir(env: Optional[Mapping[str, str]] = None) -> Path:
-    """Hub kullanıcı veri klasörü: ``HUB_DATA_DIR``, yoksa kullanıcı klasörünün ``data`` alt dizini."""
-    env = os.environ if env is None else env
-    value = env.get(DATA_DIR_ENV)
-    return Path(value).expanduser() if value else paths.user_dir() / 'data'
+def parts_dir(env: Optional[Mapping[str, str]] = None) -> Path:
+    """``<HUB_DATA_DIR>/parts`` (UI_CONTRACT §9-D: ``paths.data_subdir``). Klasörü OLUŞTURMAZ (ilk yazımda
+    oluşur). ``HUB_DATA_DIR`` mutlak değilse ya da ``..`` içeriyorsa ``ValueError`` (çağıran hata verir)."""
+    return paths.data_subdir('parts', dict(env) if env is not None else None, create=False)
 
 
 # ---------------------------------------------------------------------------------------------------
@@ -155,7 +155,7 @@ def public_view(meta: Dict[str, Any]) -> Dict[str, Any]:
 
 class PartsStore:
     def __init__(self, root: Path):
-        self.root = Path(root) / 'parts'
+        self.root = Path(root)                                  # parts klasörünün KENDİSİ (parts_dir())
         self._lock = threading.Lock()
 
     # --- yardımcılar ---------------------------------------------------------------------------

@@ -12,7 +12,7 @@ from tests.helpers_parts import binary_stl, cube_triangles
 
 @pytest.fixture
 def store(tmp_path):
-    return ps.PartsStore(tmp_path / 'data')
+    return ps.PartsStore(tmp_path / 'data' / 'parts')
 
 
 def mesh(size=10):
@@ -23,9 +23,13 @@ def add(store, name='Kutu', kind='workpiece', unit='mm', **kw):
     return store.add(name=name, kind=kind, unit=unit, filename='kutu.stl', mesh=mesh(), **kw)
 
 
-def test_data_dir_env_and_default(tmp_path):
-    assert ps.data_dir({'HUB_DATA_DIR': str(tmp_path)}) == tmp_path
-    assert ps.data_dir({}).name == 'data'                                      # kullanıcı klasörü/data
+def test_parts_dir_follows_paths_data_subdir(tmp_path):
+    assert ps.parts_dir({'HUB_DATA_DIR': str(tmp_path)}) == tmp_path / 'parts'
+    assert not (tmp_path / 'parts').exists()                                   # oluşturulmaz (ilk yazımda)
+    assert ps.parts_dir({}).parent.name == 'data'                              # kullanıcı klasörü/data/parts
+    for bad in ('göreli/yol', str(tmp_path / '..' / 'x')):
+        with pytest.raises(ValueError):
+            ps.parts_dir({'HUB_DATA_DIR': bad})
 
 
 def test_empty_store_lists_nothing_and_creates_nothing(store):
