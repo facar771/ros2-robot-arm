@@ -203,9 +203,10 @@ class SimMoveClient:
                     if abs(x) > self.LIMIT_DEG:
                         bad('joint_limit', f'eklem {i + 1}: {x:g}° (limit ±{self.LIMIT_DEG:g}°)')
             elif kind == 'linear':
+                free = body.get('orientation') == 'free'      # S1.1: yalnız konum (rpy_deg verilmez)
                 p, r = _vec(body.get('pos_m'), 3), _vec(body.get('rpy_deg'), 3)
-                if p is None or r is None:
-                    bad('bad_request', 'pos_m ve rpy_deg (3 sayı) gerekli')
+                if p is None or (r is None) != free or (free and 'rpy_deg' in body):
+                    bad('bad_request', "pos_m ve rpy_deg (3 sayı) ya da pos_m + orientation:'free' gerekli")
                 else:
                     lo, hi = self.BOX
                     if any(not a <= x <= b for x, a, b in zip(p, lo, hi)):
@@ -241,7 +242,8 @@ class SimMoveClient:
                 raw = max(abs(a - b) for a, b in zip(frm['joints_deg'], to['joints_deg'])) / (self.DEG_S * sp)
             elif body['type'] == 'linear':
                 to['pos_m'] = [float(x) for x in body['pos_m']]
-                to['rpy_deg'] = [float(x) for x in body['rpy_deg']]
+                if body.get('orientation') != 'free':
+                    to['rpy_deg'] = [float(x) for x in body['rpy_deg']]
                 raw = math.dist(frm['pos_m'], to['pos_m']) / (self.M_S * sp)
             else:
                 to['open_pct'] = float(body['open_pct'])

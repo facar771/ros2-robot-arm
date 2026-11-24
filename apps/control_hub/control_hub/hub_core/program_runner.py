@@ -89,13 +89,20 @@ def move_body(step: Body, wps: Dict[str, Body],
         if joints is None:
             return None, {'kind': 'waypoint_no_joints', 'message': f"'{wp['name']}' eklem değeri taşımıyor"}
         return {'type': 'joint', 'joints_deg': joints, 'speed_pct': speed_pct}, None
+    free = step.get('orientation') == 'free'
     if wp is None:
-        return ({'type': 'linear', 'pos_m': step['pos_m'], 'rpy_deg': step['rpy_deg'],
-                 'speed_pct': speed_pct}, None)
+        return _linear(step['pos_m'], None if free else step['rpy_deg'], speed_pct), None
     if 'pos_m' not in wp:
         return None, {'kind': 'waypoint_no_pose', 'message': f"'{wp['name']}' TCP konumu taşımıyor"}
     pos = [round(a + b, 6) for a, b in zip(wp['pos_m'], step.get('offset_m') or [0.0, 0.0, 0.0])]
-    return {'type': 'linear', 'pos_m': pos, 'rpy_deg': wp['rpy_deg'], 'speed_pct': speed_pct}, None
+    return _linear(pos, None if free else wp['rpy_deg'], speed_pct), None
+
+
+def _linear(pos: List[float], rpy: Optional[List[float]], speed_pct: float) -> Body:
+    """``rpy`` yoksa yönelim SERBEST (``orientation:'free'``: S1.1, rpy_deg ile birlikte verilemez)."""
+    if rpy is None:
+        return {'type': 'linear', 'pos_m': pos, 'orientation': 'free', 'speed_pct': speed_pct}
+    return {'type': 'linear', 'pos_m': pos, 'rpy_deg': rpy, 'speed_pct': speed_pct}
 
 
 def dry_run(program: Body, check: Callable[[Body], Body], speed_pct: float) -> Body:
