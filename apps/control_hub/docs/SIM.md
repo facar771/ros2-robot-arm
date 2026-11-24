@@ -35,6 +35,10 @@ Gerçek eklem açıları (`rad/deg/min_deg/max_deg/near_limit` — aralığın %
 * IK çok tohumludur (önce önceki örnek, olmazsa limit ortası + sabit-rastgele tohumlar; en yakın çözüm seçilir).
 * `orientation:'free'`: yalnız konum hedeflenir, yönelimi çözücü belirler (`rpy_deg` ile birlikte **400**).
   Home yakınında yönelim sabitken (`fixed`, varsayılan) kutunun çoğu ulaşılamaz; dokun-git için `free` kullan.
+  Arayüzde (Parçalar → Dokun-git → **Yönelim**) varsayılan SİM'de **Serbest**, gerçek robotta/tezgâhta **Sabit**'tir; arayüz
+  her `/api/move/check` ve `/api/move` çağrısına `orientation` yazar (Serbest'te `rpy_deg` GÖNDERİLMEZ). Ölçüm (SİM, ev
+  TCP'sinden yana ±90 mm, plaka üstü z = 90 mm, kutu içi): Sabit → `unreachable`, Serbest → geçer ve TCP hedefe varır
+  (robot yönelimi kendi seçer, alet yüzeye dik olmayabilir). Görüntüler: `docs/screenshots/orient_*.png`.
 * Yolda eklem sıçraması (> 0,35 rad) **409 `path_blocked`**; eklem-uzayı hareketine OTOMATİK düşülmez.
 * Hız: `speed_pct` x profil `max_velocity_scale` (karma_robot 0,3) x eklem hız sınırı; yüzde TEK kez uygulanır.
   En yavaş eklem J2 (profilde 0,08 rad/s, tahmini) süreyi belirler: 11,2° ~ 10,8 s (%100), ~18 s (%60).
