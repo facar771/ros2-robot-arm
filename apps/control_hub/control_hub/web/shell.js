@@ -42,5 +42,30 @@ window.ShellLogic = (() => {
     return m ? m[1] : null;
   }
 
-  return { modeInfo, accessInfo, connInfo, sortPages, pageFromHash };
+  /* Yetenekler (capabilities): Hub durumundaki snap.caps (ör. ['sim']). Sayfa `requires: ['sim']` ile ister;
+   * yetenek yoksa menüde görünmez. Durum henüz gelmediyse yetenek YOK sayılır (gelince menü yenilenir). */
+  const CAP_RE = /^[a-z][a-z0-9_]{0,23}$/;
+  const capsOf = (snap) => (snap && Array.isArray(snap.caps) ? snap.caps.filter((c) => typeof c === 'string') : []);
+  function missingCaps(requires, snap) {
+    const have = new Set(capsOf(snap));
+    return (requires || []).filter((c) => !have.has(c));
+  }
+
+  /* Sayfa tanımı denetimi: sorun metni ya da null. Sayfa stili yalnız KENDİ dosyası olabilir
+   * (/pages/<id>.css): başka sayfanın ya da ortak dosyanın stilini sessizce ezmek yasak (UI_CONTRACT §3). */
+  function checkDef(def) {
+    if (!def || !/^[a-z][a-z0-9_]{0,31}$/.test(def.id || '')) return 'geçersiz id';
+    if (typeof def.mount !== 'function') return 'mount işlevi yok';
+    if (def.styles !== undefined) {
+      if (!Array.isArray(def.styles)) return 'styles dizi olmalı';
+      for (const u of def.styles) if (u !== `/pages/${def.id}.css`) return `styles yalnız /pages/${def.id}.css olabilir: ${u}`;
+    }
+    if (def.requires !== undefined) {
+      if (!Array.isArray(def.requires)) return 'requires dizi olmalı';
+      for (const c of def.requires) if (typeof c !== 'string' || !CAP_RE.test(c)) return `geçersiz yetenek adı: ${c}`;
+    }
+    return null;
+  }
+
+  return { modeInfo, accessInfo, connInfo, sortPages, pageFromHash, capsOf, missingCaps, checkDef };
 })();

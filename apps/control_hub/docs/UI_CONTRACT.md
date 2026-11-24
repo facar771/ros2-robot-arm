@@ -1,4 +1,4 @@
-# Control Hub arayüz sözleşmesi (Aşama 0 iskeleti)
+# Control Hub arayüz sözleşmesi (Aşama 0 iskeleti + §9 sayfalar arası arayüzler)
 
 Hedef: **yeni bir sayfa yalnızca yeni dosya ekleyerek gelir.** `app.js`, `index.html`, `style.css` (ortak
 iskelet), `server/app.py` ve `hub.spec`'e dokunmak gerekmez. Sayfalar kendi dosyalarında yaşar; biri bozulursa
@@ -46,13 +46,24 @@ Menüde yalnızca bazen görünmesi gereken sayfa `available()` döndürür (ör
 ```
 
 Kayıt alanları: `id`, `title`, `icon`, `order` (küçük önce; Robot 10, Jog 20, Ajan 30, Tezgâh 40),
-`scripts`, `available(it)` (false/Promise&lt;false&gt; ise menüde yok), `mount(root, ctx)` (BİR kez),
+`scripts`, `styles` (yalnız `['/pages/<id>.css']`, aşağıya bak), `requires` (yetenekler, aşağıya bak),
+`available(it)` (false/Promise&lt;false&gt; ise menüde yok), `mount(root, ctx)` (BİR kez),
 `onState(snap)`, `onEvents(events)`, `onShow()`, `onHide()`. Hareket veren bir sayfa `onHide()`'ta bıraktırmalıdır
 (Jog sayfası `JogPanel.release()` yapar).
 
+**`styles`**: sayfaya özgü stil `web/pages/<ad>.css` dosyasında yaşar; kayıt `styles: ['/pages/<ad>.css']` der ve
+dosya ilk gösterimde `<link>` ile yüklenir (CSP `style-src 'self'` değişmez). `style.css`'e sayfa için TEK satır
+yazılmaz. Yalnız KENDİ dosyası olabilir (başkasınınki ya da dış adres kayıtta reddedilir). Dosya yüklenemezse
+sayfa kendi kutusunda hata yazar. Seçicileri kendi sayfa kökünle (`#page-<ad> ...`) başlat.
+
+**`requires`**: `requires: ['sim']` yeteneklerin hepsi `snap.caps` içinde değilse sayfa menüde GİZLİ kalır
+(durum gelince/yetenek değişince menü kendiliğinden güncellenir; durum henüz yoksa gizli). `available()` ile birlikte
+kullanılırsa ikisi de uygun olmalıdır. Yetenek adı `[a-z][a-z0-9_]{0,23}`. Tanımlı yetenekler §9-A'da.
+
 Sayfanın kullanabileceği **genel yardımcılar** (`app.js`): `$`, `el(tag, props, children)`, `api(path, method, body)`
 (hata: `ApiError`, `.status`, `.body`), `toast(msg, bad)`, `S` (`S.snap`, `S.ui`, `S.session`, `S.events`),
-`fmt`, `hhmmss`. 3B görünüm: `HubPages.mountView(kutu)` (mount ve `onShow`'da çağır).
+`fmt`, `hhmmss`. 3B görünüm: `HubPages.mountView(kutu)` (mount ve `onShow`'da çağır). 3B sahne API'si:
+`const scene = await HubPages.scene();` (§9-C).
 
 ## 4. Şablon: rota (`server/hello_routes.py`)
 
@@ -136,3 +147,76 @@ python3 -m tools.ui_demo             # karma_robot CAD mesh'li 3B demo: http://l
 * ACİL DUR düğmesini sayfaya taşımak/kopyalamak; üst çubuk tek sahiptir (Tezgâh'ın kendi ACİL DUR'u donanım tezgâhı
   içindir ve ek bir güvencedir).
 * Robot API / `robot_core` / firmware değiştirmek.
+
+## 9. Sayfalar arası arayüzler (KESİN; UI_EMIRLER.md EK-1 ile çelişirse BURASI kazanır)
+
+Amaç: Program, Parça, Parametreler, Kontrol sayfaları birbirini beklemeden yazılsın. Her arayüzün yanında
+**durum** yazar: `VAR` (main'de çalışıyor), `S1` / `S2` (ilgili emir birleşince gelir). Gelmeyen arayüze karşı kendi
+mock'unla çalış; imza ve hata kodları aşağıdaki gibi sabittir. Ortak hata gövdesi her yerde
+`{ok:false, error:<kod>, message:<Türkçe metin>}`.
+
+### 9-A Robot durumu (WS `S.snap`; sahibi S1)
+
+**EK-1 A'dan farklar:** mevcut alanlar (`robot.estop` nesnesi, `robot.tcp.position`, `robot.joints[].rad`...) ARAYÜZÜ
+KIRMAMAK için olduğu gibi kalır; yenileri **ekle**nir. Yeni sayfa yalnız aşağıdaki tablodaki alanları okur.
+
+| Alan | Tür / birim | Durum | Not |
+|---|---|---|---|
+| `snap.estop.latched` | bool | VAR | ACİL DUR'un TEK doğru kaynağı (Hub kilidi VEYA robot kilidi). `robot.estop` (nesne) okunmaz. |
+| `snap.caps` | `string[]` | S1-0 | Yetenekler. Tanımlı: `sim` (SİM arka ucu). Arka ucun `caps` özniteliğinden gelir; yoksa `[]`. |
+| `snap.robot.mode` | `'fake'\|'sim'\|'real'` | VAR (`sim` S1) | Ham değer. Rozet/mod için `ShellLogic.modeInfo(snap).key` (`sim\|bench\|real\|unknown`) kullan; TEZGÂH ayrı moddur (K3-f). |
+| `snap.robot.connected` | bool | VAR | |
+| `snap.robot.moving` | bool | VAR | |
+| `snap.robot.speed_pct` | sayı 1–100 | S1 | Genel hız yüzdesi. |
+| `snap.robot.joints[]` | `{name, rad, deg}` | VAR | S1 ekler: `min_deg`, `max_deg`, `near_limit` (bool; limitin %5'i içinde). |
+| `snap.robot.tcp` | `{frame, position, wpr_deg, warning}` | VAR | S1 ekler: `pos_m` (= `position`, metre, dünya), `rpy_deg` (= `wpr_deg`: **W-P-R, derece**, `R = Rz(R)·Ry(P)·Rx(W)`; FANUC düzeni, `robot_core.se3`). Yeni sayfa `pos_m`/`rpy_deg` okur. |
+| `snap.robot.gripper` | `{open_pct: sayı\|null}` | S1 | `null` = alet yok/bilinmiyor. (`robot.tool` eski alan: uç konumu, okunmaz.) |
+| `snap.robot.safe_zone` | `{min:[x,y,z], max:[x,y,z]}` metre | S1 | Robotun kendi güvenli kutusu; Hub yalnız GÖSTERİR (K3-c). |
+| `snap.robot.maturity` | `'tahmini'\|'olculdu'` | S1 | Ölçülmemiş her değer "tahmini" etiketi taşır (K3-e). |
+| `snap.robot.stale` | bool | S1 | `stale_s > 1`. Bayatken sayfa komut düğmelerini kapatır. |
+
+### 9-B Hareket uçları (sahibi S1: `server/move_routes.py`, `server/sim_routes.py`)
+
+Hepsi `need_control` ister (GET `need_view`). Hareket veren her uç `hub.estopped` iken **`423 estop_latched`** döner;
+ACİL DUR sonrası hiçbir iş kendiliğinden devam etmez.
+
+| Uç | Gövde → yanıt | Durum |
+|---|---|---|
+| `POST /api/move` | `{type:'joint', joints_deg:[...], speed_pct?}` veya `{type:'linear', pos_m:[x,y,z], rpy_deg:[W,P,R], speed_pct?}` → **202** `{ok:true, job_id}` | S1 |
+| `POST /api/move/check` | `/api/move` ile AYNI gövde; **hareket ETMEZ** → **200** `{ok, violations:[{kind, at_pct, message}]}` (`ok:false` ise ihlal var; `at_pct` 0–100: yolun neresinde) | S1 |
+| `POST /api/move/stop` · `pause` · `resume` | `{}` → `{ok:true}`; çalışan iş yoksa **409** `not_running` | S1 |
+| `GET /api/move/{job_id}` | → `{ok, job:{id, type, state:'running\|paused\|done\|failed\|cancelled', progress_pct, error, message}}`; bilinmeyen **404** `unknown_job` | S1 |
+| `POST /api/sim/reset` | `{}` → home'a döner. Yalnız SİM'de; başka modda **409** `not_sim`; ACİL DUR'da **423** | S1 |
+| `POST /api/jog`, `/api/jog` (GET), `/api/frames*`, `/api/model` | mevcut jog uçları | VAR (korunur) |
+
+Ret kodları (`error`): **409** `outside_safe_zone` · `joint_limit` · `path_blocked` · `unreachable` · `busy`;
+**423** `estop_latched`; **400** `bad_request` (NaN, boyut, bilinmeyen alan); **401/403** oturum/kilit. `check`'in
+`violations[].kind` değerleri ret kodlarının ilk dördüyle AYNIDIR. `speed_pct` yoksa robotun genel hızı kullanılır;
+1–100 dışı **400**. Birim: metre, derece; yönelim W-P-R (§9-A). Programlar/sayfalar hareketi **yalnız bu uçlarla**
+ister; arka uca doğrudan gitmez.
+
+### 9-C 3B sahne API'si `HubScene` (sahibi S2; S1-0'da yalnız İSKELET)
+
+Erişim: `const scene = await HubPages.scene();` (3B modülü yüklenir). `scene.implemented === false` iken her işlev
+`{ok:false, error:'not_implemented'}` döner (abonelikler iptal işlevi döner); sayfa bunu görünce ilgili düğmeyi kapatır.
+Dünya çerçevesi Z yukarı, metre, derece, yönelim W-P-R. **Nesne kimlikleri sayfa önekiyle** (`parts:<uuid>`,
+`program:wp3`); başka sayfanın kimliğine dokunulmaz.
+
+| İşlev | İmza |
+|---|---|
+| `addObject(o)` | `{id, kind, layer, geometry, pose:{pos_m, rpy_deg}, color, opacity, label}` · `kind` ∈ `mesh\|box\|sphere\|frame\|polyline\|marker` · `geometry`: mesh `{url}` (Hub'ın sunduğu STL), box `{size_m:[x,y,z]}`, sphere `{radius_m}`, frame `{size_m}`, polyline `{points_m:[[x,y,z],…], closed?}`, marker `{radius_m, number?}` |
+| `removeObject(id)` · `setPose(id, pose)` · `setVisible(idVeyaKatman, bool)` | |
+| `onPick(cb)` | `cb({objectId, point_m, normal})` → iptal işlevi |
+| `enableGizmo(id, {mode:'translate\|rotate', snap, space:'world\|local'})` · `onGizmoChange(cb)` | `cb({id, pose, phase:'start\|move\|end'})` → iptal işlevi |
+| `cameraPreset(ad)` · `focus(idVeya'robot')` · `measure(bool)` · `setTrail(bool)` | `ad` ∈ `iso\|top\|front\|side` |
+
+Katmanlar: `robot, workpiece, tool, environment, path, markers, safebox, grid`. Sabitler `scene.layers/kinds/presets`.
+Mevcut bayatlık/ACİL DUR davranışı (kırmızı bant, donma) sahne API'sinden bağımsızdır ve korunur.
+
+### 9-D Kullanıcı verisi klasörü (VAR)
+
+Kullanıcının ürettiği veri (parça, program, profil taslağı) **repo dosyalarına değil** `HUB_DATA_DIR` altına yazılır:
+`paths.data_dir()` (`HUB_DATA_DIR` mutlak yol, `..` içermez; yoksa `<kullanıcı klasörü>/data`) ve
+`paths.data_subdir('parts'|'programs'|'profiles')` (yalnız bu üç ad; başkası `ValueError`). Dosya adı kullanıcıdan
+GELEN metinden türetilmez (uuid dizin + temizlenmiş ad); yükleme kuralları UI_EMIRLER K6'dadır. Yazım atomiktir
+(geçici dosya + `os.replace`).
