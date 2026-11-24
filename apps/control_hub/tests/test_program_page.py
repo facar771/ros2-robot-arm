@@ -169,7 +169,8 @@ def test_check_move_and_goto_use_the_same_validation(client):
 # --- çalıştırma ------------------------------------------------------------------------------------
 def test_run_to_the_end_with_the_fake_backend(client):
     c, _ = client
-    assert c.get('/api/program/state').json()['backend'] == {'label': 'SAHTE (mock)', 'measured': False}
+    assert c.get('/api/program/state').json()['backend'] == {'label': 'SAHTE (mock)', 'measured': False,
+                                                                 'mock': True}
     steps = [J0, {'kind': 'wait', 's': 0.01}, L0, {'kind': 'tool', 'open_pct': 50}]
     r = c.post('/api/program/run', json={'program': prog(steps), 'speed_pct': 80})
     assert r.status_code == 202 and r.json()['runner']['state'] in ('running', 'finished')

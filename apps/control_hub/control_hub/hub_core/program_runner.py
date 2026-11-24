@@ -2,7 +2,7 @@
 
 Sözleşme (UI_EMIRLER.md EK-1 B; S1-0 ``UI_CONTRACT.md §9`` kesinleştirince ona uydurulur): ``MoveClient``
 yöntemleri ``POST /api/move`` (+ ``/check``, ``/stop``, ``/pause``, ``/resume``, ``GET /api/move/{job}``)
-anlamını taşır. S1 yazılana dek ``program_routes.SimMoveClient`` (SAHTE, ölçüm değildir) kullanılır.
+anlamını taşır; gerçeği ``program_move.BackendMoveClient`` (``hub.backend.move_*``), yedeği SAHTE mock.
 
 Güvenlik (K3):
 * ACİL DUR'da çalışan program İPTAL edilir (``on_estop``); kilit varken ``start/step/resume`` →
@@ -40,6 +40,7 @@ class MoveClient(Protocol):
     """Hareket arka ucu (EK-1 B). ``measured=False`` ise robot duruşu ölçüm DEĞİLDİR (sahte)."""
     label: str
     measured: bool
+    mock: bool                                       # True: SAHTE (SİM/robot oynamaz), arayüz bandı çıkar
 
     def check(self, body: Body) -> Body: ...         # {ok, violations:[{kind, at_pct, message}]}; ETMEZ
     def start(self, body: Body) -> str: ...          # job_id; MoveRefused fırlatabilir
@@ -48,6 +49,7 @@ class MoveClient(Protocol):
     def resume(self) -> None: ...
     def stop(self) -> None: ...
     def pose(self) -> Optional[Body]: ...            # {joints_deg, pos_m, rpy_deg, open_pct} ya da None
+    def checker(self) -> Callable[[Body], Body]: ...  # bir kuru çalıştırma için denetçi (zincirleyebilir)
 
 
 # --- yürütme modeli: açılmış adım listesi, waypoint çözümü, kuru çalıştırma ---------------------------
@@ -99,8 +101,10 @@ def move_body(step: Body, wps: Dict[str, Body],
 def dry_run(program: Body, check: Callable[[Body], Body], speed_pct: float) -> Body:
     """Kuru çalıştırma: her hareket/alet adımını ``check(body)`` (hareket ETMEZ) ile doğrular.
 
-    Döngü gövdesi bir kez denetlenir. Sınırlama: ``check`` her adımı robotun O ANKİ duruşundan sınar,
-    zincirdeki önceki adımın bitişinden değil (yol engeli yaklaşıktır; EK-1 B böyle). Sonuç:
+    Döngü gövdesi bir kez denetlenir (2. tur başlangıcı denetlenmez). ``check`` zincirleyen bir denetçiyse
+    (``MoveClient.checker()``) her adım önceki adımın bitişinden planlanır; düz ``check`` robotun O ANKİ
+    duruşundan sınar (yol/ulaşılabilirlik yaklaşık kalır). Çalışırken her adım yine gerçek duruştan sınanır.
+    Sonuç:
     ``{ok, violations, rows:[{line, sub, kind, ok, violations:[{kind, at_pct, message}]}]}``."""
     wps = {w['name']: w for w in program['waypoints']}
     rows: List[Body] = []
