@@ -91,8 +91,11 @@ def test_robot_model_503_reason_and_unreachable_pass_to_client(scenarios, ui):
 
 def test_view_assets_declare_the_stale_rule_and_no_command_path(local):
     client, _ = local
-    assert 'view.js' in client.get('/').text
-    js = client.get('/view.js').text
-    assert 'STALE_MS = 1000' in js and 'ACİL DUR' in js and 'Görünüm kullanılamıyor' in js
-    assert 'innerHTML' not in js.replace('innerHTML yok', '')
-    assert "'POST'" not in js and "'PUT'" not in js and "'DELETE'" not in js    # görmek komut vermek değildir
+    logic = client.get('/scene_logic.js').text
+    scene = client.get('/scene3d.js').text
+    assert 'STALE_MS = 1000' in logic and 'staleReason' in logic
+    assert 'ACİL DUR' in scene and 'Görünüm kullanılamıyor' in scene and 'SL.staleReason' in scene
+    for js in (logic, scene):
+        assert 'innerHTML' not in js.replace('innerHTML yok', '')
+        for verb in ("'POST'", "'PUT'", "'DELETE'"):                      # görmek komut vermek değildir
+            assert verb not in js

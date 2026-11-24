@@ -211,7 +211,7 @@ def test_unreachable_robot_gives_502_for_reach(scenarios, ui):
 # --- arayüz varlıkları ve mantık --------------------------------------------------------------------
 def test_wizard_assets_are_served_in_order_and_safe(local):
     client, _ = local
-    html = client.get('/').text
+    html = client.get('/pages/jog.js').text
     assert html.index('/sphere.js') < html.index('/frames.js')           # FrameTypes, FrameWizard'dan önce
     js = client.get('/sphere.js')
     assert js.status_code == 200 and js.headers['cache-control'] == 'no-cache'

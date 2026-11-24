@@ -180,7 +180,7 @@
             el('div', { id: 'sw-reach-lines' }), el('pre', { class: 'sw-grid', id: 'sw-reach-grid' }),
             el('pre', { class: 'sw-rows', id: 'sw-reach-rows' }), el('div', { class: 'muted', id: 'sw-reach-note' })])])]),
       el('div', { class: 'say jg-msg', id: 'sw-msg', role: 'alert' })]);
-    q('panels').append(card);
+    (W.host || q('panels')).append(card);
     q('sw-clear').addEventListener('click', () => { for (const id of ['name', 'cx', 'cy', 'cz', 'r']) q(`sw-${id}`).value = ''; invalidate(); say(''); });
     for (const id of ['name', 'cx', 'cy', 'cz', 'r', 'axis']) q(`sw-${id}`).addEventListener('input', invalidate);
     q('sw-axis').addEventListener('change', invalidate);
@@ -272,7 +272,7 @@
       if (has) q('p-sphere').remove();
       if (off) off.remove();
       if (doc && doc.spheres_error) {                     // bozuk küre dosyası: gizli kalma nedeni yazılır
-        q('panels').append(el('div', { class: 'card', id: 'p-sphere-off' }, [
+        (W.host || q('panels')).append(el('div', { class: 'card', id: 'p-sphere-off' }, [
           el('h2', { text: 'Küresel çerçeve' }),
           el('div', { class: 'say bad', text: `Küre çerçeveleri robotta kapalı: ${doc.spheres_error}` })]));
       }
@@ -309,5 +309,5 @@
   }
 
   function onState(s) { W.snap = s; render(); }
-  window.SphereWizard = { update, onState };
+  window.SphereWizard = { update, onState, setHost(h) { W.host = h; } };
 })();

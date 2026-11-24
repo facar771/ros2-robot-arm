@@ -14,6 +14,8 @@ from PyInstaller.utils.hooks import collect_submodules, copy_metadata
 # de). Bu yüzden numpy GÖMÜLÜR (eskiden dışlanmıştı) ve zincirin tamamı CORE_MODULES'te açıkça sayılır. Yeni bir
 # robot_core modülü webcmd zincirine girerse hub-exe.yml artık src/robot_core/** değişince de koşar ve ajan öz
 # sınamasının "ajan etkin" adımında yakalar.
+# Aşama 0 iskelet: web/pages/*.js ve server/*_routes.py otomatik keşfedilir (server/registry.py); .exe'de keşif
+# `--check-config` ile doğrulanır (cli.py: selfcheck). Three.js yerel (web/vendor/three), CDN yok.
 # KM3 Tezgâh: tools/bench/bench_core.py (veri olarak) ve robot_hw_bridge (ROS'suz host/protocol/transport) gömülür.
 AGENT_PATHS = ['../../src/robot_agent', '../../src/robot_core', '../../src/robot_hw_bridge']
 CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'kinematics', 'models', 'ports', 'profile',
@@ -22,6 +24,32 @@ CORE_MODULES = ['config', 'errors', 'frames', 'interpreter', 'kinematics', 'mode
 
 # robot_hw_bridge/__init__ bunları içe aktarır (ROS'suz). collect_submodules derleme anında pakete erişemediği için sayılır.
 HW_MODULES = ['codec', 'crc', 'host', 'protocol', 'sim', 'transport']
+
+# 3B görünüm: profildeki link mesh'leri (ham CAD'ler `cad/` DEĞİL, yalnız `link/`; ~1 MB/robot). Hub bunları
+# _MEIPASS/robot_description/meshes/<robot>/link altında arar (hub_core/meshes.py). Dizin yoksa .exe sessizce
+# mesh'siz çıkmasın diye derleme DURUR (primitif çizim yine çalışırdı ama bu bir paketleme hatasıdır).
+import os  # noqa: E402
+
+_MESHES = os.path.normpath(os.path.join(SPECPATH, '..', '..', 'src', 'robot_description', 'meshes'))
+MESH_DATAS = [(os.path.join(_MESHES, r, 'link'), os.path.join('robot_description', 'meshes', r, 'link'))
+              for r in sorted(os.listdir(_MESHES)) if os.path.isdir(os.path.join(_MESHES, r, 'link'))] \
+    if os.path.isdir(_MESHES) else []
+if not MESH_DATAS:
+    raise SystemExit('hub.spec: src/robot_description/meshes/<robot>/link bulunamadı; 3B görünüm mesh\'siz '
+                     'paketlenirdi. Depoyu eksiksiz çıkar (git lfs/sığ klon değil).')
+
+# server/*_routes.py -> routes.manifest (registry.py: .exe'de pkgutil PYZ'yi listeleyemez). Elle liste YOK: dosyalar taranır.
+_SERVER = os.path.join(SPECPATH, 'control_hub', 'server')
+_ROUTES = sorted(f[:-3] for f in os.listdir(_SERVER) if f.endswith('_routes.py') and not f.startswith('_'))
+from PyInstaller.config import CONF  # noqa: E402
+
+_WORK = CONF['workpath']
+os.makedirs(_WORK, exist_ok=True)
+_MANIFEST = os.path.join(_WORK, 'routes.manifest')
+with open(_MANIFEST, 'w', encoding='utf-8') as _f:
+    _f.write('\n'.join(_ROUTES) + '\n')
+if not _ROUTES:
+    raise SystemExit('hub.spec: server/*_routes.py bulunamadı')
 
 try:
     import numpy  # noqa: F401  (derleme ortamında yoksa .exe sessizce eksik çıkmasın)
@@ -34,6 +62,7 @@ hidden = (
     + collect_submodules('websockets')       # /ws için (yoksa arayüz yoklamaya düşer)
     + collect_submodules('serial')           # ESP32 köprüsü: pyserial (Windows COM, socket:// vb. işleyiciler)
     + collect_submodules('control_hub')
+    + ['control_hub.server.' + r for r in _ROUTES]      # dinamik içe aktarılır (registry.py): statik analiz görmez
     + collect_submodules('robot_agent')
     + ['robot_hw_bridge'] + ['robot_hw_bridge.' + m for m in HW_MODULES]      # KM3: tools/bench bunları içe aktarır
     + ['robot_core'] + ['robot_core.' + m for m in CORE_MODULES]
@@ -46,7 +75,8 @@ hidden = (
 a = Analysis(
     ['exe_entry.py'],
     pathex=['.'] + AGENT_PATHS,
-    datas=[('control_hub/web', 'control_hub/web'), ('config', 'config'), ('../../tools/bench/bench_core.py', 'tools/bench')] + copy_metadata('keyring'),
+    datas=[('control_hub/web', 'control_hub/web'), ('config', 'config'), ('../../tools/bench/bench_core.py', 'tools/bench')]
+          + MESH_DATAS + [(_MANIFEST, 'control_hub/server')] + copy_metadata('keyring'),
     hiddenimports=hidden,
     excludes=['PIL', 'pytest', 'matplotlib', 'IPython'],
     noarchive=False,

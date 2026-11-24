@@ -33,7 +33,8 @@ def test_open_mode_runs_scenario_end_to_end(make_client):
     c, hub = make_client('open')
     assert c.get('/api/session').json()['can_control'] is True
     ui = c.get('/api/ui').json()
-    assert 'demo_tour' in ui['scenarios'] and ui['layout']['sections']
+    assert 'demo_tour' in ui['scenarios']
+    assert ui['layout']['sections'] == []          # arayüzde senaryo düğmesi yok
     r = c.post('/api/scenarios/demo_tour/run', json={})
     assert r.status_code == 202
     wait_idle(hub)

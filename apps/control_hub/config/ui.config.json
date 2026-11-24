@@ -14,12 +14,15 @@
     "--radius": "16px"
   },
   "layout": {
-    "estop": { "position": "bottom" },
+    "estop": {
+      "position": "top"
+    },
     "button_height": "92px",
-    "sections": [
-      { "title": "Hareket", "columns": 2, "scenarios": ["home", "ready", "above_green", "above_red", "above_blue"] },
-      { "title": "Senaryolar", "columns": 1, "scenarios": ["demo_tour"] }
-    ],
-    "panels": ["status", "robot", "log"]
+    "sections": [],
+    "panels": [
+      "status",
+      "robot",
+      "log"
+    ]
   }
 }

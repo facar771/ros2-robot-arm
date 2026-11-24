@@ -12,6 +12,7 @@ on:
       - 'src/robot_agent/**'
       - 'src/robot_hw_bridge/**'
       - 'tools/bench/**'
+      - 'src/robot_description/meshes/**'
       - '.github/workflows/hub-exe.yml'
   push:
     branches: [main]
@@ -21,6 +22,7 @@ on:
       - 'src/robot_agent/**'
       - 'src/robot_hw_bridge/**'
       - 'tools/bench/**'
+      - 'src/robot_description/meshes/**'
       - '.github/workflows/hub-exe.yml'
   workflow_dispatch:
 
@@ -176,7 +178,7 @@ jobs:
           if ($leak) { Write-Host "::error title=CANARY::anahtar .exe çıktısında göründü" }
           if ($rc -ne 0 -or $leak) { exit 1 }
 
-      - name: Açılış testi 5 - çalışan .exe'de ajan kartı (durum ucu + arayüz dosyaları) ve canary günlüğü
+      - name: Açılış testi 5 - çalışan .exe'de ajan kartı (durum ucu + sayfa kaydı + arayüz dosyaları) ve canary günlüğü
         run: |
           $exe = (Resolve-Path dist/ControlHub.exe).Path
           $canary = 'sk-CANARY-' + [guid]::NewGuid().ToString('N')
@@ -194,6 +196,7 @@ jobs:
               -Body '{"pin":"123456"}' -WebSession $sess | Out-Null
             $st = Invoke-RestMethod "$base/api/agent/status" -WebSession $sess
             $html = (Invoke-WebRequest "$base/" -WebSession $sess -UseBasicParsing).Content
+            $pg = (Invoke-WebRequest "$base/pages/agent.js" -WebSession $sess -UseBasicParsing).Content
             $js = (Invoke-WebRequest "$base/agent.js" -WebSession $sess -UseBasicParsing).Content
             $hdr = @{ 'X-CSRF-Token' = $st.csrf }
             Invoke-RestMethod "$base/api/agent/key" -Method Post -ContentType 'application/json' -Headers $hdr `
@@ -201,7 +204,7 @@ jobs:
               -WebSession $sess | Out-Null
             $after = (Invoke-WebRequest "$base/api/agent/status" -WebSession $sess -UseBasicParsing).Content
             $ev = (Invoke-WebRequest "$base/api/events" -WebSession $sess -UseBasicParsing).Content
-            $ok = ($st.enabled -eq $true) -and ($html -match 'agent\.js') -and ($js -match 'p-agent') `
+            $ok = ($st.enabled -eq $true) -and ($html -match 'pages\.js') -and ($pg -match 'agent\.js') -and ($js -match 'p-agent') `
                   -and (-not $after.Contains($canary)) -and (-not $ev.Contains($canary))
             $msg = "enabled=$($st.enabled) provider=$($st.provider) dry_run=$($st.dry_run) unavailable=$($st.unavailable)"
           } catch { $msg = "hata: $($_.Exception.Message)" }

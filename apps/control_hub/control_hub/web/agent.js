@@ -21,8 +21,9 @@ window.AgentPanel = (() => {
     return data;
   }
 
-  function mount() {
+  function mount(host) {
     if (A.mounted) return;
+    A.host = host || null;
     aapi('/api/agent/status').then((st) => {
       if (!st.enabled) return;                  // ajan yok/kapalı: panel hiç çizilmez
       A.csrf = st.csrf; A.st = st; A.mounted = true;
@@ -32,7 +33,7 @@ window.AgentPanel = (() => {
   }
 
   function build() {
-    const host = q('panels');
+    const host = A.host || q('panels');
     const cfg = el('details', { class: 'ag-cfg', id: 'ag-cfg' }, [
       el('summary', { text: 'Anahtar ve ayarlar (yalnızca bu bilgisayar)' }),
       el('div', { class: 'ag-form', id: 'ag-form' })]);

@@ -88,3 +88,8 @@ def install_bench_routes(app: FastAPI, hub, *, need_view: Callable, need_control
         b = getattr(hub, 'bench', None)
         sent = bool(b and await asyncio.to_thread(b.estop))
         return {'ok': True, 'sent': sent}
+
+
+def install(app, ctx) -> None:
+    install_bench_routes(app, ctx.hub, need_view=ctx.need_view, need_control=ctx.need_control,
+                         api_error=ctx.api_error)

@@ -190,3 +190,8 @@ def install_agent_routes(app: FastAPI, hub, *, token_of, need_view, need_control
         run(lambda: service.configure(**changes))
         return reply({k: v for k, v in service.status().items() if k in (
             'provider', 'model', 'base_url', 'dry_run', 'limits')})
+
+
+def install(app, ctx) -> None:
+    install_agent_routes(app, ctx.hub, token_of=ctx.token_of, need_view=ctx.need_view,
+                         need_control=ctx.need_control)

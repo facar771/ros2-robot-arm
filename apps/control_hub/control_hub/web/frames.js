@@ -15,9 +15,10 @@ window.FrameWizard = (() => {
   const q = (id) => document.getElementById(id);
   const mm = (p) => p.map((v) => (v * 1000).toFixed(1)).join(', ');
 
-  function mount() {
+  function mount(host) {
     if (W.mounted) return;
-    W.mounted = true;
+    W.mounted = true; W.host = host || null;
+    if (window.SphereWizard && SphereWizard.setHost) SphereWizard.setHost(W.host);
     const steps = el('div', { class: 'fw-steps', id: 'fw-steps' });
     for (const [key, title, hint] of STEPS) {
       const b = el('button', { class: 'small', type: 'button', id: `fw-rec-${key}`, text: 'Şu anki TCP’yi kaydet' });
@@ -26,7 +27,7 @@ window.FrameWizard = (() => {
         el('b', { text: title }), el('span', { class: 'muted', text: hint }),
         el('output', { class: 'fw-pt', id: `fw-v-${key}`, text: 'kaydedilmedi' }), b]));
     }
-    q('panels').append(el('div', { class: 'card', id: 'p-frames' }, [
+    (W.host || q('panels')).append(el('div', { class: 'card', id: 'p-frames' }, [
       el('h2', { text: 'Düzlemler (3 nokta öğretme)' }),
       el('ul', { class: 'fw-list', id: 'fw-list' }),
       el('details', { id: 'fw-new' }, [

@@ -112,3 +112,7 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
         if bad is not None:
             return bad
         return await call('frames_reach', body)
+
+
+def install(app, ctx) -> None:
+    install_jog_routes(app, ctx.hub, need_view=ctx.need_view, need_control=ctx.need_control)
