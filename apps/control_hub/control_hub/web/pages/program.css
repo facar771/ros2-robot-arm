@@ -2,7 +2,6 @@
  * Telefon (390 px): tek sütun, "Çalıştır" kartı 3B görünümün ÜSTÜNDE, dokunma hedefleri ≥ 44 px, 16 px yazı (iOS yakınlaştırmasın). */
 .pg-side, .pg-main { min-width: 0; }
 .pg-view { margin-bottom: 14px; }
-.pg-cv { display: block; width: 100%; height: auto; border-radius: 12px; background: #0a0e14; }
 @media (max-width: 1099px) { .pg-main { order: -1; } }
 
 .pg input[type=text], .pg select { font: inherit; font-size: 16px; min-height: 44px; min-width: 0; padding: 6px 10px; border-radius: 10px;

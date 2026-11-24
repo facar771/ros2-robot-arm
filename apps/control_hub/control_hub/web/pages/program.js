@@ -1,11 +1,11 @@
 /* Sayfa: Program (P2). AR4 program ekranı: waypoint tablosu, Move J/L adımları, ZORUNLU kuru çalıştırma ("Önizle"),
  * sunucu tarafı koşucu (Çalıştır/Adım/Duraklat/Devam/Durdur). Veri yalnız textContent ile yazılır.
  * Güvenlik: Çalıştır yalnız geçerli önizleme varken açılır, ama asıl denetim SUNUCUDADIR (arayüze güvenilmez). ACİL DUR üst
- * çubuktadır, burada kopyası yok. HubScene (S2) varsa 3B işaret/yol/gizmo kullanılır; yoksa üstten tuval önizlemesi (sahte 3B). */
+ * çubuktadır, burada kopyası yok. 3B (HubScene, S2): numaralı işaret, yol çizgisi, gizmo ile hedef, parçaya dokun. */
 'use strict';
 
 (() => {
-  const POLL_MS = 500, CHECK_WAIT_MS = 350, ARM_MS = 3000, DEFAULT_SPEED = 25, MAX_FILE = 1_000_000;
+  const POLL_MS = 500, CHECK_WAIT_MS = 350, ARM_MS = 3000, DEFAULT_SPEED = 25, MAX_FILE = 1_000_000, MARK_R_M = 0.012, TGT_SIZE_M = 0.08;
   const ZERO6 = [0, 0, 0, 0, 0, 0], NAME_RE = /^[0-9A-Za-zÇĞİÖŞÜçğıöşü][0-9A-Za-zÇĞİÖŞÜçğıöşü _.-]{0,39}$/;
   const KIND = { move_j: 'Eklem hareketi (J)', move_l: 'Doğrusal hareket (L)', wait: 'Bekle', tool: 'Alet', comment: 'Not', loop: 'Döngü' };
 
@@ -63,7 +63,7 @@
 
   /* ---- durum ve G/Ç ---- */
   const Q = {}, P = { prog: L.blank(), slug: null, dirty: false, speed: DEFAULT_SPEED, check: null, note: '', run: null, pose: null,
-    backend: null, estop: false, real: false, control: true, confirm: null, armed: null, shown: false, bound: false, seq: 0, ids: [],
+    backend: null, estop: false, real: false, control: true, confirm: null, armed: null, shown: false, bound: false, tgtOn: false, seq: 0, ids: [],
     rows: new Map(), timer: null, tgt: { pos: [0, 0, 0], rpy: [0, 0, 0], ok: null, why: 'Henüz denetlenmedi' } };
   const E = el, on = (e, ev, fn) => { e.addEventListener(ev, fn); return e; };
   const btn = (text, fn, cls = 'small', title = '') => on(E('button', { type: 'button', class: cls, text, title }), 'click', fn);
@@ -87,9 +87,9 @@
   /* Her düzenleme önizlemeyi GEÇERSİZ kılar (kabul kriteri); w/s: waypoint/adım listesi yeniden çizilsin mi. */
   function changed(w, s) {
     P.dirty = true; P.check = null; P.note = '';
-    if (w) renderWps();
+    if (w) { renderWps(); syncScene(); }
     if (s) renderSteps();
-    paint(); syncScene();
+    paint();
   }
 
   /* ---- waypoint tablosu ---- */
@@ -226,45 +226,34 @@
     if (P.tgt.ok === true) { P.prog.waypoints.push({ name: L.unique('Nokta', P.prog.waypoints.map((x) => x.name)), pos_m: P.tgt.pos.slice(), rpy_deg: P.tgt.rpy.slice() }); changed(true, true); }
   }
 
-  /* ---- 3B sahne (S2 gelince) + üstten tuval önizlemesi (sahte) ---- */
-  function bindScene() {                       // S2 yoksa sessizce atlanır (özellik algılama); iskelet "uygulanmadı" fırlatabilir
-    const H = window.HubScene; if (!H || P.bound) return;
-    try {
-      if (H.onPick) H.onPick((e) => { if (P.shown && e && Array.isArray(e.point_m)) setTarget(e.point_m, null, false); });
-      if (H.onGizmoChange) H.onGizmoChange((e) => { const p = e && (e.pose || e); if (P.shown && p && p.pos_m) setTarget(p.pos_m, p.rpy_deg, true); });
-      P.bound = true;
-    } catch (e) { console.error(e); }
+  /* ---- 3B sahne (HubScene, UI_CONTRACT §9-C): numaralı işaret, yol çizgisi, hedef çerçevesi + gizmo, parçaya dokun ----
+   * İşlevler fırlatmaz, {ok:false} döner: her çağrının sonucu denetlenir. Kimlikler `program:` önekli (başkasınınkine dokunma). */
+  const SC = { wp: 'program:wp', path: 'program:path', tgt: 'program:target' };
+  const PICK = ['workpiece', 'environment'], PICK_ALL = ['workpiece', 'tool', 'environment', 'markers'];   // işaretler/hedef seçilmesin
+  const sceneOf = () => { const H = window.HubScene; return H && H.implemented !== false ? H : null; };
+
+  function bindScene() {                       // bir kez abone ol; 3B yoksa atla (tablo ve sayısal hedef yine çalışır)
+    const H = sceneOf(); if (!H || P.bound) return; P.bound = true;
+    H.onPick((e) => { if (P.shown && e && Array.isArray(e.point_m)) setTarget(e.point_m, null, false); });
+    H.onGizmoChange((e) => { if (P.shown && e && e.id === SC.tgt && e.pose && e.pose.pos_m) setTarget(e.pose.pos_m, e.pose.rpy_deg, true); });
   }
 
-  function clearScene() {
-    try { if (window.HubScene && HubScene.removeObject) P.ids.forEach((id) => HubScene.removeObject(id)); } catch (e) { console.error(e); }
-    P.ids = [];
+  function clearScene() {                      // sayfa gizlenince: işaretler, hedef ve gizmo kalkar; seçim katmanları varsayılana döner
+    const H = sceneOf(); if (!H) return;
+    [...P.ids, SC.tgt].forEach((id) => H.removeObject(id));
+    H.disableGizmo(); H.setPickLayers(PICK_ALL); P.ids = []; P.tgtOn = false;
   }
 
-  function syncScene() {
-    drawPath();
-    const H = window.HubScene; if (!H || !H.addObject || !P.shown) return;
-    try {
-      clearScene();
-      const add = (o) => { H.addObject(o); P.ids.push(o.id); }, pts = L.path(P.prog.waypoints);
-      pts.forEach(({ n, p }) => add({ id: `pg-wp-${n}`, kind: 'marker', layer: 'markers', pose: { pos_m: p, rpy_deg: P.prog.waypoints[n - 1].rpy_deg }, color: '#4f8cff', label: String(n) }));
-      if (pts.length > 1) add({ id: 'pg-path', kind: 'polyline', layer: 'path', geometry: { points_m: pts.map((o) => o.p) }, color: '#e3b341' });
-      add({ id: 'pg-target', kind: 'frame', layer: 'markers', pose: { pos_m: P.tgt.pos, rpy_deg: P.tgt.rpy }, label: 'Hedef' });
-      if (H.enableGizmo) H.enableGizmo('pg-target', { mode: 'translate', space: 'world' });
-    } catch (e) { console.error(e); }
-  }
-
-  function drawPath() {                        // üstten (x–y): numaralı işaretler + yol çizgisi
-    const c = Q.cv, g = c && c.getContext && c.getContext('2d'); if (!g) return;
-    const pts = L.path(P.prog.waypoints), W = c.width, H = c.height, pad = 30;
-    g.fillStyle = '#0a0e14'; g.fillRect(0, 0, W, H); g.font = '14px system-ui';
-    if (!pts.length) { g.fillStyle = '#8b949e'; g.fillText('TCP konumlu waypoint yok', pad, H / 2); return; }
-    const xs = pts.map((o) => o.p[0]), ys = pts.map((o) => o.p[1]), x0 = Math.min(...xs), y0 = Math.min(...ys);
-    const k = (Math.min(W, H) - 2 * pad) / Math.max(Math.max(...xs) - x0, Math.max(...ys) - y0, 0.05), at = (p) => [pad + (p[0] - x0) * k, H - pad - (p[1] - y0) * k];
-    g.strokeStyle = '#e3b341'; g.lineWidth = 2; g.beginPath();
-    pts.forEach((o, i) => { const [x, y] = at(o.p); if (i) g.lineTo(x, y); else g.moveTo(x, y); }); g.stroke();
-    pts.forEach((o) => { const [x, y] = at(o.p); g.fillStyle = '#4f8cff'; g.beginPath(); g.arc(x, y, 11, 0, 7); g.fill();
-      g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText(String(o.n), x, y + 5); g.textAlign = 'start'; });
+  function syncScene() {                       // işaret + yol her waypoint değişiminde yenilenir; hedef çerçevesi kalır (gizmo kopmasın)
+    const H = sceneOf(); if (!H || !P.shown) return;
+    P.ids.forEach((id) => H.removeObject(id)); P.ids = [];
+    const errs = [], put = (o, keep) => { const r = H.addObject(o); if (r.ok) { if (keep) P.ids.push(o.id); } else errs.push(r.message || r.error); };
+    const pts = L.path(P.prog.waypoints), pose = { pos_m: P.tgt.pos, rpy_deg: P.tgt.rpy };
+    pts.forEach(({ n, p }) => put({ id: `${SC.wp}${n}`, kind: 'marker', layer: 'markers', pose: { pos_m: p }, geometry: { radius_m: MARK_R_M, number: n }, color: '#4f8cff' }, true));
+    if (pts.length > 1) put({ id: SC.path, kind: 'polyline', layer: 'path', geometry: { points_m: pts.map((o) => o.p) }, color: '#e3b341' }, true);
+    if (P.tgtOn) H.setPose(SC.tgt, pose);
+    else { put({ id: SC.tgt, kind: 'frame', layer: 'markers', pose, geometry: { size_m: TGT_SIZE_M }, label: 'Hedef' }, false); P.tgtOn = errs.length === 0; if (P.tgtOn) H.enableGizmo(SC.tgt, { mode: 'translate', space: 'world' }); }
+    H.setPickLayers(PICK); Q.scene.textContent = errs.length ? `3B sahne: ${errs[0]}` : '';
   }
 
   /* ---- çalıştırma ---- */
@@ -309,7 +298,7 @@
     Q.status.textContent = L.status(run); Q.status.className = `say pg-status ${run.state || ''}`;
     for (const fs of [Q.fsFile, Q.fsWp, Q.fsSteps, Q.fsSpeed]) fs.disabled = ro;   // çalışırken düzenleme KAPALI
     Q.exp.hidden = !P.slug || P.dirty; Q.exp.href = P.slug ? `/api/program/${P.slug}/export` : '';
-    Q.mock.hidden = !(P.backend && P.backend.measured === false); Q.mock.textContent = `${P.backend ? P.backend.label : ''} hareket servisi: ölçüm değildir, gerçek robot hareket etmez.`;
+    Q.mock.hidden = !(P.backend && P.backend.mock); Q.mock.textContent = `${P.backend ? P.backend.label : ''} hareket servisi: ölçüm değildir, gerçek robot hareket etmez.`;
     Q.confirm.hidden = !P.confirm;
     Q.dirty.textContent = P.dirty ? '● kaydedilmemiş' : P.slug ? `kayıtlı: ${P.slug}` : '';
     paintTarget();
@@ -366,12 +355,12 @@
     Q.pause = btn('Duraklat', () => control('pause')); Q.resume = btn('Devam', () => control('resume')); Q.stop = btn('Durdur', () => control('stop'), 'small danger');
     Q.confirm = E('div', { class: 'banner danger pg-confirm', role: 'alertdialog', hidden: true }, [E('div', { text: 'GERÇEK robot hareket edecek. ACİL DUR yanında mı?' }),
       E('div', { class: 'row' }, [btn('Evet, çalıştır', () => start(P.confirm || 'run', true), 'small danger'), btn('Vazgeç', () => { P.confirm = null; paint(); })])]);
-    Q.cv = E('canvas', { class: 'pg-cv', width: 640, height: 320, title: 'Üstten yol önizlemesi (x–y)' }); Q.view = E('div', { class: 'pg-view' });
+    Q.view = E('div', { class: 'pg-view' }); Q.scene = E('div', { class: 'say', role: 'status' });
     Q.tp = numField(L.fmt(P.tgt.pos, 4), 3, 3, (a) => setTarget(a, null), { title: 'Hedef x,y,z (m)', placeholder: 'x, y, z (m)' });
     Q.tr = numField(L.fmt(P.tgt.rpy, 2), 3, 3, (a) => setTarget(null, a), { title: 'Hedef r,p,y (°)', placeholder: 'r, p, y (°)' });
     Q.dot = E('span', { class: 'pg-dot' }); Q.tw = E('span', { class: 'say' }); Q.tadd = btn('Waypoint olarak ekle', addTarget);
     root.append(E('div', { class: 'page-grid two pg' }, [
-      E('div', { class: 'pg-side' }, [Q.view, sec('Yol önizlemesi (üstten, sahte 3B)', [Q.cv, E('div', { class: 'say', text: window.HubScene ? 'İşaretler ve yol 3B sahnede de çizilir.' : '3B işaret ve yol çizgisi sahne API’si (S2) gelince eklenir.' })]),
+      E('div', { class: 'pg-side' }, [Q.view, Q.scene,
         sec('Hedef öğret', [E('div', { class: 'pg-tgt' }, [Q.tp, Q.tr]), E('div', { class: 'row' }, [Q.dot, Q.tw]), Q.tadd])]),
       E('div', { class: 'pg-main' }, [Q.mock, sec('Çalıştır', [Q.fsSpeed, Q.prevmsg, E('div', { class: 'pg-btns' }, [Q.run, Q.step, Q.pause, Q.resume, Q.stop]), Q.confirm, Q.gate, Q.status], 'pg-runcard'),
         sec('Program', [E('div', { class: 'row' }, [Q.dirty, Q.exp]), Q.fsFile]), sec('Waypoint tablosu', [Q.fsWp]), sec('Adımlar', [Q.fsSteps])])]));
@@ -379,12 +368,12 @@
 
   HubPages.register({
     id: 'program', title: 'Program', icon: '▶', order: 30, styles: ['/pages/program.css'], logic: L,
-    mount(root) {
-      build(root); P.shown = true; render(); loadList();
-      refresh().then(() => { if (P.pose && P.pose.pos_m) setTarget(P.pose.pos_m, P.pose.rpy_deg, true); });
-      HubPages.mountView(Q.view); bindScene(); P.timer = setInterval(refresh, POLL_MS);
+    async mount(root) {
+      build(root); P.shown = true; render(); loadList(); P.timer = setInterval(refresh, POLL_MS);
+      refresh().then(() => { if (P.pose && P.pose.pos_m) setTarget(P.pose.pos_m, P.pose.rpy_deg, false); });
+      await HubPages.mountView(Q.view); bindScene(); syncScene();             // HubScene tuval kurulunca vardır
     },
-    onShow() { P.shown = true; HubPages.mountView(Q.view); bindScene(); syncScene(); refresh(); if (!P.timer) P.timer = setInterval(refresh, POLL_MS); },
+    onShow() { P.shown = true; refresh(); if (!P.timer) P.timer = setInterval(refresh, POLL_MS); HubPages.mountView(Q.view).then(() => { bindScene(); syncScene(); }); },
     onHide() {                                 // K3h: sayfa gizlenince çalışan program DURAKLAR, 3B'deki işaretler kalkar
       P.shown = false; clearInterval(P.timer); P.timer = null; clearScene();
       if (P.run && P.run.state === 'running') call('/api/program/pause', 'POST');

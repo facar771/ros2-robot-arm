@@ -38,13 +38,37 @@ const btn = (root, text) => all(root, (n) => n.tagName === 'BUTTON' && n.textCon
 const byTitle = (root, title) => all(root, (n) => n.title === title);
 const flush = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
+/* Gerçek HubScene gibi davranır: kimlik "<sayfa>:<ad>", tür başına geometri doğrulaması, fırlatmaz {ok:false} döner. */
+const ID_RE = /^[a-z][a-z0-9_]{0,31}:[A-Za-z0-9_.-]{1,64}$/;
+function fakeScene(calls, { implemented = true, reject = null } = {}) {
+  const objs = new Map(), no = (error, message) => ({ ok: false, error, message });
+  const H = { implemented, objs, pickLayers: null,
+    addObject(o) {
+      if (reject) return no('bad_request', reject);
+      if (typeof o.id !== 'string' || !ID_RE.test(o.id)) return no('bad_request', 'id "<sayfa>:<ad>" olmalı');
+      if (objs.has(o.id)) return no('exists', `nesne zaten var: ${o.id}`);
+      const g = o.geometry || {};
+      if (o.kind === 'marker' && !(g.radius_m > 0)) return no('bad_request', 'işaret yarıçapı');
+      if (o.kind === 'frame' && g.size_m !== undefined && typeof g.size_m !== 'number') return no('bad_request', 'çerçeve boyu sayı olmalı');
+      if (o.kind === 'polyline' && !(Array.isArray(g.points_m) && g.points_m.length >= 2)) return no('bad_request', 'poliçizgi 2+ nokta');
+      objs.set(o.id, o); calls.push(['add', o]); return { ok: true, id: o.id };
+    },
+    removeObject(id) { if (!objs.has(id)) return no('not_found', id); objs.delete(id); calls.push(['rm', id]); return { ok: true }; },
+    setPose(id, pose) { if (!objs.has(id)) return no('not_found', id); objs.get(id).pose = pose; calls.push(['pose', id, pose]); return { ok: true }; },
+    enableGizmo(id, o) { if (!objs.has(id)) return no('not_found', id); calls.push(['gizmo', id, o]); return { ok: true }; },
+    disableGizmo() { calls.push(['nogizmo']); return { ok: true }; },
+    setPickLayers(l) { H.pickLayers = l; },
+    onPick(cb) { H.pick = cb; return () => {}; }, onGizmoChange(cb) { H.gizmo = cb; return () => {}; } };
+  return H;
+}
+
 /* Her senaryo kendi sayfa kopyasını (taze durum) yükler. */
 function load(script, { scene = false } = {}) {
   const calls = [], toasts = [], timers = [];
   const handlers = {
     'GET /api/program/state': () => ({ ok: true, runner: { state: 'idle', running: false }, estop: false,
       pose: { joints_deg: [0, 10, 20, 30, 40, 50], pos_m: [0.3, 0.1, 0.2], rpy_deg: [180, 0, 0], open_pct: 50 },
-      backend: { label: 'SAHTE (mock)', measured: false }, limits: {} }),
+      backend: { label: 'SAHTE (mock)', measured: false, mock: true }, limits: {} }),
     'GET /api/program': () => ({ ok: true, programs: [] }),
     'POST /api/program/check_move': () => ({ ok: true, violations: [] }),
     ...script };
@@ -59,8 +83,7 @@ function load(script, { scene = false } = {}) {
   global.clearInterval = (id) => { timers[id - 1] = null; };
   global.document = { head: new N('head'), getElementsByTagName: (t) => all(global.document.head, (n) => n.tagName === t.toUpperCase()) };
   const sceneCalls = [];
-  if (scene) global.HubScene = { addObject: (o) => sceneCalls.push(['add', o]), removeObject: (id) => sceneCalls.push(['rm', id]),
-    onPick(cb) { this.pick = cb; }, onGizmoChange(cb) { this.gizmo = cb; }, enableGizmo: (id, o) => sceneCalls.push(['gizmo', id, o]), setPose() {} };
+  if (scene) global.HubScene = fakeScene(sceneCalls, scene === true ? {} : scene);
   else delete global.HubScene;
   let def = null;
   global.HubPages = { register(d) { def = d; }, mountView: async () => {} };
@@ -142,7 +165,7 @@ const PREVIEW_OK = { ok: true, violations: 0, rows: [{ line: 0, sub: null, kind:
   /* ---- 3) çalıştırma: onay, kilit, 409, kalp atışı, duraklatma ---- */
   let runState = { state: 'idle', running: false }, runReply = () => ({ ok: true, run_id: 1 });
   const b = load({ 'POST /api/program/check': () => PREVIEW_OK, 'POST /api/program/run': (body) => runReply(body),
-    'GET /api/program/state': () => ({ ok: true, runner: runState, estop: false, pose: { joints_deg: [1, 2, 3, 4, 5, 6] }, backend: { label: 'SAHTE (mock)', measured: false } }),
+    'GET /api/program/state': () => ({ ok: true, runner: runState, estop: false, pose: { joints_deg: [1, 2, 3, 4, 5, 6] }, backend: { label: 'SAHTE (mock)', measured: false, mock: true } }),
     'POST /api/program/heartbeat': () => ({ ok: true }), 'POST /api/program/pause': () => ({ ok: true }) });
   const r2 = new N('section'); await b.def.mount(r2); await flush(); b.def.onState(snap({ robot: { mode: 'real' } }));
   await btn(r2, 'Şu anki pozu kaydet').click(); await flush();
@@ -170,17 +193,51 @@ const PREVIEW_OK = { ok: true, violations: 0, rows: [{ line: 0, sub: null, kind:
   b.def.onState(snap({ estop: { latched: true } }));
   assert.strictEqual(btn(r2, 'Çalıştır').disabled, true); assert.match(r2.textContent, /ACİL DUR aktif/);
 
-  /* ---- 4) sahne API'si varsa: numaralı işaret, yol çizgisi, onPick -> hedef denetimi ---- */
+  /* ---- 4) HubScene (§9-C): numaralı işaret, yol çizgisi, hedef çerçevesi + gizmo, onPick; kimlikler `program:` önekli ---- */
   const c = load({}, { scene: true }); const r3 = new N('section'); await c.def.mount(r3); await flush(); c.def.onState(snap());
+  const adds = (id) => c.sceneCalls.filter(([k, o]) => k === 'add' && o.id === id).length, S = c.H;
+  assert.ok(S.objs.has('program:target'), 'hedef çerçevesi eklendi'); assert.strictEqual(S.objs.get('program:target').kind, 'frame');
+  assert.ok(c.sceneCalls.some(([k, id]) => k === 'gizmo' && id === 'program:target'), 'hedef için gizmo açıldı');
+  assert.deepStrictEqual(S.pickLayers, ['workpiece', 'environment'], 'işaret/hedef seçilemez, parça yüzeyi seçilir');
   await btn(r3, 'Şu anki pozu kaydet').click(); await flush();
-  const marker = c.sceneCalls.find(([k, o]) => k === 'add' && o.kind === 'marker');
-  assert.ok(marker && marker[1].label === '1' && marker[1].layer === 'markers', 'numaralı işaret eklendi');
-  assert.ok(c.sceneCalls.some(([k, id]) => k === 'gizmo' && id === 'pg-target'), 'hedef için gizmo açıldı');
+  const m1 = S.objs.get('program:wp1');
+  assert.ok(m1 && m1.kind === 'marker' && m1.geometry.number === 1 && m1.layer === 'markers', 'numaralı işaret eklendi');
+  assert.deepStrictEqual(m1.pose.pos_m, [0.3, 0.1, 0.2], 'işaret waypoint TCP konumunda');
+  assert.strictEqual(r3.textContent.includes('3B sahne:'), false, 'hata yok');
   await btn(r3, 'Şu anki pozu kaydet').click(); await flush();
-  assert.ok(c.sceneCalls.some(([k, o]) => k === 'add' && o.kind === 'polyline' && o.geometry.points_m.length === 2), 'iki waypoint -> yol çizgisi');
-  c.H.pick({ objectId: 'p', point_m: [0.2, 0.1, 0.3], normal: [0, 0, 1] }); await flush(450);
+  const line = S.objs.get('program:path');
+  assert.ok(S.objs.has('program:wp2') && line && line.kind === 'polyline' && line.geometry.points_m.length === 2, 'iki waypoint -> yol çizgisi');
+  assert.strictEqual(adds('program:target'), 1, 'hedef çerçevesi her waypoint değişiminde YENİDEN kurulmaz (gizmo kopmasın)');
+  S.pick({ objectId: 'parts:abc', point_m: [0.2, 0.1, 0.3], normal: [0, 0, 1] }); await flush(450);
   assert.ok(c.calls.some((x) => x.path === '/api/program/check_move' && x.body.step.pos_m[0] === 0.2), 'onPick hedefi ulaşılabilirlik denetiminden geçer');
+  assert.deepStrictEqual(S.objs.get('program:target').pose.pos_m, [0.2, 0.1, 0.3], 'dokunulan noktada hedef çerçevesi');
   assert.strictEqual(btn(r3, 'Waypoint olarak ekle').disabled, false, 'yeşil hedef eklenebilir');
-  c.def.onHide(); assert.ok(c.sceneCalls.some(([k, id]) => k === 'rm' && id === 'pg-path'), 'sayfadan çıkınca sahne temizlenir');
+  const poses = c.sceneCalls.filter(([k]) => k === 'pose').length, checks = () => c.calls.filter((x) => x.path === '/api/program/check_move').length, before = checks();
+  S.gizmo({ id: 'parts:abc', pose: { pos_m: [0.9, 0.9, 0.9], rpy_deg: [0, 0, 0] }, phase: 'move' }); await flush(450);
+  assert.strictEqual(checks(), before, 'başka sayfanın gizmo olayı hedefi değiştirmez');
+  S.gizmo({ id: 'program:target', pose: { pos_m: [0.25, 0.12, 0.3], rpy_deg: [0, 90, 0] }, phase: 'move' }); await flush(450);
+  assert.ok(c.calls.some((x) => x.path === '/api/program/check_move' && x.body.step.pos_m[0] === 0.25 && x.body.step.rpy_deg[1] === 90), 'gizmo hedefi denetime sokar');
+  assert.strictEqual(c.sceneCalls.filter(([k]) => k === 'pose').length, poses, 'sürüklerken çerçeve yeniden konumlanmaz/kurulmaz');
+  assert.strictEqual(adds('program:target'), 1);
+  c.def.onHide();
+  assert.strictEqual(S.objs.size, 0, 'sayfadan çıkınca TÜM nesneler kalkar'); assert.ok(c.sceneCalls.some(([k]) => k === 'nogizmo'), 'gizmo kapanır');
+  assert.strictEqual(S.pickLayers.length, 4, 'seçim katmanları varsayılana döner');
+  c.def.onShow(); await flush(); assert.ok(S.objs.has('program:wp1') && S.objs.has('program:target'), 'sayfaya dönünce işaretler geri gelir');
+
+  /* ---- 5) 3B yok / sahne reddediyor: sayfa yine çalışır, hata SESSİZ DEĞİL ---- */
+  const off = load({}, { scene: { implemented: false } }), r4 = new N('section'); await off.def.mount(r4); await flush(); off.def.onState(snap());
+  await btn(r4, 'Şu anki pozu kaydet').click(); await flush();
+  assert.strictEqual(off.sceneCalls.length, 0, 'WebGL yoksa sahneye dokunulmaz'); assert.strictEqual(byTitle(r4, 'Waypoint adı').length, 1, 'tablo çalışır');
+  const rej = load({}, { scene: { reject: 'kimlik geçersiz' } }), r5 = new N('section'); await rej.def.mount(r5); await flush(); rej.def.onState(snap());
+  await btn(r5, 'Şu anki pozu kaydet').click(); await flush();
+  assert.match(r5.textContent, /3B sahne: kimlik geçersiz/, 'sahne {ok:false} dönerse kullanıcı görür');
+
+  /* ---- 6) arka uç: SİM'de "SAHTE" bandı YOK, mock'ta var ---- */
+  const banner = (root) => all(root, (n) => n.className === 'banner')[0];
+  assert.strictEqual(banner(root).hidden, false, 'mock: bant görünür');
+  const sim = load({ 'GET /api/program/state': () => ({ ok: true, runner: { state: 'idle', running: false }, estop: false,
+    pose: { joints_deg: [0, 0, 0, 0, 0, 0] }, backend: { label: 'SİM', measured: false, mock: false }, limits: {} }) });
+  const r6 = new N('section'); await sim.def.mount(r6); await flush(); sim.def.onState(snap());
+  assert.strictEqual(banner(r6).hidden, true, 'SİM: SAHTE bandı görünmez');
   console.log('PROGRAM_PAGE_OK'); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });
