@@ -85,8 +85,8 @@ def page_files(web_dir: Path) -> List[str]:
 
 CORE_ROUTES = ('agent_routes', 'bench_routes', 'jog_routes', 'mesh_routes')
 CORE_PAGES = ('agent.js', 'bench.js', 'jog.js', 'robot.js')
-CORE_ASSETS = ('index.html', 'app.js', 'pages.js', 'scene3d.js', 'vendor/three/three.module.js',
-               'vendor/three/three.core.js')
+CORE_ASSETS = ('index.html', 'app.js', 'pages.js', 'scene3d.js', 'scene_hub.js', 'scene_logic.js',
+               'approach.js', 'vendor/three/three.module.js', 'vendor/three/three.core.js')
 
 
 def selfcheck(web_dir: Path) -> List[str]:
