@@ -57,7 +57,7 @@ def test_skeleton_renders_3d_and_estop_works(server):
         page.goto(url + '/#/robot')
         page.wait_for_selector('#nav a[data-page=robot]', timeout=10000)
         assert [a.get_attribute('data-page') for a in page.query_selector_all('#nav a') if a.is_visible()] \
-            == ['robot', 'jog']                                  # ajan/tezgâh kapalı: menüde yok
+            == ['robot', 'jog', 'parts']                         # ajan/tezgâh kapalı: menüde yok (parts: S2)
         pills = page.eval_on_selector_all('.pill', 'els => els.map(e => e.textContent)')
         assert pills[0].startswith('Canlı') and pills[1].startswith('SİM') and 'ERİŞİM' in pills[2]
         page.wait_for_function('() => window.Scene3D && Scene3D._V.nodes.size === 7', timeout=15000)

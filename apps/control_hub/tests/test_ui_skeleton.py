@@ -233,7 +233,8 @@ def test_scene_and_shell_logic_in_node():
 
 
 @needs_node
-def test_hubscene_skeleton_in_node():
+def test_hubscene_contract_in_node():
+    """HubScene (§9-C): imzalar, WebGL yokken not_implemented, gerçek three ile nesne/pick/gizmo."""
     assert 'HUBSCENE_OK' in run_node('hubscene_check.js', WEB)
 
 
