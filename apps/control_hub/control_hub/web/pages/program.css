@@ -1,0 +1,67 @@
+/* Program sayfası (P2). Yalnız .pg* sınıfları; ortak style.css'e dokunulmaz. Dış adres ve içe aktarma yok (CSP: default-src 'self').
+ * Telefon (390 px): tek sütun, "Çalıştır" kartı 3B görünümün ÜSTÜNDE, dokunma hedefleri ≥ 44 px, 16 px yazı (iOS yakınlaştırmasın). */
+.pg-side, .pg-main { min-width: 0; }
+.pg-view { margin-bottom: 14px; }
+@media (max-width: 1099px) { .pg-main { order: -1; } }
+
+.pg input[type=text], .pg select { font: inherit; font-size: 16px; min-height: 44px; min-width: 0; padding: 6px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+.pg input[type=text].bad { border-color: var(--danger); background: #2b1211; }
+.pg input[type=range] { flex: 1 1 8em; min-height: 44px; accent-color: var(--accent); }
+.pg button.small { min-height: 44px; }
+button.small.ic { min-width: 44px; padding: 8px 10px; }
+button.small.danger { background: #5a1210; border-color: #8e2a26; color: #ffd8d5; }
+.pg .pg-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); text-decoration: underline; }
+
+/* Alan kümeleri: <fieldset disabled> çalışırken düzenlemeyi kapatır */
+.pg-fs { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pg-fs:disabled { opacity: .55; }
+.pg-fs > .pg-list { flex: 1 1 100%; }
+.pg-speed span { color: var(--muted); }
+.pg-list { display: grid; gap: 8px; }
+
+/* Waypoint satırı: ad / eklemler / (konum, yönelim) / eylemler */
+.pg-wp { display: grid; grid-template-columns: 2em minmax(0, 1fr) minmax(0, 1fr); gap: 6px; padding: 8px; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface-2); }
+.pg-wp > .pg-n { grid-row: 1 / span 3; align-self: start; padding-top: 10px; }
+.pg-wp > :nth-child(2), .pg-wp > :nth-child(3) { grid-column: 2 / 4; }
+.pg-wp > :nth-child(4) { grid-column: 2; }
+.pg-wp > :nth-child(5) { grid-column: 3; }
+.pg-wp > .pg-act { grid-column: 1 / -1; }
+.pg-act { display: flex; flex-wrap: wrap; gap: 6px; }
+.pg-n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+
+/* Adım satırı: renk = durum (yeşil: önizleme geçti, kırmızı: ihlal/silinmiş waypoint/hata, mavi: çalışıyor) */
+.pg-step { border: 1px solid var(--border); border-left-width: 5px; border-radius: 12px; padding: 8px; background: var(--surface-2); }
+.pg-step.ok { border-color: #23552f; }
+.pg-step.bad { border-color: var(--danger); background: #2b1211; }
+.pg-step.run { border-color: var(--accent); background: #12233f; box-shadow: 0 0 0 2px var(--accent); }
+.pg-h { display: flex; align-items: center; gap: 6px; }
+.pg-sp { flex: 1; }
+.pg-b { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.pg-b > input[type=text] { flex: 1 1 9em; }
+.pg-nest { flex: 1 1 100%; display: grid; gap: 6px; margin: 4px 0 0 10px; padding-left: 8px; border-left: 2px solid var(--border); }
+.pg-why { margin-top: 4px; font-size: .85rem; color: #ffb4b0; overflow-wrap: anywhere; }
+.pg-why:empty { display: none; }
+.pg-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+
+/* Çalıştır kartı */
+.pg-runcard { border-color: var(--accent); }
+.pg-prev { margin: 8px 0; font-weight: 600; color: var(--muted); }
+.pg-prev.ok { color: #7ee787; }
+.pg-prev.bad { color: #ff9b97; }
+.pg-btns { display: grid; grid-template-columns: repeat(auto-fit, minmax(88px, 1fr)); gap: 8px; margin-top: 8px; }
+.pg-btns .primary { grid-column: 1 / -1; min-height: 56px; }
+.pg-btns .primary:disabled { opacity: .4; cursor: not-allowed; background: var(--surface-2); color: var(--muted); }
+.pg-status.failed { color: #ff9b97; font-weight: 700; }
+.pg-status.paused { color: var(--warn); }
+.pg-status.running { color: var(--accent); }
+.pg-status.finished { color: #7ee787; }
+.pg-confirm { margin-top: 10px; }
+
+/* Hedef öğret: kırmızı/yeşil ulaşılabilirlik göstergesi (renge ek olarak yazı da var) */
+.pg-tgt { display: grid; gap: 8px; margin-bottom: 8px; }
+.pg-dot { width: 18px; height: 18px; border-radius: 50%; background: var(--muted); flex: none; }
+.pg-dot.ok { background: var(--ok); }
+.pg-dot.bad { background: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .pg * { transition: none !important; } }
