@@ -1,7 +1,6 @@
 """SİM arka ucu: profildeki GERÇEK kinematik zincir, eklem limitleri, güvenli kutu ve çalışan hareketler.
 
-``--fake`` yalnız uç noktayı oynatır (eklemler görsel); burada ``robot_core.kinematics.Chain`` ileri
-kinematiği, ``DlsJogEngine`` + ``JogController`` jog'u (kiralama, ölü adam, çerçeveler), ``sim_plan`` hareket
+``--fake`` yalnız uç noktayı oynatır; burada ``robot_core.kinematics.Chain`` ileri kinematiği, ``DlsJogEngine`` + ``JogController`` jog'u (kiralama, ölü adam, çerçeveler), ``sim_plan`` hareket
 doğrulamasını (limit, kutu, yol) yapar. Bu bir SİMÜLASYONDUR: ölçüm değildir, gerçek robotu hareket ettirmez
 (``maturity`` hep ``tahmini``). Sahibi S1 (UI_CONTRACT §9).
 
