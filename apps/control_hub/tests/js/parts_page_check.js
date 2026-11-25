@@ -51,17 +51,18 @@ require(path.join(WEB, 'approach.js'));
 const SL = SceneLogic;
 
 /* ---------- sahte sunucu ---------- */
-const srv = { parts: [], calls: [], seq: 0, checkReply: null, moveReply: null };
+const NO_STEP = { available: false, message: 'STEP/IGES için dönüştürücü kurulu değil: CAD programında STL’e çevirip yükle.' };
+const srv = { parts: [], calls: [], seq: 0, checkReply: null, moveReply: null, step: NO_STEP, warnings: [] };
 const unitM = { mm: 0.001, in: 0.0254, m: 1 };
 const view = (p) => ({ ...p, url: `/api/parts/${p.id}/mesh`, unit_m: unitM[p.unit], triangles: 12, size_m: [0.04, 0.04, 0.04], size_warning: null });
 global.api = async (p, method = 'GET', body) => {
   srv.calls.push({ p, method, body });
   if (p === '/api/parts' && method === 'GET') return { ok: true, parts: srv.parts.map(view), problems: [], limits: { max_parts: 20 },
-    step: { available: false, message: 'STEP/IGES için dönüştürücü kurulu değil: CAD programında STL’e çevirip yükle.' } };
+    step: srv.step };
   if (p === '/api/parts' && method === 'POST') {
     const part = { id: (++srv.seq).toString(16).padStart(32, '0'), name: body.name || body.filename.replace(/\.[^.]+$/, ''), kind: body.kind, unit: body.unit,
       scale: 1, visible: true, pose: { pos_m: [0, 0, 0], rpy_deg: [0, 0, 0] }, tool_offset: body.kind === 'tool' ? { pos_m: [0, 0, 0], rpy_deg: [0, 0, 0] } : null };
-    srv.parts.push(part); return { ok: true, part: view(part), warnings: [] };
+    srv.parts.push(part); return { ok: true, part: view(part), warnings: srv.warnings };
   }
   let m = /^\/api\/parts\/([0-9a-f]{32})$/.exec(p);
   if (m && method === 'PUT') {
@@ -136,9 +137,36 @@ const tick = () => new Promise((r) => setImmediate(r));
   await up.fire('change');
   assert.ok(goBtn.disabled, 'STEP için yükle düğmesi kapalı olmalı'); assert.match(text(root), /dönüştürücü kurulu değil/);
   await goBtn.click(); assert.strictEqual(callsTo('/api/parts', 'POST').length, 1, 'STEP sunucuya gitmemeli');
+  assert.ok(!text(root).includes('OpenCASCADE'), 'dönüştürücü yokken lisans bildirimi görünmez (kullanılmıyor)');
+  assert.match(text(root), /Parça ekle \(STL \/ OBJ\)/);
+
+  /* --- S2b: dönüştürücü VARSA: STEP/IGES yüklenir, birim mm'ye kilitlenir, LGPL bildirimi görünür --- */
+  srv.step = { available: true, message: NO_STEP.message, notice: 'OpenCASCADE Technology kullanılıyor (LGPL-2.1 + istisna)', timeout_s: 20, unit: 'mm' };
+  def.onShow(); await tick();
+  const lic = fld(root, 'license'); assert.ok(!lic.hidden, 'LGPL bildirimi görünür olmalı');
+  assert.match(lic.textContent, /OpenCASCADE Technology kullanılıyor \(LGPL-2\.1 \+ istisna\)/); assert.match(lic.textContent, /docs\/THIRD_PARTY\.md/);
+  assert.match(text(root), /Parça ekle \(STL \/ OBJ \/ STEP \/ IGES\)/);
+  const unitSel = fld(root, 'newunit'); unitSel.value = 'in';
+  up.files = [{ name: 'kasa.STEP', size: 10, arrayBuffer: async () => bytes.buffer }]; await up.fire('change');
+  assert.ok(!goBtn.disabled, 'dönüştürücü varken STEP yüklenebilir'); assert.ok(unitSel.disabled, 'STEP/IGES: birim seçimi kilitli');
+  assert.strictEqual(unitSel.value, 'mm'); assert.match(text(root), /birim dosyadan okunur/);
+  assert.ok(!text(root).includes('dönüştürücü kurulu değil'), 'eski mesaj kalkar');
+  srv.warnings = ['STEP/IGES dosyasında birim dosyadan okunur; parça mm olarak kaydedildi.'];
+  await goBtn.click();
+  post = callsTo('/api/parts', 'POST'); assert.strictEqual(post.length, 2);
+  assert.deepStrictEqual(post[1].body, { filename: 'kasa.STEP', data_b64: Buffer.from(bytes).toString('base64'), kind: 'workpiece', unit: 'mm' });
+  assert.ok(!unitSel.disabled, 'yüklemeden sonra birim seçimi yeniden açılır'); assert.strictEqual(scene.objs.get(`parts:${idOf(1)}`).spec.geometry.scale, 0.001, 'mm ölçeği');
+  assert.match(text(root), /birim dosyadan okunur/, 'sunucu uyarısı gösterilir');
+  up.files = [{ name: 'iges.IGS', size: 10, arrayBuffer: async () => bytes.buffer }]; await up.fire('change');
+  assert.ok(unitSel.disabled); up.files = [{ name: 'kare.stl', size: 10, arrayBuffer: async () => bytes.buffer }]; await up.fire('change');
+  assert.ok(!unitSel.disabled, 'STL seçilince birim yeniden seçilebilir');
+  srv.warnings = []; srv.parts = srv.parts.slice(0, 1); srv.step = NO_STEP; def.onShow(); await tick(); mounts = 1;   // yeniden yükleme için onShow; tuval sayacı sıfırlanır
+  assert.ok(fld(root, 'license').hidden, 'dönüştürücü kalkınca bildirim gizlenir');
+  up.files = [{ name: 'kasa.STEP', size: 10, arrayBuffer: async () => bytes.buffer }]; await up.fire('change'); assert.ok(goBtn.disabled);
   up.files = [{ name: 'dev.stl', size: 51 * 1024 * 1024, arrayBuffer: async () => { throw new Error('okunmamalı'); } }];
   await up.fire('change'); await goBtn.click();
-  assert.strictEqual(callsTo('/api/parts', 'POST').length, 1); assert.match(text(root), /50 MB sınırını aşıyor/);
+  assert.strictEqual(callsTo('/api/parts', 'POST').length, 2, 'dev dosya sunucuya gitmemeli'); assert.match(text(root), /50 MB sınırını aşıyor/);
+  await act(root, 'select').click();                                      // S2b bloğundan sonra ilk parçayı yeniden seç
 
   /* --- ad, sayı alanları, ölçek, görünürlük --- */
   const pid = idOf(0), sid = `parts:${pid}`;

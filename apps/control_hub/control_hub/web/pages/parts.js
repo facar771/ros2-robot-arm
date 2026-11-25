@@ -12,8 +12,7 @@
   const SL = () => window.SceneLogic, AM = () => window.ApproachMove;
   const PICK_LAYERS = ['workpiece', 'environment'];                       // takım robota bağlıdır: hedef olamaz
   const DEFAULT_PICK = ['workpiece', 'tool', 'environment', 'markers'];    // başka sayfalar için eski hâl
-  const STEP_EXT = /\.(step|stp|iges|igs)$/i;
-  const MAX_BYTES = 50 * 1024 * 1024, B64_CHUNK = 0x8000, DELETE_ARM_MS = 4000;
+  const STEP_EXT = /\.(step|stp|iges|igs)$/i, MAX_BYTES = 50 * 1024 * 1024, B64_CHUNK = 0x8000, DELETE_ARM_MS = 4000;
   const DEFAULT_D_MM = 50, DEFAULT_SPEED_PCT = 10;                         // KARAR GEREKLİ: varsayılanlar (PR'da)
   const TINT = { pending: 0xf0883e, ok: 0x3fb950, bad: 0xda3633, tool: 0xd29922 };
   const AP = { point: 'parts:ap-point', line: 'parts:ap-line', frame: 'parts:ap-frame', ghost: 'parts:ap-ghost', tgt: 'parts:ap-tgt' };
@@ -95,7 +94,7 @@
   async function reload() {
     try {
       const r = await api('/api/parts');
-      P.parts = r.parts || []; P.limits = r.limits || null; P.step = r.step || null;
+      P.parts = r.parts || []; P.limits = r.limits || null; P.step = r.step || null; renderUploadNote();
       say(P.ui.listSay, (r.problems || []).join(' · '), 'warn');
     } catch (e) { say(P.ui.listSay, e.message, 'bad'); return; }
     if (P.selId && !sel()) P.selId = null;
@@ -121,24 +120,32 @@
   }
 
   /* ---------- yükleme ---------- */
+  const stepOn = () => !!(P.step && P.step.available);                    // S2b: STEP/IGES dönüştürücüsü kurulu mu (sunucu bildirir)
   function onFileChosen() {
-    const U = P.ui.up, f = U.file.files && U.file.files[0];
-    const step = !!f && STEP_EXT.test(f.name || '');
-    U.go.disabled = step;                                                  // STEP/IGES: dönüştürücü yok (S2b ayrı PR)
-    if (step) say(U.say, (P.step && P.step.message) || 'STEP için dönüştürücü kurulu değil, STL’e çevirip yükle.', 'warn');
-    else say(U.say, '', '');
+    const U = P.ui.up, f = U.file.files && U.file.files[0], step = !!f && STEP_EXT.test(f.name || '');
+    U.go.disabled = step && !stepOn();                                     // dönüştürücü yoksa STEP/IGES yüklenmez
+    U.unit.disabled = step && stepOn(); if (U.unit.disabled) U.unit.value = 'mm';   // STEP/IGES: birim DOSYADAN okunur, parça mm olur
+    if (!step) say(U.say, '', '');
+    else if (stepOn()) say(U.say, 'STEP/IGES: birim dosyadan okunur, parça mm olarak kaydedilir. Dönüşüm en çok 20 sn sürer.', '');
+    else say(U.say, (P.step && P.step.message) || 'STEP için dönüştürücü kurulu değil, STL’e çevirip yükle.', 'warn');
+  }
+  function renderUploadNote() {                                            // başlık, sınır notu ve LGPL bildirimi (dönüştürücü varsa)
+    const U = P.ui.up, on = stepOn(), n = 'En çok 50 MB, 500 000 üçgen. ';
+    U.title.textContent = on ? 'Parça ekle (STL / OBJ / STEP / IGES)' : 'Parça ekle (STL / OBJ)';
+    U.note.textContent = n + (on ? 'STEP/IGES alt süreçte dönüştürülür (en çok 20 sn).' : 'STEP/IGES için dönüştürücü kurulu değil: CAD’den STL’e çevirip yükle.');
+    U.lic.hidden = !on; U.lic.textContent = on ? `${(P.step && P.step.notice) || 'OpenCASCADE Technology kullanılıyor (LGPL-2.1 + istisna)'}. Lisans ve kaynak: docs/THIRD_PARTY.md` : '';
   }
   async function upload() {
     const U = P.ui.up, f = U.file.files && U.file.files[0];
     if (!f) { say(U.say, 'Önce bir dosya seç', 'bad'); return; }
     if (f.size > MAX_BYTES) { say(U.say, `Dosya ${MAX_BYTES / 1048576} MB sınırını aşıyor`, 'bad'); return; }
-    U.go.disabled = true; say(U.say, 'Yükleniyor…', '');
+    U.go.disabled = true; say(U.say, STEP_EXT.test(f.name) ? 'Dönüştürülüyor (en çok 20 sn)…' : 'Yükleniyor…', '');
     try {
       const body = { filename: f.name, data_b64: toBase64(await f.arrayBuffer()), kind: U.kind.value, unit: U.unit.value };
       if (U.name.value.trim()) body.name = U.name.value.trim();
       const r = await api('/api/parts', 'POST', body);
       say(U.say, (r.warnings || []).length ? r.warnings.join(' · ') : 'Yüklendi', r.warnings && r.warnings.length ? 'warn' : 'ok');
-      U.file.value = ''; U.name.value = '';
+      U.file.value = ''; U.name.value = ''; U.unit.disabled = false;
       await reload(); choose(r.part.id, true);
     } catch (e) { say(U.say, e.message, 'bad'); }
     U.go.disabled = false;
@@ -302,9 +309,9 @@
       unit: select('newunit', [['mm', 'mm'], ['in', 'inç'], ['m', 'm']]), say: el('div', { class: 'say' }) };
     U.file.addEventListener('change', onFileChosen);
     U.go = btn('Yükle', 'upload', upload, 'primary');
-    return el('div', { class: 'card' }, [el('h2', { text: 'Parça ekle (STL / OBJ)' }), U.file, U.name,
-      el('div', { class: 'pose-grid two' }, [field('Tür', U.kind), field('Dosya birimi', U.unit)]), U.go, U.say,
-      el('div', { class: 'say', text: 'En çok 50 MB, 500 000 üçgen. STEP/IGES için dönüştürücü kurulu değil: CAD’den STL’e çevirip yükle.' })]);
+    U.title = el('h2'); U.note = el('div', { class: 'say' }); U.lic = el('div', { class: 'say muted', 'data-f': 'license', hidden: true }); renderUploadNote();
+    return el('div', { class: 'card' }, [U.title, U.file, U.name,
+      el('div', { class: 'pose-grid two' }, [field('Tür', U.kind), field('Dosya birimi', U.unit)]), U.go, U.say, U.note, U.lic]);
   }
   function buildSelected() {
     const Q = P.ui.s = { title: el('h2'), name: el('input', { type: 'text', maxLength: 80, 'data-f': 'name' }),

@@ -1,7 +1,9 @@
-"""Parça (CAD) mesh araçları: SAF işlevler, dosya/ağ yok (S2, UI_EMIRLER K6).
+"""Parça (CAD) mesh araçları (S2, UI_EMIRLER K6): STL/OBJ ayrıştırma SAF işlevlerdir (dosya/ağ yok).
 
-* Girdi: kullanıcının yüklediği STL (ikili + ASCII) ya da OBJ baytları. ÇIKTI her zaman **normali yeniden
-  hesaplanmış ikili STL** (yüklenen biçimden bağımsız tek biçim; ön uç yalnız onu okur).
+* Girdi: kullanıcının yüklediği STL (ikili + ASCII), OBJ ya da (S2b) STEP/IGES baytları. ÇIKTI her zaman
+  **normali yeniden hesaplanmış ikili STL** (yüklenen biçimden bağımsız tek biçim; ön uç yalnız onu okur).
+* STEP/IGES: dönüşüm ``step_convert`` ile ALT SÜREÇTE yapılır (20 sn zaman aşımı, çökme yalıtımı); bu modül
+  cascadio'yu HİÇ içe aktarmaz. Çıktı mm'dir (birim dosyadan okunur), parça birimi her zaman ``mm`` olur.
 * Yüklenen içerik ASLA çalıştırılmaz ya da ``import`` edilmez; yalnız sayı olarak okunur.
 * Hesap ham birimde yapılır (``mm``/``in``/``m``); metreye çevirme ``UNIT_FACTORS`` ile, görünüm tarafında.
 * Yalnız stdlib (Docker imajında numpy yok).
@@ -14,6 +16,8 @@ import struct
 from array import array
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+
+from control_hub.hub_core import step_convert as sc
 
 MAX_FILE_BYTES = 50 * 1024 * 1024            # K6: yükleme sınırı
 MAX_TRIANGLES = 500_000                      # K6: fazlası reddedilir (kullanıcıya söylenir)
@@ -48,7 +52,7 @@ class ImportedMesh:
     triangles: int
     bbox_min: Tuple[float, float, float]
     bbox_max: Tuple[float, float, float]
-    source_format: str                           # 'stl_binary' | 'stl_ascii' | 'obj'
+    source_format: str                           # 'stl_binary' | 'stl_ascii' | 'obj' | 'step' | 'iges'
     dropped: int = 0                             # alanı sıfır olduğu için atılan üçgen
     warnings: List[str] = field(default_factory=list)
 
@@ -74,7 +78,9 @@ def extension_of(filename: object) -> str:
     dot = name.rfind('.')
     ext = name[dot:].lower() if dot > 0 else ''
     if ext in STEP_EXT:
-        raise MeshToolError('step_unsupported', STEP_MESSAGE)
+        if not sc.available():
+            raise MeshToolError('step_unsupported', STEP_MESSAGE)
+        return ext
     if ext not in ALLOWED_EXT:
         raise MeshToolError('bad_extension',
                             f'Yalnız {", ".join(ALLOWED_EXT)} yüklenebilir (gelen: {ext or "uzantısız"})')
@@ -232,8 +238,22 @@ def to_binary_stl(tris: array) -> bytes:
     return bytes(buf)
 
 
-def import_mesh(filename: object, data: bytes) -> ImportedMesh:
-    """Yüklemenin tek giriş noktası: ad/uzantı -> boyut -> ayrıştır -> doğrula -> kanonik ikili STL."""
+def cad_formats() -> List[str]:
+    """Kabul edilen uzantılar: STL/OBJ her zaman; STEP/IGES yalnız dönüştürücü kuruluysa."""
+    return list(ALLOWED_EXT) + (list(STEP_EXT) if sc.available() else [])
+
+
+def _convert_cad(ext: str, data: bytes, workdir: Optional[str]) -> array:
+    try:
+        return sc.convert(ext, data, max_triangles=MAX_TRIANGLES, workdir=workdir)
+    except sc.StepError as exc:
+        raise MeshToolError(exc.code, str(exc)) from None
+
+
+def import_mesh(filename: object, data: bytes, workdir: Optional[str] = None) -> ImportedMesh:
+    """Yüklemenin tek giriş noktası: ad/uzantı -> boyut -> ayrıştır -> doğrula -> kanonik ikili STL.
+
+    ``workdir``: yalnız STEP/IGES için, alt sürecin geçici dosyalarının kökü (``HUB_DATA_DIR`` altı)."""
     ext = extension_of(filename)
     if not isinstance(data, (bytes, bytearray)) or not data:
         raise MeshToolError('empty', 'Dosya boş')
@@ -243,6 +263,8 @@ def import_mesh(filename: object, data: bytes) -> ImportedMesh:
     data = bytes(data)
     if ext == '.obj':
         tris, fmt = parse_obj(data), 'obj'
+    elif ext in STEP_EXT:
+        tris, fmt = _convert_cad(ext, data, workdir), sc.FORMAT_OF[ext]
     else:
         tris, fmt = parse_stl(data)
     check_finite(tris)

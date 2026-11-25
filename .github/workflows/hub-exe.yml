@@ -48,14 +48,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pip önbelleği: cascadio tekerleği (~OpenCASCADE DLL'leri, büyük) her koşuda yeniden indirilmesin (#109 koşul 1).
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/control_hub/requirements*.txt
 
-      - name: Bağımlılıklar (Hub + PyInstaller)
+      - name: Bağımlılıklar (Hub + STEP/IGES dönüştürücü + PyInstaller)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt numpy pyinstaller
+          pip install -r requirements-dev.txt -r requirements-step.txt numpy pyinstaller
 
       # Tk bu runner'da açılıyor mu? (pencere testleri ve --gui-selftest buna bağlı). Bilgi amaçlı; tam hata
       # metnini annotation'a yazar, çünkü CI log'u okunamıyor.
@@ -87,7 +90,10 @@ jobs:
           Write-Host "::$level title=Windows pytest (rc=$rc)::$tail"
           exit $rc
 
+      # HUB_REQUIRE_STEP=1: cascadio gömülemezse hub.spec derlemeyi DURDURUR (STEP'siz .exe sessizce çıkmasın).
       - name: .exe'yi derle (PyInstaller --onefile)
+        env:
+          HUB_REQUIRE_STEP: '1'
         run: |
           pyinstaller hub.spec --noconfirm --log-level WARN
           if (-not (Test-Path dist/ControlHub.exe)) { Write-Host "::error title=Derleme::dist/ControlHub.exe yok"; exit 1 }
@@ -218,6 +224,31 @@ jobs:
           $level = if ($ok -and -not $leak) { 'notice' } else { 'error' }
           Write-Host "::$level title=ajan kartı + canary (.exe)::$t"
           if (-not $ok -or $leak) { exit 1 }
+
+      # S2b (#109 koşul 3) ZORUNLU KANIT: DERLENMİŞ .exe'nin içinde küçük bir küp (STEP ve IGES; mm/inç/m birimli)
+      # gerçekten dönüşüyor mu? Dönüşüm `ControlHub.exe --convert` ALT SÜRECİNDE yapılır (çökme yalıtımı, 20 sn zaman
+      # aşımı). Bu adım kırmızıysa gömülü .exe'de alt süreç/DLL yolu çalışmıyor demektir: PR kırmızı BIRAKILIR ve
+      # Ferhat'a bildirilir (adımı gevşetmek/atlamak yok).
+      - name: Açılış testi 6 - STEP/IGES küpü .exe içinde gerçekten dönüşüyor (alt süreç)
+        run: |
+          $exe = (Resolve-Path dist/ControlHub.exe).Path
+          $env:HUB_DATA_DIR = Join-Path $env:RUNNER_TEMP 'hub-step-data'
+          $p = Start-Process -FilePath $exe -PassThru -WindowStyle Hidden `
+                 -ArgumentList '--fake','--pin','123456','--port','18767','--no-qr' `
+                 -RedirectStandardOutput step_out.txt -RedirectStandardError step_err.txt
+          try {
+            $out = python -m tools.step_exe_check --url http://127.0.0.1:18767 --pin 123456 --wait 60 2>&1 | Out-String
+            $rc = $LASTEXITCODE
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+          $srv = (Get-Content step_out.txt, step_err.txt -ErrorAction SilentlyContinue | Out-String)
+          $t = ("rc=$rc`n$out`n--- sunucu çıktısı ---`n$srv").Trim()
+          if ($t.Length -gt 2800) { $t = $t.Substring(0, 2800) }
+          $t = $t -replace '%','%25' -replace "`r",'%0D' -replace "`n",'%0A'
+          $level = if ($rc -eq 0) { 'notice' } else { 'error' }
+          Write-Host "::$level title=STEP/IGES dönüşümü (.exe)::$t"
+          exit $rc
 
       - name: ControlHub.exe'yi artifact olarak yükle
         if: always() && hashFiles('apps/control_hub/dist/ControlHub.exe') != ''

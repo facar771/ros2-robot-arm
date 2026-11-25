@@ -27,6 +27,13 @@ def body(data=None, filename='kutu.stl', **kw):
     return {'filename': filename, 'data_b64': b64(data), **kw}
 
 
+@pytest.fixture(autouse=True)
+def no_step_converter(monkeypatch):
+    """Bu dosya S2 (STL/OBJ) davranışını sınar: STEP/IGES dönüştürücüsü KURULU DEĞİL varsayılır (cascadio'nun
+    kurulu olduğu durum tests/test_parts_step_api.py'de)."""
+    monkeypatch.setattr(mt.sc, 'available', lambda: False)
+
+
 @pytest.fixture
 def data_dir(tmp_path, monkeypatch):
     d = tmp_path / 'hubdata'

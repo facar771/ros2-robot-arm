@@ -73,6 +73,36 @@ except ImportError as exc:
     raise SystemExit('hub.spec: numpy kurulu değil; .exe ajanı (robot_core.waypoints) numpy ister: '
                      'pip install numpy') from exc
 
+# S2b (STEP/IGES, #109): cascadio==0.1.1 (requirements-step.txt) alt süreçte dönüştürür (hub_core/step_child.py + step_convert.py;
+# .exe kendini `ControlHub.exe --convert ...` ile çağırır, exe_entry.py). Windows tekeri delvewheel ile onarılmıştır:
+# OpenCASCADE DLL'leri paketin YANINDAKİ `cascadio.libs/` klasöründedir ve cascadio/__init__ onu
+# os.add_dll_directory(<paket>/../cascadio.libs) ile ekler -> .exe'de _MEIPASS/cascadio.libs olarak AYNEN gömülür.
+# Modül yoksa .exe yine derlenir (STEP kapalı: "dönüştürücü kurulu değil"); HUB_REQUIRE_STEP=1 (hub-exe.yml) bunu
+# derleme HATASI yapar, böylece STEP'siz .exe CI'da sessizce çıkmaz.
+STEP_DATAS, STEP_BINARIES, STEP_HIDDEN = [], [], []
+try:
+    import importlib.util as _ilu
+
+    _casc = _ilu.find_spec('cascadio')
+    if _casc is None:
+        raise ImportError('cascadio kurulu değil')
+    from PyInstaller.utils.hooks import collect_all
+
+    STEP_DATAS, STEP_BINARIES, STEP_HIDDEN = collect_all('cascadio')
+    STEP_DATAS += copy_metadata('cascadio')
+    _libs = os.path.normpath(os.path.join(os.path.dirname(_casc.origin), '..', 'cascadio.libs'))
+    if os.path.isdir(_libs):
+        STEP_BINARIES += [(os.path.join(_libs, _n), 'cascadio.libs') for _n in sorted(os.listdir(_libs))
+                          if os.path.isfile(os.path.join(_libs, _n))]
+    elif sys.platform == 'win32':
+        raise ImportError('cascadio.libs klasörü yok (tekerlek biçimi değişmiş olabilir)')
+    print(f'hub.spec: STEP/IGES gömülüyor (cascadio, {len(STEP_BINARIES)} ikili dosya)')
+except Exception as _exc:  # noqa: BLE001
+    if os.environ.get('HUB_REQUIRE_STEP') == '1':
+        raise SystemExit(f'hub.spec: HUB_REQUIRE_STEP=1 ama cascadio gömülemedi: {_exc}') from _exc
+    STEP_DATAS, STEP_BINARIES, STEP_HIDDEN = [], [], []
+    print(f'hub.spec: UYARI: STEP/IGES gömülmüyor ({_exc}); .exe "dönüştürücü kurulu değil" der')
+
 hidden = (
     collect_submodules('uvicorn')            # protokol/loop modülleri dinamik import edilir
     + collect_submodules('websockets')       # /ws için (yoksa arayüz yoklamaya düşer)
@@ -86,13 +116,16 @@ hidden = (
     # Windows Credential Manager arka ucu (WinVaultKeyring) pywin32-ctypes (win32ctypes) ile çalışır
     + collect_submodules('keyring') + collect_submodules('win32ctypes')
     + ['numpy', 'yaml', 'segno', 'h11', 'anyio._backends._asyncio', 'tkinter', 'tkinter.ttk', 'tkinter.messagebox']
+    + STEP_HIDDEN
 )
 
 a = Analysis(
     ['exe_entry.py'],
     pathex=['.'] + AGENT_PATHS,
     datas=[('control_hub/web', 'control_hub/web'), ('config', 'config'), ('../../tools/bench/bench_core.py', 'tools/bench')]
-          + MESH_DATAS + PROFILE_DATAS + [(_MANIFEST, 'control_hub/server')] + copy_metadata('keyring'),
+          + MESH_DATAS + PROFILE_DATAS + [(_MANIFEST, 'control_hub/server')] + copy_metadata('keyring')
+          + STEP_DATAS,
+    binaries=STEP_BINARIES,
     hiddenimports=hidden,
     excludes=['PIL', 'pytest', 'matplotlib', 'IPython'],
     noarchive=False,

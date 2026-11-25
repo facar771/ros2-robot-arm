@@ -67,7 +67,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r apps/control_hub/requirements-dev.txt
+          cache: pip
+          cache-dependency-path: apps/control_hub/requirements*.txt
+      # requirements-step.txt: cascadio==0.1.1 (STEP/IGES dönüştürücü, #109); tekerlek pip önbelleğinden gelir.
+      - run: pip install -r apps/control_hub/requirements-dev.txt -r apps/control_hub/requirements-step.txt
       - run: ruff check apps/control_hub
       - name: pytest
         run: python -m pytest
