@@ -105,6 +105,8 @@ class ProfileOverrideMixin:
         if blocked is not None:
             return blocked
         with self._lock:
+            if self._job_running():              # kapıdan sonra hareket başlamış olabilir: yeniden bak
+                return self._err(409, 'busy', 'Hareket ya da jog sürerken profil değiştirilemez')
             base = self.override['base'] if self.override else self.profile
             rehomed, old = self._install_profile(profile)
             stamp = datetime.now(timezone.utc).isoformat(timespec='seconds')
@@ -122,6 +124,8 @@ class ProfileOverrideMixin:
         with self._lock:
             if self.override is None:
                 return 200, {'ok': True, 'override': None, 'rehomed': False, 'noop': True}
+            if self._job_running():
+                return self._err(409, 'busy', 'Hareket ya da jog sürerken profil değiştirilemez')
             rehomed, old = self._install_profile(self.override['base'])
             self.override = None
         old.close()
