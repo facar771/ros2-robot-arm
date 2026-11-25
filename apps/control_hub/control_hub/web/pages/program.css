@@ -44,6 +44,7 @@ button.small.danger { background: #5a1210; border-color: #8e2a26; color: #ffd8d5
 .pg-why { margin-top: 4px; font-size: .85rem; color: #ffb4b0; overflow-wrap: anywhere; }
 .pg-why:empty { display: none; }
 .pg-add { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+.pg-free { padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: .85rem; }   /* orientation:'free' */
 
 /* Çalıştır kartı */
 .pg-runcard { border-color: var(--accent); }

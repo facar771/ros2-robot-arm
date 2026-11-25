@@ -55,6 +55,7 @@ def install(app: FastAPI, ctx: Any) -> None:
     runner = ProgramRunner(mover, hub.events, is_estopped=lambda: hub.estopped)
     hub.add_estop_listener(runner.on_estop)
     app.state.program_runner = runner
+    app.state.program_mover = mover                          # Algoritmalar sayfası aynı istemciyle denetler
 
     async def body_of(request: Request) -> Tuple[Optional[Body], Optional[JSONResponse]]:
         raw = await request.body()

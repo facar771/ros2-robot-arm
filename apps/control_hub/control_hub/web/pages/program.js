@@ -5,7 +5,7 @@
 'use strict';
 
 (() => {
-  const POLL_MS = 500, CHECK_WAIT_MS = 350, ARM_MS = 3000, DEFAULT_SPEED = 25, MAX_FILE = 1_000_000, MARK_R_M = 0.012, TGT_SIZE_M = 0.08;
+  const POLL_MS = 500, CHECK_WAIT_MS = 350, ARM_MS = 3000, DEFAULT_SPEED = 25, MAX_FILE = 1_000_000, MARK_R_M = 0.012, TGT_SIZE_M = 0.08, MAX_STEPS = 500;
   const ZERO6 = [0, 0, 0, 0, 0, 0], NAME_RE = /^[0-9A-Za-zÇĞİÖŞÜçğıöşü][0-9A-Za-zÇĞİÖŞÜçğıöşü _.-]{0,39}$/;
   const KIND = { move_j: 'Eklem hareketi (J)', move_l: 'Doğrusal hareket (L)', wait: 'Bekle', tool: 'Alet', comment: 'Not', loop: 'Döngü' };
 
@@ -27,6 +27,7 @@
     },
     empty: (prog) => !prog.steps.some((s) => (s.kind === 'loop' ? s.steps.some((b) => b.kind !== 'comment') : s.kind !== 'comment')),
     sig: (prog, speed) => JSON.stringify([prog, speed]),
+    total: (steps) => steps.reduce((n, s) => n + 1 + (s.steps ? s.steps.length : 0), 0),   // döngü gövdesi dahil
     rename(prog, from, to) { L.walk(prog, (s) => { if (s.waypoint === from) s.waypoint = to; }); },
     swap(arr, i, d) { const j = i + d; if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; },
     path: (wps) => wps.map((w, i) => ({ n: i + 1, p: w.pos_m })).filter((o) => o.p),
@@ -156,9 +157,10 @@
 
   function moveEditor(s) {                     // move_j / move_l: waypoint'e bağlı ya da doğrudan değer
     const j = s.kind === 'move_j', byWp = 'waypoint' in s, put = (k) => (a) => { s[k] = a; changed(false, false); };
+    const free = s.orientation === 'free' ? [E('span', { class: 'pg-free', text: 'yönelim: serbest', title: "orientation:'free': yönelimi çözücü belirler" })] : [];
     const src = on(E('select', { title: 'Hedef kaynağı' }, [E('option', { value: 'wp', text: 'Waypoint' }), E('option', { value: 'val', text: 'Değer' })]), 'change', () => {
       const from = P.prog.waypoints.find((x) => x.name === s.waypoint) || P.pose || {};
-      for (const k of ['waypoint', 'offset_m', 'joints_deg', 'pos_m', 'rpy_deg']) delete s[k];
+      for (const k of ['waypoint', 'offset_m', 'joints_deg', 'pos_m', 'rpy_deg', 'orientation']) delete s[k];
       if (src.value === 'wp') { s.waypoint = (P.prog.waypoints[0] || {}).name || ''; if (!j) s.offset_m = [0, 0, 0]; }
       else if (j) s.joints_deg = (from.joints_deg || ZERO6).slice();
       else { s.pos_m = (from.pos_m || [0, 0, 0]).slice(); s.rpy_deg = (from.rpy_deg || [0, 0, 0]).slice(); }
@@ -166,9 +168,10 @@
     });
     src.value = byWp ? 'wp' : 'val';
     if (byWp) return [src, wpSelect(s.waypoint, (v) => { s.waypoint = v; changed(false, true); }),
-      ...(j ? [] : [numField(L.fmt(s.offset_m), 3, 3, put('offset_m'), { title: 'Ofset x,y,z (m)' })])];
+      ...(j ? [] : [numField(L.fmt(s.offset_m), 3, 3, put('offset_m'), { title: 'Ofset x,y,z (m)' }), ...free])];
     if (j) return [src, numField(L.fmt(s.joints_deg, 2), 1, 8, put('joints_deg'), { title: 'Eklemler (°)' })];
-    return [src, numField(L.fmt(s.pos_m, 4), 3, 3, put('pos_m'), { title: 'x,y,z (m)' }), numField(L.fmt(s.rpy_deg, 2), 3, 3, put('rpy_deg'), { title: 'rpy (°)' })];
+    return [src, numField(L.fmt(s.pos_m, 4), 3, 3, put('pos_m'), { title: 'x,y,z (m)' }),
+      ...(free.length ? free : [numField(L.fmt(s.rpy_deg, 2), 3, 3, put('rpy_deg'), { title: 'rpy (°)' })])];
   }
 
   function editor(s, key) {
@@ -365,6 +368,18 @@
       E('div', { class: 'pg-main' }, [Q.mock, sec('Çalıştır', [Q.fsSpeed, Q.prevmsg, E('div', { class: 'pg-btns' }, [Q.run, Q.step, Q.pause, Q.resume, Q.stop]), Q.confirm, Q.gate, Q.status], 'pg-runcard'),
         sec('Program', [E('div', { class: 'row' }, [Q.dirty, Q.exp]), Q.fsFile]), sec('Waypoint tablosu', [Q.fsWp]), sec('Adımlar', [Q.fsSteps])])]));
   }
+
+  /* Algoritmalar sayfası adımları buradan aktarır: sona eklenir, önizleme geçersiz olur. Sayfa henüz açılmamış olabilir
+   * (Q boş): adımlar modele yazılır, mount render() ile gösterir. Sınırlar sunucuda da denetlenir (Önizle/Kaydet). */
+  window.HubProgram = { addSteps(steps, name) {
+    if (!Array.isArray(steps) || !steps.length) return { ok: false, message: 'Eklenecek adım yok' };
+    if (P.run && P.run.running) return { ok: false, message: 'Program çalışıyor: bitince ekle' };
+    if (L.total(P.prog.steps) + L.total(steps) > MAX_STEPS) return { ok: false, message: `En çok ${MAX_STEPS} adım (şu an ${L.total(P.prog.steps)})` };
+    P.prog.steps.push(...JSON.parse(JSON.stringify(steps))); P.dirty = true; P.check = null; P.note = '';
+    if (!P.prog.name && typeof name === 'string') P.prog.name = name.trim().slice(0, 40);   // adsız programa ad: Önizle/Kaydet ad ister
+    if (Q.steps) { Q.name.value = P.prog.name; renderSteps(); paint(); }
+    return { ok: true, total: L.total(P.prog.steps) };
+  } };
 
   HubPages.register({
     id: 'program', title: 'Program', icon: '▶', order: 30, styles: ['/pages/program.css'], logic: L,

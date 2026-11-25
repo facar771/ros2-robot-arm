@@ -260,3 +260,70 @@ def test_dry_run_collects_row_by_row_and_survives_a_crashing_check():
     assert res['violations'] == 2 and not res['ok'] and len(seen) == 3          # döngü gövdesi bir kez
     assert res['rows'][2]['violations'][0]['kind'] == 'check_failed'
     assert dry_run(clean, lambda b: {'ok': False}, 20)['rows'][0]['violations'][0]['kind'] == 'rejected'
+
+
+# --- orientation:'free' (S1.1 / #108): yalnız konum hedefi ---------------------------------------------
+FREE = {'kind': 'move_l', 'pos_m': [0.1, 0.0, 0.08], 'orientation': 'free'}
+
+
+def test_move_l_with_free_orientation_is_valid_and_round_trips_without_rpy():
+    clean, errs = ps.validate_program(prog(steps=[FREE]))
+    assert errs == [] and clean['steps'] == [FREE]
+    again, errs2 = ps.validate_program(clean)
+    assert errs2 == [] and again == clean
+
+
+def test_explicit_fixed_orientation_is_the_default_and_is_not_stored():
+    step = {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'rpy_deg': [0, 0, 0], 'orientation': 'fixed'}
+    clean, errs = ps.validate_program(prog(steps=[step]))
+    assert errs == [] and 'orientation' not in clean['steps'][0] and clean['steps'][0]['rpy_deg'] == [0, 0, 0]
+
+
+# sırayla: rpy ile birlikte olmaz, sabitte rpy şart, rpy yok ve serbest de değil, konum yok, kötü değer
+@pytest.mark.parametrize('bad', [
+    {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'rpy_deg': [0, 0, 0], 'orientation': 'free'},
+    {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'orientation': 'fixed'},
+    {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1]},
+    {'kind': 'move_l', 'orientation': 'free'},
+    {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'orientation': 'ters'},
+    {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'orientation': True},
+    {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'orientation': ['free']},
+    {'kind': 'move_l', 'pos_m': [float('nan'), 0, 0.1], 'orientation': 'free'},
+    {'kind': 'move_l', 'pos_m': [0.1, 0], 'orientation': 'free'},
+    {'kind': 'move_l', 'pos_m': [99, 0, 0.1], 'orientation': 'free'},
+    {'kind': 'move_j', 'joints_deg': [0, 0, 0], 'orientation': 'free'}])
+def test_bad_orientation_combinations_are_rejected(bad):
+    clean, errs = ps.validate_program(prog(steps=[bad]))
+    assert clean is None and errs and all(e['message'] for e in errs)
+
+
+def test_free_orientation_works_with_a_waypoint_and_offset():
+    step = {'kind': 'move_l', 'waypoint': 'A', 'offset_m': [0, 0, 0.05], 'orientation': 'free'}
+    clean, errs = ps.validate_program(prog(steps=[step]))
+    assert errs == [] and clean['steps'][0]['orientation'] == 'free'
+    wps = {'A': prog()['waypoints'][0]}
+    body = move_body(clean['steps'][0], wps, 30)[0]
+    assert body == {'type': 'linear', 'pos_m': [0.3, 0.0, 0.45], 'orientation': 'free', 'speed_pct': 30}
+    assert 'rpy_deg' not in body                       # S1: orientation:'free' ile rpy_deg birlikte 400
+
+
+def test_move_body_for_a_value_step_sends_orientation_free_and_never_rpy():
+    assert move_body(FREE, {}, 40)[0] == {'type': 'linear', 'pos_m': [0.1, 0.0, 0.08],
+                                          'orientation': 'free', 'speed_pct': 40}
+    fixed = {'kind': 'move_l', 'pos_m': [0.1, 0, 0.1], 'rpy_deg': [1, 2, 3]}
+    assert move_body(fixed, {}, 40)[0] == {'type': 'linear', 'pos_m': [0.1, 0, 0.1], 'rpy_deg': [1, 2, 3],
+                                           'speed_pct': 40}      # eski davranış değişmedi
+
+
+def test_the_mock_backend_understands_free_orientation_and_still_refuses_junk():
+    from control_hub.hub_core.program_move import SimMoveClient
+    m = SimMoveClient()
+    assert m.check({'type': 'linear', 'pos_m': [0.4, 0.3, 0.1], 'orientation': 'free', 'speed_pct': 50})['ok']
+    both = m.check({'type': 'linear', 'pos_m': [0.4, 0.3, 0.1], 'rpy_deg': [0, 0, 0], 'orientation': 'free',
+                    'speed_pct': 50})
+    assert not both['ok'] and both['violations'][0]['kind'] == 'bad_request'      # S1 ile aynı kural
+    none = m.check({'type': 'linear', 'pos_m': [0.4, 0.3, 0.1], 'speed_pct': 50})
+    assert not none['ok'] and none['violations'][0]['kind'] == 'bad_request'
+    before = m.pose()['rpy_deg']
+    job = m.start({'type': 'linear', 'pos_m': [0.4, 0.3, 0.1], 'orientation': 'free', 'speed_pct': 50})
+    assert job.startswith('mock-') and m.pose()['rpy_deg'] == before              # yönelim değişmez, çökmez
