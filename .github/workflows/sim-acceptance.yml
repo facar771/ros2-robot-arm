@@ -1,0 +1,50 @@
+name: SİM kabul (isteğe bağlı)
+
+# ZORUNLU DEĞİL: ci.yml'deki 5 iş dışında ayrı bir iş akışı; dal koruması bunu beklemez.
+# Elle çalıştır: Actions → "SİM kabul (isteğe bağlı)" → Run workflow.
+# `pull_request` yalnız BU DOSYA değişince tetikler (iş akışı değişikliği kendi kendini kanıtlasın);
+# başka PR'larda (UI/Hub kodu) hiç koşmaz, kırmızı gürültü üretmez.
+on:
+  workflow_dispatch:
+    inputs:
+      viewport:
+        description: Görünüm
+        type: choice
+        options: [desktop, phone]
+        default: desktop
+  pull_request:
+    paths: ['.github/workflows/sim-acceptance.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  sim-acceptance:
+    name: SİM kabul (--sim Hub + headless Chrome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: apps/control_hub/requirements*.txt
+      # Playwright yalnız burada (K5: ana bağımlılık listelerine girmez). Tarayıcı indirilmez:
+      # ubuntu-latest'te kurulu google-chrome kullanılır (HUB_CHROME ile değiştirilebilir).
+      - run: pip install -r apps/control_hub/requirements-dev.txt -r apps/control_hub/requirements-step.txt playwright==1.63.0
+      - name: SİM kabul koşumu
+        working-directory: apps/control_hub
+        env:
+          VIEWPORT: ${{ inputs.viewport || 'desktop' }}
+        run: python -m tools.sim_acceptance --out /tmp/sim_kabul --viewport "$VIEWPORT"
+      - name: Özet
+        if: always()
+        run: |
+          test -f /tmp/sim_kabul/rapor.md && cat /tmp/sim_kabul/rapor.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-kabul-raporu
+          path: /tmp/sim_kabul
+          if-no-files-found: warn
