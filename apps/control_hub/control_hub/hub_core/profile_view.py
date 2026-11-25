@@ -11,8 +11,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
-import tempfile
 import types
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -22,6 +20,7 @@ from typing import Any, Dict, List, Mapping, Optional
 from control_hub import paths
 from control_hub.hub_core import profile_rules as rules
 from control_hub.hub_core import sim_assets
+from control_hub.hub_core.atomic import write_text_atomic
 from control_hub.hub_core.profile_fields import (
     SERVO,
     STEP,
@@ -258,20 +257,7 @@ def draft_path(robot: str) -> Path:
 
 
 def atomic_write(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix='.draft-', suffix='.tmp', dir=str(path.parent))
-    try:
-        with os.fdopen(fd, 'w', encoding='utf-8', newline='\n') as handle:
-            handle.write(text)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
+    write_text_atomic(path, text, newline='\n', prefix='.draft-', suffix='.tmp')
 
 
 def _now() -> str:
