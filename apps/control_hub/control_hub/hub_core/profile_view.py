@@ -326,7 +326,8 @@ def read_draft(src: Source) -> Dict[str, Any]:
     edits = doc.get('edits') if isinstance(doc.get('edits'), Mapping) else {}
     base = doc.get('base') if isinstance(doc.get('base'), Mapping) else {}
     return {'exists': True, 'edits': dict(edits), 'saved_at': doc.get('saved_at'),
-            'stale': any(base.get(k) != v for k, v in src.hashes.items())}
+            'stale': any(base.get(k) != v for k, v in src.hashes.items()),
+            'profile_stale': base.get('profile') != src.hashes.get('profile')}
 
 
 def delete_draft(src: Source) -> Dict[str, Any]:
