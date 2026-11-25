@@ -1,5 +1,6 @@
 /* Sayfa: Robot parametreleri (P4). Profil depodan YALNIZ OKUNUR; düzenleme TASLAKTIR: doğrulanır, farkı gösterilir,
  * veri klasörüne kaydedilir / YAML olarak indirilir. Robota ya da Robot API'ye UYGULAMA YOK (KARAR GEREKLİ: Robot_1).
+ * P4b: KAYITLI taslak "SİM'e uygula" ile yalnız SİM arka ucunun BELLEĞİNE geçici yüklenir; "Sıfırla" gerçek profile döner.
  * Doğrulamanın hakemi sunucudur (POST /api/params/validate); bu dosya yalnız çizer ve değişen alanları gönderir.
  * Veri textContent ile yazılır (innerHTML yok). Mantık: /params_form.js (saf), pot kuralları: /pot_logic.js. */
 'use strict';
@@ -7,13 +8,32 @@
 (() => {
   const PL = () => window.ParamsLogic;
   const D = { data: null, fields: new Map(), cur: {}, bad: new Map(), inputs: new Map(), errBoxes: [], derived: {}, res: null,
-              seq: 0, timer: null, pending: false, busy: false, live: {}, liveEls: new Map(), liveTimer: null, potMissing: false };
+              seq: 0, timer: null, pending: false, busy: false, live: {}, liveEls: new Map(), liveTimer: null, potMissing: false,
+              sim: null, program: false, simBusy: false, simMsg: [], simTimer: null };
   const R = {};                                                    // sabit arayüz öğeleri
   const NS = 'http://www.w3.org/2000/svg';
   const TAG = { measured: 'ok', estimated: 'est', placeholder: 'ph' };
   const tag = (q) => (q ? el('span', { class: `pr-tag ${TAG[q.tag] || 'ph'}`, text: q.label }) : '');
   const canControl = () => !!(S.snap && S.snap.me && S.snap.me.can_control);
   const edits = () => PL().changed([...D.fields.values()], D.cur, D.bad);
+
+  /* Üst çubuk rozeti "TASLAK PROFİL (SİM)": shell.js (S1) yalnız SİM/TEZGÂH/GERÇEK pill'ini çizer; taslak profil etkinken
+   * HER sayfada görünmesi gerekir. Bu betik uygulama açılışında yüklenir (mount tembeldir), rozet anlık görüntüden beslenir.
+   * İSTEK S1: ShellLogic.modeInfo `snap.robot.profile_override`'ı okuyup #pill-profile'ı kendisi çizerse bu blok kalkar. */
+  function syncBadge() {
+    const o = S.snap && S.snap.robot && S.snap.robot.profile_override, on = !!(o && o.active), bar = document.querySelector('.pills');
+    let pill = document.getElementById('pill-profile');
+    if (!pill && on && bar) {
+      pill = el('span', { class: 'pill', id: 'pill-profile', role: 'status', text: 'TASLAK PROFİL (SİM)' });
+      pill.dataset.state = 'warn';
+      const mode = document.getElementById('pill-mode');
+      bar.insertBefore(pill, mode ? mode.nextSibling : null);
+    }
+    if (!pill) return;
+    pill.hidden = !on;
+    if (on) pill.title = `Taslak profil: ${o.changes} alan değişti. Yalnız SİM belleğinde; gerçek profil ve robot değişmedi.`;
+  }
+  setInterval(syncBadge, 700);
 
   /* ---------- alan öğeleri ---------- */
   function input(key, extra = {}) {
@@ -201,6 +221,7 @@
     const n = Object.keys(edits()).length;
     R.undo.disabled = !n && !D.bad.size; R.yaml.disabled = !(n && D.res && D.res.ok && !D.pending && !D.bad.size);
     R.drop.hidden = !(D.data && D.data.draft && D.data.draft.exists);
+    paintSim();
   }
 
   /* ---------- eylemler ---------- */
@@ -222,6 +243,50 @@
     try { await api('/api/params/draft', 'DELETE'); toast('Kayıtlı taslak silindi'); await load(); } catch (e) { toast(e.message, true); }
   }
   function revert() { for (const [k, f] of D.fields) { D.cur[k] = f.value; D.inputs.get(k).value = PL().fmt(f.value, f.decimals); } D.bad.clear(); schedule(); }
+
+  /* ---------- SİM'e uygula / Sıfırla (P4b): KAYITLI taslak yalnız SİM belleğine geçici yüklenir ---------- */
+  function simCard() {
+    const mk = (text, cls, fn) => { const b = el('button', { class: `small ${cls}`, type: 'button', text }); b.addEventListener('click', fn); return b; };
+    R.simState = el('div', { class: 'say', role: 'status' }); R.simWhy = el('div', { class: 'pr-why' });
+    R.simErrs = el('div', { class: 'pr-errs', role: 'alert', hidden: true });
+    R.simApply = mk("SİM'e uygula", 'primary', simApply); R.simReset = mk('Sıfırla (gerçek profile dön)', '', simReset);
+    R.simCard = card("SİM'de dene (geçici)", [el('p', { class: 'muted', text: 'Kayıtlı taslak yalnız SİM arka ucuna GEÇİCİ yüklenir: eklem limitleri, güvenli kutu, hız/ivme tavanları. Gerçek robota, Robot API\u2019ye ve profil dosyasına YAZILMAZ; Hub yeniden başlayınca gerçek profil döner. Gerçek robot kipinde kapalı.' }),
+      R.simState, el('div', { class: 'pr-sim-btns' }, [R.simApply, R.simReset]), R.simWhy, R.simErrs]);
+    R.simCard.classList.add('pr-sim');
+    return R.simCard;
+  }
+  function paintSim() {
+    if (!R.simApply) return;
+    const dr = D.data && D.data.draft, saved = (dr && dr.edits) || {}, o = D.sim && D.sim.override, on = !!(o && o.active);
+    const g = PL().simGate({ sim: D.sim, hasDraft: !!(dr && dr.exists && Object.keys(saved).length), stale: !!(dr && dr.profile_stale),
+      dirty: !PL().sameEdits(edits(), saved), canControl: canControl(), busy: D.simBusy, programRunning: D.program });
+    R.simApply.disabled = !g.apply.ok; R.simReset.disabled = !g.reset.ok;
+    R.simState.textContent = PL().overrideText(o); R.simCard.classList.toggle('on', on);
+    const why = new Set();                                         // neden kapalı? (Sıfırla nedeni yalnız etkin profil varken anlamlı)
+    if (!g.apply.ok) why.add(g.apply.why);
+    if (!g.reset.ok && on) why.add(g.reset.why);
+    R.simWhy.textContent = [...why].join(' · ');
+    R.simErrs.replaceChildren(...D.simMsg.map((t) => el('div', { class: 'bad', text: t })));
+    R.simErrs.hidden = !D.simMsg.length;
+  }
+  async function refreshSim() {
+    if (typeof document.hidden !== 'undefined' && document.hidden) return;
+    try { D.sim = await api('/api/params/sim'); } catch (e) { D.sim = null; }
+    try { const p = await api('/api/program/state'); D.program = !!(p.runner && p.runner.running); } catch (e) { D.program = false; }   // program sayfası yoksa sorun değil
+    paintSim();
+  }
+  const simReasons = (e) => {                                      // sunucunun NEDENİ: geçersiz taslakta alan alan
+    const iss = ((e.body && e.body.issues) || []).filter((i) => i.severity === 'error').slice(0, 6);
+    return iss.length ? iss.map((i) => `${label(i.field)}: ${i.message}`) : [e.message];
+  };
+  async function simCall(path, okText) {
+    D.simBusy = true; D.simMsg = []; paintSim();
+    try { const r = await api(path, 'POST', {}); toast(okText(r)); }
+    catch (e) { D.simMsg = simReasons(e); toast(e.message, true); }
+    D.simBusy = false; await refreshSim();
+  }
+  const simApply = () => simCall('/api/params/sim/apply', (r) => `SİM'e taslak profil uygulandı (${r.override.changes} alan)${r.rehomed ? ' — robot yeni limit dışındaydı: home\u2019a alındı' : ''}`);
+  const simReset = () => simCall('/api/params/sim/reset', (r) => (r.noop ? 'Zaten gerçek profil' : `Gerçek profile dönüldü${r.rehomed ? ' — robot home\u2019a alındı' : ''}`));
 
   /* ---------- canlı pot (kalibrasyon yardımı; Hub'da pot uç noktası henüz yok: İSTEK Robot_3/Robot_10) ---------- */
   function capture(name, field) {
@@ -262,11 +327,11 @@
       ...(dr && dr.exists && Object.keys(dr.edits || {}).length ? [`Kayıtlı taslak yüklendi (${dr.saved_at || ''}).`] : [])];
     root.replaceChildren(
       el('div', { class: 'pr-banner', role: 'note' }, [el('b', { text: 'TASLAK — robota UYGULANMAZ. ' }),
-        `Robot: ${D.data.robot}. Değerler depo profilinden okunur; değişiklikler ayrı klasöre kaydedilir. Kim, nasıl uygulayacak: Robot_1 kararı.`]),
+        `Robot: ${D.data.robot}. Değerler depo profilinden okunur; değişiklikler ayrı klasöre kaydedilir. Yalnız SİM'e geçici yüklenebilir (aşağıda); gerçek robota kim, nasıl uygulayacak: Robot_1 kararı.`]),
       ...notes.map((t) => el('div', { class: 'pr-note', text: t })), R.general,
       card('Eksenler', [el('p', { class: 'muted', text: 'Açı sınırları, hız/ivme tavanları ve home (°). Adım/° = motor adım/tur × mikroadım × dişli / 360.' }), axesTable()]),
       kinematics(), boxCard(), toolCard(), potCard(),
-      card('Değişiklikler (önce → sonra)', [R.diff], R.diffN),
+      card('Değişiklikler (önce → sonra)', [R.diff], R.diffN), simCard(),
       el('div', { class: 'pr-bar' }, [R.save, R.yaml, R.undo, R.drop, R.status]));
     D.res = null; D.pending = false;
     if (Object.keys(edits()).length) schedule(); else { D.res = { ok: true, issues: D.data.issues || [], changes: [] }; paint(); }
@@ -283,8 +348,13 @@
     id: 'params', title: 'Parametreler', icon: '⚙', order: 50,
     scripts: ['/pot_logic.js', '/params_form.js'], styles: ['/pages/params.css'],
     mount(root) { D.root = root; return load(); },
-    onState() { if (D.data) paintGate(); },
-    onShow() { if (D.data && !Object.keys(edits()).length && !D.busy) load(); clearInterval(D.liveTimer); D.liveTimer = setInterval(livePoll, 250); },
-    onHide() { clearInterval(D.liveTimer); D.liveTimer = null; },
+    onState() {
+      const r = S.snap && S.snap.robot;
+      if (D.data && D.sim && r) { D.sim.override = r.profile_override || null; D.sim.mode = r.mode; }   // başka istemci uygulayınca/sıfırlayınca hemen
+      if (D.data) paintGate();
+    },
+    onShow() { if (D.data && !Object.keys(edits()).length && !D.busy) load(); clearInterval(D.liveTimer); D.liveTimer = setInterval(livePoll, 250);
+      clearInterval(D.simTimer); refreshSim(); D.simTimer = setInterval(refreshSim, 1500); },
+    onHide() { clearInterval(D.liveTimer); D.liveTimer = null; clearInterval(D.simTimer); D.simTimer = null; },
   });
 })();

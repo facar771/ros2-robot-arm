@@ -51,3 +51,8 @@
   .pr-bar button.small { flex: 1 1 auto; padding: 6px 8px; font-size: .85rem; }
   .pr-bar span { flex-basis: 100%; font-size: .8rem; }
 }
+/* P4b: "SİM'de dene (geçici)" kartı; etkinken (üst çubuktaki TASLAK PROFİL rozetiyle birlikte) sarı çerçeve */
+.pr-sim.on { border-color: #6a5113; background: rgba(210, 153, 34, .08); }
+.pr-sim-btns { display: flex; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.pr-sim-btns button.small { width: auto; padding: 8px 14px; }
+.pr-sim-btns button.primary { background: var(--accent); color: #fff; border: 0; font-weight: 600; }

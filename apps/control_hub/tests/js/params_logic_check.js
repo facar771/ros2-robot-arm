@@ -73,4 +73,36 @@ assert.ok(!L.capturable({ zone: 'low', fresh: 'fresh', raw: 5 }));
 assert.ok(!L.capturable({ zone: 'high', fresh: 'fresh', raw: 1020 }));
 assert.ok(!L.capturable({ zone: 'ok', fresh: 'stale', raw: 500 }));
 assert.ok(!L.capturable(null) && !L.capturable(undefined));
+/* sameEdits: SİM KAYITLI taslağı yükler; ekrandaki düzenleme ondan farklıysa "kaydedilmemiş" sayılır */
+assert.ok(L.sameEdits({}, {}) && L.sameEdits(null, undefined) && L.sameEdits({ a: 1, b: null }, { b: null, a: 1 }));
+assert.ok(L.sameEdits({ a: 1 }, { a: 1 + 1e-12 }));
+assert.ok(!L.sameEdits({ a: 1 }, { a: 2 }) && !L.sameEdits({ a: 1 }, {}) && !L.sameEdits({}, { a: 1 }) && !L.sameEdits({ a: null }, { a: 0 }));
+
+/* SİM'e uygula / Sıfırla kapıları: neden yazılır, ortak engeller iki düğmeyi de kapatır */
+const sim = { mode: 'sim', can_apply: true, blocker: null, reason: null, override: null };
+const sg = { sim, hasDraft: true, stale: false, dirty: false, canControl: true, busy: false, programRunning: false };
+let g = L.simGate(sg);
+assert.ok(g.apply.ok && !g.reset.ok && g.reset.why.includes('zaten gerçek profil'));           // etkin yokken Sıfırla kapalı
+g = L.simGate({ ...sg, sim: { ...sim, override: { active: true, changes: 2 } } });
+assert.ok(g.apply.ok && g.reset.ok);                                                             // etkinken ikisi de açık
+for (const [patch, text] of [[{ canControl: false }, 'Kilitli'], [{ sim: null }, 'okunamadı'],
+  [{ sim: { ...sim, mode: 'real' } }, 'Gerçek robotta kapalı'], [{ sim: { ...sim, mode: 'fake', blocker: 'not_sim' } }, '--sim'],
+  [{ sim: { ...sim, blocker: 'estop_latched' } }, 'ACİL DUR'], [{ programRunning: true }, 'Program'],
+  [{ sim: { ...sim, blocker: 'busy', reason: 'Hareket ya da jog sürerken' } }, 'Hareket ya da jog'], [{ busy: true }, 'İşleniyor']]) {
+  g = L.simGate({ ...sg, sim: { ...sim, override: { active: true } }, ...patch });
+  assert.ok(!g.apply.ok && !g.reset.ok && g.apply.why.includes(text) && g.reset.why === g.apply.why, `ortak engel: ${text}`);
+}
+g = L.simGate({ ...sg, sim: { ...sim, mode: 'real', override: { active: true } } });
+assert.ok(!g.reset.ok, 'gerçek robotta etkin profil olsa bile düğme kapalı (düğme kapalı = mode=real)');
+for (const [patch, text] of [[{ hasDraft: false }, 'Önce'], [{ dirty: true }, 'Kaydedilmemiş'], [{ stale: true }, 'eski profile']]) {
+  g = L.simGate({ ...sg, sim: { ...sim, override: { active: true } }, ...patch });
+  assert.ok(!g.apply.ok && g.apply.why.includes(text) && g.reset.ok, `yalnız Uygula kapalı: ${text}`);   // Sıfırla yine açık (geri dönüş serbest)
+}
+
+/* etkin geçersiz kılmanın özeti */
+assert.strictEqual(L.overrideText(null), 'Gerçek profil kullanılıyor.');
+assert.strictEqual(L.overrideText({ active: false }), 'Gerçek profil kullanılıyor.');
+const ot = L.overrideText({ active: true, changes: 2, fields: ['Eksen 1 en küçük', 'Eksen 1 en büyük'], applied_at: '2026-11-25T15:42:10+00:00', rehomed: true });
+assert.ok(ot.includes('ETKİN') && ot.includes('2 alan') && ot.includes('Eksen 1 en küçük, Eksen 1 en büyük') && ot.includes('15:42') && ot.includes('home'));
+assert.ok(!L.overrideText({ active: true, changes: 1, fields: [] }).includes('home'));
 console.log('PARAMS_LOGIC_JS_OK');
