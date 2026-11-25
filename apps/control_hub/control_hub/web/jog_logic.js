@@ -89,8 +89,37 @@
   const gripperPct = (r) => (r && r.gripper && finite(r.gripper.open_pct) ? r.gripper.open_pct : null);
   const homeDeg = (r) => (r && Array.isArray(r.home_deg) && r.home_deg.every(finite) ? r.home_deg : null);
 
+  /* ---- P1b: 3B'de tıkla-git. Seçim düzlemi (jog:plane) hedef yüksekliğinde durur; tıklanan x,y alınır, z sayısal alandan gelir. ---- */
+  const ID_PLANE = 'jog:plane', ID_TARGET = 'jog:target';       // HubScene kimlik öneki "jog:" (başka sayfayla çakışmaz)
+  const PLANE_THICK_M = 0.002, MARKER_R_M = 0.008, EDGE_TOL_M = 0.0005;
+  const zoneOk = (z) => !!z && [z.min, z.max].every((a) => Array.isArray(a) && a.length === 3 && a.every(finite)) &&
+    z.min.every((v, i) => z.max[i] > v);
+  const zoneOf = (r) => (r && zoneOk(r.safe_zone) ? r.safe_zone : null);
+  /* Varsayılan z = güvenli kutunun ortası; alan boş/geçersizse varsayılan, kutu dışındaysa kenara kırpılır (sunucu yine denetler). */
+  const defaultZ = (zone) => (zone.min[2] + zone.max[2]) / 2;
+  const clampZ = (zone, z) => (finite(z) ? clamp(z, zone.min[2], zone.max[2]) : defaultZ(zone));
+  const planeSpec = (zone, z) => ({ id: ID_PLANE, kind: 'box', layer: 'environment', color: '#58a6ff', opacity: 0.14,
+    geometry: { size_m: [zone.max[0] - zone.min[0], zone.max[1] - zone.min[1], PLANE_THICK_M] },
+    pose: { pos_m: [(zone.min[0] + zone.max[0]) / 2, (zone.min[1] + zone.max[1]) / 2, z], rpy_deg: [0, 0, 0] } });
+  const markerSpec = (pos) => ({ id: ID_TARGET, kind: 'marker', layer: 'markers', color: '#f0883e', pose: { pos_m: pos, rpy_deg: [0, 0, 0] },
+    geometry: { radius_m: MARKER_R_M } });
+  /* onPick sonucu → hedef konum. Yalnız seçim düzlemine isabet sayılır; kutu dışı/sonsuz nokta reddedilir (null). */
+  function pickToTarget(hit, zone, z) {
+    const p = hit && hit.objectId === ID_PLANE && hit.point_m;
+    if (!zone || !Array.isArray(p) || p.length !== 3 || !p.every(finite)) return null;
+    const x = p[0], y = p[1];
+    if (x < zone.min[0] - EDGE_TOL_M || x > zone.max[0] + EDGE_TOL_M || y < zone.min[1] - EDGE_TOL_M || y > zone.max[1] + EDGE_TOL_M) return null;
+    return [clamp(x, zone.min[0], zone.max[0]), clamp(y, zone.min[1], zone.max[1]), clampZ(zone, z)].map((v) => Math.round(v * 1e5) / 1e5);
+  }
+  /* SİM'de yönelim serbest (çözücü seçer; home yakını tekillik), GERÇEK/TEZGÂH'ta sabit: gerçek robotta gevşetme yok (K3). */
+  const orientationFor = (mode) => (mode === 'sim' ? 'free' : 'fixed');
+  const linearBody = (pos, speedPct, mode) => ({ type: 'linear', pos_m: pos.slice(), orientation: orientationFor(mode), speed_pct: clampPct(speedPct) });
+  /* Tıkla-git kapalı nedeni: genel kapanma nedenleri + güvenli kutu bilinmiyor. */
+  const targetDisabledReason = (s) => disabledReason(s) || (zoneOf(s && s.robot) ? null : 'Güvenli kutu bilinmiyor: 3B hedef seçimi kapalı.');
+
   window.JogLogic = { AXES, STEPS, NEAR_FRACTION, HOLD_LIN, HOLD_ANG, BEAT_MS, TTL_MS, SPEED_MIN, SPEED_MAX,
     clampPct, sliderState, stepTarget, holdTwist, moveBody, checkVerdict, explain, disabledReason, badge, poseRows,
-    gripperPct, homeDeg, jointsUsable };
+    gripperPct, homeDeg, jointsUsable,
+    ID_PLANE, ID_TARGET, zoneOf, defaultZ, clampZ, planeSpec, markerSpec, pickToTarget, orientationFor, linearBody, targetDisabledReason };
   if (typeof module !== 'undefined') module.exports = window.JogLogic;
 })();

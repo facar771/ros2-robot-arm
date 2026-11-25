@@ -62,3 +62,11 @@
   .jp-pose { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .jp-jrow { grid-template-columns: 4em 44px minmax(0, 1fr) 44px; }
 }
+
+/* ---- 3B tıkla-git (P1b) ---- */
+#p-target .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+#p-target #jp-pick, #p-target #jp-tgo, #p-target #jp-tclear { min-height: 44px; }      /* parmakla vurulabilir hedef */
+#jp-pick.on { background: var(--accent); border-color: var(--accent); color: #fff; }   /* kip açık: bellidir */
+#jp-tz { width: 6em; min-height: 44px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+#jp-tmsg.bad { color: #ff9b97; }
+@media (max-width: 800px) { #p-target .row { gap: 6px; } }

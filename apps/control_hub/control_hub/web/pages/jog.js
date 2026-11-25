@@ -7,6 +7,7 @@
 (() => {
   const L = new Proxy({}, { get: (_, k) => window.JogLogic[k] });      // jog_logic.js, sayfa betikleri yüklenince hazır olur
   const P = { view: null, joints: [], dirty: new Set(), gripDirty: false, built: false, snap: null, busy: false };
+  const T = { on: false, pos: null, ok: false, seq: 0, scene: null, unsub: null, z: null };   // 3B tıkla-git durumu (P1b)
   const q = (id) => document.getElementById(id);
   const TOPBAR_VAR = '--topbar-h';
   const SLIDER_MARGIN_DEG = 0.1;       // anlık görüntüdeki limit 1 ondalığa yuvarlı: sunucunun reddedeceği uca çekilmesin
@@ -79,6 +80,92 @@
   }
   function say(text, bad) { const n = q('jp-gmsg'); if (n) { n.textContent = text || ''; n.classList.toggle('bad', !!bad); } }
 
+  /* ---- 3B tıkla-git (P1b): "Hedef seç" kipinde zemin düzlemine dokun → hedef işareti → kuru kontrol → "Git". Dokunma yalnız bu kipte
+   * seçer; kip kapalıyken seçim düzlemi sahnede YOK, bu yüzden telefonda sürükle/döndür karışmaz. Kimlikler "jog:". ---- */
+  const zone = () => L.zoneOf(P.snap && P.snap.robot);
+  const tmsg = (text, bad) => { const n = q('jp-tmsg'); n.textContent = text || ''; n.classList.toggle('bad', !!bad); };
+  const sceneOk = (r) => { if (!r || r.ok === false) { tmsg(`3B sahne: ${(r && (r.message || r.error)) || 'yok'}`, true); return false; } return true; };
+  function zValue() { const z = zone(); if (!z) return null; const v = q('jp-tz').value; return L.clampZ(z, v === '' ? NaN : Number(v) / 1000); }
+  function putMarker() {
+    const H = T.scene; if (!H) return;
+    H.removeObject(L.ID_TARGET);
+    if (T.pos) sceneOk(H.addObject(L.markerSpec(T.pos)));
+  }
+  function showTarget() {
+    q('jp-tinfo').textContent = T.pos ? `Hedef: X ${(T.pos[0] * 1000).toFixed(1)} · Y ${(T.pos[1] * 1000).toFixed(1)} · Z ${(T.pos[2] * 1000).toFixed(1)} mm` : 'Hedef yok: “Hedef seç”e basıp 3B zemine dokun.';
+    q('jp-tclear').hidden = !T.pos; applyTarget();
+  }
+  async function checkTarget() {
+    const mine = ++T.seq; T.ok = false; applyTarget();
+    if (!T.pos) return tmsg('');
+    tmsg('Kontrol ediliyor…');
+    let v;
+    try { v = L.checkVerdict(await api('/api/move/check', 'POST', L.linearBody(T.pos, JogPanel.speed(), P.snap.robot.mode))); }
+    catch (e) { v = { ok: false, text: L.explain(e) }; }
+    if (mine !== T.seq) return;                                   // hedef arada değişti: eski cevap yok sayılır
+    T.ok = v.ok; tmsg(v.text, !v.ok); applyTarget();              // geçmezse neden kırmızı yazılır, "Git" kapalı kalır, hareket isteği gitmez
+  }
+  function setTarget(pos) { T.pos = pos; putMarker(); showTarget(); return checkTarget(); }
+  function onPick(hit) {
+    if (!T.on || L.targetDisabledReason(P.snap)) return;
+    const t = L.pickToTarget(hit, zone(), zValue());
+    if (t) setTarget(t);
+  }
+  async function setPickMode(on) {
+    if (on === T.on) return;
+    if (on) {
+      const H = T.scene || await HubPages.scene();
+      if (!H || H.implemented === false) return tmsg('3B sahne açılamadı (WebGL yok): 3B hedef seçimi kapalı.', true);
+      T.scene = H; H.removeObject(L.ID_PLANE);
+      if (!sceneOk(H.addObject(L.planeSpec(zone(), zValue())))) return;
+      T.unsub = T.unsub || H.onPick(onPick);
+    } else if (T.scene) { T.scene.removeObject(L.ID_PLANE); if (T.unsub) { T.unsub(); T.unsub = null; } }
+    T.on = on; applyTarget();
+  }
+  function onZ() {
+    const v = zValue(); if (v === null) return;
+    q('jp-tz').value = (v * 1000).toFixed(0);
+    if (T.on && T.scene) T.scene.setPose(L.ID_PLANE, { pos_m: [(zone().min[0] + zone().max[0]) / 2, (zone().min[1] + zone().max[1]) / 2, v] });
+    if (T.pos) setTarget([T.pos[0], T.pos[1], v]);                 // yükseklik değişti: işaret taşınır, kontrol yeniden
+  }
+  async function onTargetGo() {
+    if (!T.ok || !T.pos || P.busy) return;
+    P.busy = true; applyTarget();
+    try { await api('/api/move', 'POST', L.linearBody(T.pos, JogPanel.speed(), P.snap.robot.mode)); tmsg('Hareket başladı.'); }
+    catch (e) { tmsg(L.explain(e), true); }
+    P.busy = false; T.ok = false; applyTarget();                  // her gidişten sonra yeni kontrol gerekir
+  }
+  function clearTarget() { T.seq++; T.pos = null; T.ok = false; if (T.scene) T.scene.removeObject(L.ID_TARGET); tmsg(''); showTarget(); }
+  function applyTarget() {
+    const why = L.targetDisabledReason(P.snap), pick = q('jp-pick');
+    if (!pick) return;
+    pick.disabled = !!why; pick.setAttribute('aria-pressed', String(T.on)); pick.classList.toggle('on', T.on);
+    pick.textContent = T.on ? 'Hedef seçiliyor… (bitir)' : 'Hedef seç';
+    q('jp-tz').disabled = !!why; q('jp-tclear').disabled = !!why;
+    q('jp-tgo').disabled = !!why || !T.ok || P.busy;               // ACİL DUR'da hepsi kapalı (423 sunucuda ayrıca)
+    q('jp-twhy').textContent = why || '';
+    if (why && T.on) setPickMode(false);
+    if (why) T.ok = false;
+  }
+  function buildTarget() {
+    const pick = el('button', { class: 'small', id: 'jp-pick', type: 'button', text: 'Hedef seç', 'aria-pressed': 'false' });
+    pick.addEventListener('click', () => setPickMode(!T.on));
+    const z = el('input', { type: 'number', id: 'jp-tz', step: '1', inputMode: 'decimal', 'aria-label': 'Hedef yükseklik Z (mm)' });
+    z.addEventListener('change', onZ);
+    const go = el('button', { class: 'primary', id: 'jp-tgo', type: 'button', text: 'Git', disabled: true });
+    go.addEventListener('click', onTargetGo);
+    const clr = el('button', { class: 'small', id: 'jp-tclear', type: 'button', text: 'Hedefi sil', hidden: true });
+    clr.addEventListener('click', clearTarget);
+    return el('div', { class: 'card', id: 'p-target' }, [el('h2', { text: '3B’de tıkla-git' }),
+      el('div', { class: 'row' }, [pick, el('label', { class: 'jp-f' }, [el('span', { text: 'Z (mm)' }), z]), go, clr]),
+      el('div', { class: 'say', id: 'jp-tinfo', text: 'Hedef yok: “Hedef seç”e basıp 3B zemine dokun.' }),
+      el('div', { class: 'say jp-msg', id: 'jp-tmsg', role: 'alert' }), el('div', { class: 'say', id: 'jp-twhy' })]);
+  }
+  function initTargetZ() {
+    const z = zone(), f = q('jp-tz'); if (!z || !f || f.value !== '') return;
+    f.value = (L.defaultZ(z) * 1000).toFixed(0); f.min = (z.min[2] * 1000).toFixed(0); f.max = (z.max[2] * 1000).toFixed(0);   // varsayılan = güvenli kutu ortası
+  }
+
   function buildPanels() {
     const go = el('button', { class: 'primary', id: 'jp-go', type: 'button', text: 'Git (önce kontrol)' });
     go.addEventListener('click', onGo);
@@ -96,7 +183,7 @@
       return b;
     };
     const jogSlot = el('div', { id: 'jp-jogslot' });
-    return [buildPose(),
+    return [buildPose(), buildTarget(),
       el('div', { class: 'card', id: 'p-joints' }, [el('h2', { text: 'Eklemler' }), el('div', { id: 'jp-joints', class: 'jp-joints' }),
         el('div', { class: 'row' }, [go, home, sync]), el('div', { class: 'say', id: 'jp-gwhy' }),
         el('div', { class: 'say jp-msg', id: 'jp-gmsg', role: 'alert' })]),
@@ -112,6 +199,7 @@
     const hb = q('jp-home'); if (hb && !hb.disabled && !L.homeDeg(s && s.robot)) hb.disabled = true;
     for (const n of document.querySelectorAll('.jp-slider')) n.disabled = !!why;
     const w = q('jp-gwhy'); if (w) w.textContent = why || '';
+    applyTarget();
   }
 
   function onState(s) {
@@ -119,6 +207,7 @@
     JogPanel.onState(s);
     const r = s.robot || {};
     if (!q('p-pose')) return;
+    initTargetZ();
     const b = L.badge(r), mode = q('jp-mode');
     mode.textContent = b.text; mode.dataset.mode = r.mode || 'sim';
     q('jp-est').textContent = b.estimated ? 'tahmini (ölçülmedi)' : 'ölçüldü';
@@ -163,7 +252,7 @@
       trackTopbar();
     },
     onShow() { HubPages.mountView(P.view); },
-    onHide() { if (window.JogPanel) { JogPanel.stopHold(); JogPanel.release(false); } },
+    onHide() { if (window.JogPanel) { JogPanel.stopHold(); JogPanel.release(false); } setPickMode(false); clearTarget(); },
     onState,
   });
 })();

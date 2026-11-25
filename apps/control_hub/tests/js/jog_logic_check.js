@@ -7,6 +7,28 @@ const WEB = path.resolve(process.argv[2]);
 global.window = global;
 const L = require(path.join(WEB, 'jog_logic.js'));
 
+// --- P1b: tıkla-git saf mantığı ---
+const Z = { min: [0.06, -0.1, 0.02], max: [0.22, 0.1, 0.22] };
+assert.ok(Math.abs(L.defaultZ(Z) - 0.12) < 1e-9);                                  // varsayılan z = güvenli kutu ortası
+assert.strictEqual(L.clampZ(Z, 0.5), 0.22); assert.strictEqual(L.clampZ(Z, -1), 0.02); assert.ok(Math.abs(L.clampZ(Z, NaN) - 0.12) < 1e-9);
+assert.strictEqual(L.zoneOf({}), null); assert.strictEqual(L.zoneOf({ safe_zone: { min: [0, 0, 0], max: [0, 1, 1] } }), null);
+assert.strictEqual(L.zoneOf({ safe_zone: Z }), Z);
+const ps = L.planeSpec(Z, 0.12);
+assert.ok(ps.id.startsWith('jog:') && L.markerSpec([0, 0, 0]).id.startsWith('jog:'));
+assert.deepStrictEqual(ps.pose.pos_m, [0.14, 0, 0.12]); assert.ok(Math.abs(ps.geometry.size_m[0] - 0.16) < 1e-9);
+assert.deepStrictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [0.1, 0.05, 0.12] }, Z, 0.1), [0.1, 0.05, 0.1]);  // z alandan
+assert.strictEqual(L.pickToTarget({ objectId: 'parts:x', point_m: [0.1, 0, 0.1] }, Z, 0.1), null);                       // başka nesne
+assert.strictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [0.5, 0, 0.1] }, Z, 0.1), null);                     // kutu dışı
+assert.strictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [NaN, 0, 0.1] }, Z, 0.1), null);
+assert.strictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [0.1, 0, 0.1] }, null, 0.1), null);
+assert.strictEqual(L.orientationFor('sim'), 'free'); assert.strictEqual(L.orientationFor('real'), 'fixed'); assert.strictEqual(L.orientationFor('bench'), 'fixed');
+assert.deepStrictEqual(L.linearBody([0.1, 0, 0.1], 500, 'sim'), { type: 'linear', pos_m: [0.1, 0, 0.1], orientation: 'free', speed_pct: 100 });
+assert.strictEqual(L.linearBody([0, 0, 0], 50, 'real').orientation, 'fixed'); assert.ok(!('rpy_deg' in L.linearBody([0, 0, 0], 50, 'sim')));
+const okS = { me: { can_control: true }, estop: { latched: false }, robot: { safe_zone: Z } };
+assert.strictEqual(L.targetDisabledReason(okS), null);
+assert.ok(L.targetDisabledReason({ ...okS, estop: { latched: true } }).includes('423'));                                 // ACİL DUR: kapalı
+assert.ok(L.targetDisabledReason({ ...okS, robot: {} }).includes('Güvenli kutu'));
+
 // --- saf işlevler ---
 assert.deepStrictEqual(L.sliderState(0, -170, 170), { frac: 0.5, out: false, near: false });
 assert.strictEqual(L.sliderState(-165, -170, 170).near, true);              // aralığın %5'i = 17°
