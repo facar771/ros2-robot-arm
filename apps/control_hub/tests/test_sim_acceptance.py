@@ -95,10 +95,20 @@ def test_ordered_moves_last_steps_to_the_end_keeping_order():
 
 def test_registered_steps_are_unique_and_estop_runs_last():
     ids = [s.id for s in core.STEPS]
-    assert len(ids) == len(set(ids)) and len(ids) >= 10
+    assert len(ids) == len(set(ids)) and len(ids) >= 12
+    assert {'kontrol.klavye', 'parametreler.sim_uygula', 'acil_dur.kilit'} <= set(ids)
     assert ordered(core.STEPS)[-1].id == 'acil_dur.kilit'
+    seq = [s.section for s in ordered(core.STEPS)]
+    runs = [x for i, x in enumerate(seq) if i == 0 or x != seq[i - 1]]
+    assert len(runs) == len(set(runs))                               # her bölümün adımları yan yana
     for section in ('Kontrol', 'Parçalar', 'Algoritmalar', 'Parametreler', 'Günlük', 'ACİL DUR'):
         assert any(s.section == section for s in core.STEPS), section
+
+
+def test_ordered_groups_sections_by_first_appearance_keeping_order_inside():
+    steps = [S('a.1', ok, 'A'), S('b.1', ok, 'B'), S('a.2', ok, 'A'), S('z', ok, 'Z', last=True),
+             S('b.2', ok, 'B')]
+    assert [s.id for s in ordered(steps)] == ['a.1', 'a.2', 'b.1', 'b.2', 'z']
 
 
 # ---- koşucu ----
@@ -350,3 +360,67 @@ def test_mutate_cli_requires_step_and_edit():
     assert a.step == 'kontrol.jog' and a.edit == [['f.js', 'x', 'y'], ['g.py', 'p', 'q']] and not a.first
     with pytest.raises(SystemExit):
         parser.parse_args(['--step', 'kontrol.jog'])
+
+
+# ---- ATLANDI (Skip), beklenen konsol hatası, başlatma hatası ----
+def test_skip_is_reported_with_reason_and_never_fails(tmp_path):
+    def skipper(c: Ctx) -> None:
+        c.measure('kart', 'gizli')
+        c.errors.append('console: hata (atlanan adımda önemsiz)')
+        c.skip('sınanamaz: donanım yok')
+
+    def empty_reason(c: Ctx) -> None:
+        c.skip('')
+
+    make_ctx, made = make_runner(tmp_path)
+    res = run_steps(make_ctx, [S('s', skipper), S('e', empty_reason), S('p', ok)])
+    assert [r.status for r in res] == [SKIP, SKIP, PASS]
+    assert res[0].note == 'sınanamaz: donanım yok' and res[0].measured == {'kart': 'gizli'}
+    assert res[0].shots == []                                    # KALDI değil: kırılma görüntüsü yok
+    assert res[1].note == 'sebep belirtilmedi'
+    assert exit_code(res) == 0 and summary_line(res) == '1 GEÇTİ · 0 KALDI · 2 ATLANDI'
+    assert made == ['s', 'e', 'p']                               # bağlam yine kapatılır
+
+
+def test_skip_note_is_visible_in_reports_even_with_measurements(tmp_path):
+    res = [Result('s', 'Atlanan', SKIP, {'kart': 'gizli'}, [], 'sebep: telefon düzeni', 0.1)]
+    assert '**sebep: telefon düzeni**' in render_md(res, META)
+    assert 'sebep: telefon düzeni' in render_html(res, META, tmp_path)
+
+
+def test_allowed_console_errors_are_filtered_noted_and_scoped(tmp_path):
+    def estop_noise(c: Ctx) -> None:
+        c.allow_error(r'status of 423 \(Locked\).*/api/jog')
+        c.errors.append('console: Failed to load resource: the server responded with a status of 423 '
+                        '(Locked) http://h/api/jog')
+
+    def other_noise(c: Ctx) -> None:                             # izin yalnız o adım + yalnız o örüntü için
+        c.errors.append('console: Failed to load resource: the server responded with a status of 423 '
+                        '(Locked) http://h/api/move')
+
+    def mixed(c: Ctx) -> None:
+        estop_noise(c)
+        c.errors.append('console: Refused to execute inline script')
+
+    make_ctx, _ = make_runner(tmp_path)
+    res = run_steps(make_ctx, [S('a', estop_noise), S('b', other_noise), S('c', mixed)])
+    assert [r.status for r in res] == [PASS, FAIL, FAIL]
+    assert res[0].note == '1 beklenen tarayıcı hatası süzüldü'
+    assert res[0].measured['tarayıcı hataları'] == '0'
+    assert 'api/move' in res[1].note
+    assert 'inline script' in res[2].note and res[2].measured['tarayıcı hataları'] == '1'
+
+
+def test_run_steps_prep_failure_fails_only_that_step(tmp_path):
+    made = []
+
+    def make_ctx(step_id: str) -> Ctx:
+        if step_id == 'b':
+            raise RuntimeError('SİM sıfırlanamadı: HTTP 423\nayrıntı')
+        made.append(step_id)
+        return Ctx(FakePage(), None, tmp_path / 'shots')
+
+    res = run_steps(make_ctx, [S('a', ok), S('b', ok), S('c', ok)])
+    assert [r.status for r in res] == [PASS, FAIL, PASS]          # koşum çökmez, sonrakiler koşar
+    assert res[1].note == 'adım başlatılamadı: RuntimeError: SİM sıfırlanamadı: HTTP 423'
+    assert made == ['a', 'c']

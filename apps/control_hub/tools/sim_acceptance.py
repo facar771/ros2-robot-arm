@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools import acceptance_steps, acceptance_steps_prog  # noqa: E402,F401  (adımları STEPS'e kaydeder)
+from tools import (  # noqa: E402,F401  (içe aktarma adımları STEPS'e kaydeder)
+    acceptance_steps,
+    acceptance_steps_klavye,
+    acceptance_steps_prog,
+    acceptance_steps_simprofil,
+)
 from tools.acceptance_core import (  # noqa: E402
     STEPS,
     Ctx,

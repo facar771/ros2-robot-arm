@@ -108,6 +108,8 @@ class HubProc:
 
     def reset_home(self) -> None:
         """Her bölüm temiz home'dan başlasın (önceki adımın izi ölçümü bozmasın)."""
+        if self.state()['estop']['latched']:             # önceki adım kilitli bıraktıysa: temizle
+            self.api('/api/estop/reset', 'POST', {})
         self.wait_idle()
         st, doc = self.api('/api/sim/reset', 'POST', {})
         if st != 200:
