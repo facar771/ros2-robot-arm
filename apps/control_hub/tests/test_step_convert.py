@@ -256,7 +256,7 @@ def test_child_kills_itself_if_the_native_call_hangs(tmp_path):
     code = (f"import sys, time, types\nsys.path.insert(0, {str(ROOT)!r})\n"
             "sys.modules['cascadio'] = types.SimpleNamespace(__version__='0.1.1', "
             "FileType=types.SimpleNamespace(STEP=1, IGES=2), to_glb_bytes=lambda *a, **k: time.sleep(120))\n"
-            "from control_hub.hub_core import step_convert as sc\nsc.SELF_KILL_GRACE_S = 0.3\n"
+            "from control_hub.hub_core import step_child as sc\nsc.SELF_KILL_GRACE_S = 0.3\n"
             f"sys.exit(sc.convert_main(['step', {str(tmp_path / 'in')!r}, "
             f"{str(tmp_path / 'out')!r}, '10', '0.3']))\n")
     (tmp_path / 'in').write_bytes(b'x')

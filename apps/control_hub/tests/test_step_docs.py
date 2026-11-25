@@ -63,3 +63,13 @@ def test_exe_check_tool_covers_both_formats_and_all_units():
     tool = read(ROOT / 'tools' / 'step_exe_check.py')
     for needle in ('step_box', 'iges_box', "'mm', 'in', 'm'", 'step_failed', 'step.available'):
         assert needle in tool, needle
+
+
+def test_s2b_source_files_stay_under_400_lines():
+    """UI_EMIRLER K12: her dosya < 400 satır (aşarsa böl)."""
+    pkg = ROOT / 'control_hub'
+    files = [pkg / 'hub_core' / n for n in ('step_child.py', 'step_convert.py', 'mesh_tools.py')]
+    files += [pkg / 'server' / 'parts_routes.py', pkg / 'web' / 'pages' / 'parts.js']
+    files += [ROOT / 'tools' / 'step_exe_check.py', ROOT / 'tests' / 'test_step_convert.py']
+    for f in files:
+        assert len(f.read_text(encoding='utf-8').splitlines()) < 400, f.name

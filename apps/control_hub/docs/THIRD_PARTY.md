@@ -16,7 +16,7 @@ Parçalar sayfası dönüştürücü kuruluyken şunu gösterir: *OpenCASCADE Te
 
 **Nasıl gelir:** `cascadio==0.1.1` (aşağıda) OCCT'yi ayrı paylaşımlı kitaplıklar olarak getirir (Windows'ta
 `cascadio.libs/*.dll`, `.exe` içine aynen gömülür). Hub bunları **ayrı bir alt süreçte** çağırır
-(`hub_core/step_convert.py`); Hub süreci OCCT'yi yüklemez.
+(`hub_core/step_child.py`; Hub tarafı `step_convert.py`); Hub süreci OCCT'yi yüklemez.
 
 **LGPL gereği, kendi OCCT sürümünü kullanma hakkı:** kaynaktan çalıştırırsan (`python -m control_hub`)
 `pip install` ile kurduğun `cascadio`'yu kendi derlediğin OCCT'li bir sürümle değiştirebilirsin. Hub yalnız

@@ -73,7 +73,7 @@ except ImportError as exc:
     raise SystemExit('hub.spec: numpy kurulu değil; .exe ajanı (robot_core.waypoints) numpy ister: '
                      'pip install numpy') from exc
 
-# S2b (STEP/IGES, #109): cascadio==0.1.1 (requirements-step.txt) alt süreçte dönüştürür (hub_core/step_convert.py;
+# S2b (STEP/IGES, #109): cascadio==0.1.1 (requirements-step.txt) alt süreçte dönüştürür (hub_core/step_child.py + step_convert.py;
 # .exe kendini `ControlHub.exe --convert ...` ile çağırır, exe_entry.py). Windows tekeri delvewheel ile onarılmıştır:
 # OpenCASCADE DLL'leri paketin YANINDAKİ `cascadio.libs/` klasöründedir ve cascadio/__init__ onu
 # os.add_dll_directory(<paket>/../cascadio.libs) ile ekler -> .exe'de _MEIPASS/cascadio.libs olarak AYNEN gömülür.
