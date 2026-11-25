@@ -7,17 +7,21 @@
   aralığı (L8, yalnızca geçirilir). **Hub frames.yaml'a yazmaz**: PUT robota
   gider,
   dosyayı robot (veri dizini) yazar.
+* ``POST /api/jog/joint`` (P1): TEK eklemi basılı-tutla sürer (``hub_core.joint_hold``; SİM). Aynı kurallar:
+  ACİL DUR ``423``, yalnız bu bilgisayardan, ``ttl_ms`` içinde yenilenmezse sunucu durdurur.
 * Ağ hatası ``502``: komut ulaşmadıysa robot TTL'i dolunca kendiliğinden durur (sunucu tarafı dead-man).
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable, Tuple
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from control_hub.hub_core.joint_hold import JointHold
 from control_hub.hub_core.robot_api_backend import RobotApiError
 from control_hub.server.agent_routes import is_local_request
 
@@ -26,6 +30,17 @@ MAX_BODY = 16 * 1024
 
 
 def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: Callable) -> None:
+    holder = JointHold(hub.backend, getattr(hub.backend, 'clock', None) or time.monotonic)
+    hub.joint_hold = holder                       # testler sahte saatle holder.tick() çağırır
+    watchdog: dict = {'task': None}
+
+    async def watch() -> None:
+        # Dead-man: istemci susarsa (sekme kapandı, Wi-Fi koptu) eklem hareketi birkaç on ms içinde durur
+        while holder.active:
+            await asyncio.sleep(0.05)
+            holder.tick()
+        watchdog['task'] = None
+
     def supported(name: str) -> bool:
         return callable(getattr(hub.backend, name, None))
 
@@ -69,6 +84,26 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
                         'telefondan artımlı jog kullan', state='hold_denied')
         return await call('jog_command', body, remote=not local)
 
+    @app.post('/api/jog/joint')
+    async def jog_joint(request: Request):
+        need_control(request)
+        body, bad = await body_of(request)
+        if bad is not None:
+            return bad
+        if not supported('move_submit'):
+            return fail(501, 'jog_unsupported', 'Bu robot arka ucu eklem jog\'unu desteklemiyor')
+        is_release = isinstance(body, dict) and body.get('ttl_ms') == 0
+        if hub.estopped and not is_release:
+            holder.release()
+            return fail(423, 'estop_latched', 'ACİL DUR aktif: önce kilidi aç', state='estopped')
+        if not is_release and not is_local_request(request):
+            return fail(403, 'hold_local_only', 'Basılı-tut jog yalnızca bu bilgisayardan yapılır; '
+                        'telefondan adım kullan', state='hold_denied')
+        status, doc = await asyncio.to_thread(holder.command, body)
+        if holder.active and watchdog['task'] is None:
+            watchdog['task'] = asyncio.create_task(watch())
+        return JSONResponse(doc, status_code=status)
+
     @app.get('/api/jog')
     async def jog_status(request: Request):
         need_view(request)
@@ -78,6 +113,7 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
         import json
         doc = json.loads(resp.body)
         local = is_local_request(request)
+        doc['joint_hold'] = supported('move_submit') and local     # P1: eklem ± basılı-tut (yalnız yerel)
         doc['hold_allowed'] = bool(doc.get('hold_enabled')) and local
         doc['hold_reason'] = (None if doc['hold_allowed'] else
                               'Basılı-tut bu sunucuda kapalı (gerçek mod ya da yapılandırma: jog_hold); '

@@ -94,7 +94,7 @@ class SimBackend:
             raise SimAssetsError(f'robot profili okunamadı ({type(exc).__name__}): {exc}') from None
         self.sm = SimModel.from_profile(self.profile)
         self.tick_s, self.time_scale = tick_s, time_scale
-        self._clock = clock or time.monotonic
+        self._clock = self.clock = clock or time.monotonic
         self._lock = threading.RLock()
         self.estop = EStop()
         self.home_q = np.array([self.profile.initial_positions[n] for n in self.profile.joint_names], float)
@@ -339,8 +339,8 @@ class SimBackend:
                         'max_deg': round(math.degrees(float(hi)), 1), 'near_limit': nl}
                        for n, v, lo, hi, nl in zip(self.profile.joint_names, q, self.sm.lower,
                                                    self.sm.upper, near)],
-            'safe_zone': {'min': list(zone.lower), 'max': list(zone.upper)},
-            'jog': jog, 'job': job, 'objects': [],
+            'safe_zone': {'min': list(zone.lower), 'max': list(zone.upper)}, 'jog': jog, 'job': job,
+            'objects': [], 'home_deg': [round(math.degrees(float(v)), 1) for v in self.home_q],
         }
 
     def self_check(self) -> str:

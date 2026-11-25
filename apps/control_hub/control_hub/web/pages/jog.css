@@ -1,0 +1,64 @@
+/* Kontrol sayfası (P1). Yalnız bu sayfaya özgü; style.css'e dokunulmaz. Renkler ve yarıçap style.css değişkenlerinden. */
+
+/* ---- 3B kartı: masaüstünde yapışkan, telefonda KOMPAKT ve sabit (kaydırınca ekrandan çıkmaz) ---- */
+.jog-view { position: sticky; top: calc(var(--topbar-h, 120px) + 6px); z-index: 5; align-self: start; }
+.jog-view .v3d { height: min(60vh, 520px); }
+@media (max-width: 800px) {
+  .jog-view { top: var(--topbar-h, 120px); background: var(--bg); padding-bottom: 6px; margin: 0 -2px; }
+  .jog-view .v3d { height: 26vh; min-height: 130px; max-height: 220px; }
+  .jog-view #p-view3d { padding: 6px 8px; margin: 0; }
+  .jog-view #p-view3d h2 { margin-bottom: 4px; }
+  .jog-view #p-view3d > .say { display: none; }          /* uzun yardım metni telefonda yer yer; uyarı bandı kalır */
+}
+
+/* ---- canlı poz ---- */
+.jp-badges { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.jp-badges .pill[data-mode="sim"] { color: #79c0ff; border-color: #1f4a7a; }
+.jp-badges .pill[data-mode="bench"] { color: #1b1400; background: #e3b341; border-color: #e3b341; font-weight: 700; }
+.jp-badges .pill[data-mode="real"] { color: #fff; background: #8e2a26; border-color: #f85149; font-weight: 700; }
+#jp-stale:not([hidden]) { color: #ff9b97; border-color: #6e2724; }
+.jp-pose { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
+.jp-cell { background: var(--surface-2); border-radius: 10px; padding: 6px 4px; text-align: center; min-width: 0; }
+.jp-cell span { display: block; font-size: .7rem; color: var(--muted); }
+.jp-cell b { font-variant-numeric: tabular-nums; font-size: .85rem; }
+.jp-cell.near { box-shadow: inset 0 0 0 2px var(--warn); }
+
+/* ---- eklem kaydırıcıları ---- */
+.jp-jrow { display: grid; grid-template-columns: 5.2em 44px minmax(0, 1fr) 44px; gap: 4px 8px; align-items: center;
+           padding: 8px 0; border-bottom: 1px solid var(--border); }
+.jp-jname { display: flex; flex-direction: column; font-size: .85rem; }
+.jp-warn { color: var(--warn); font-size: .72rem; }
+.jp-track { display: grid; gap: 2px; min-width: 0; }
+.jp-slider { width: 100%; height: 28px; touch-action: pan-y; }
+.jp-actual { width: 100%; height: 8px; }
+.jp-lim { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.jp-vals { grid-column: 1 / -1; font-size: .78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.jp-vals output { color: var(--text); }
+.jp-jb, .jp-b { min-height: 44px; font-size: 1.3rem; border-radius: 12px; border: 1px solid var(--border);
+                background: var(--surface-2); color: var(--text); touch-action: none; user-select: none; }
+.jp-jb:disabled, .jp-b:disabled { opacity: .4; }
+.jp-jb:active:not(:disabled), .jp-b:active:not(:disabled) { background: var(--accent); }
+
+/* ---- jog kartı ---- */
+.jp-bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.jp-seg { display: inline-flex; gap: 4px; }
+.jp-seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.jp-f { display: flex; gap: 6px; align-items: center; font-size: .85rem; color: var(--muted); }
+.jp-f select { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.jp-speed input { width: 8em; }
+.jp-grid { display: grid; grid-template-columns: 5.5em 1fr minmax(4.5em, auto) 1fr; gap: 6px 8px; align-items: center; margin-top: 10px; }
+.jp-grid.lock { opacity: .5; }
+.jp-ax { color: var(--muted); font-size: .85rem; }
+.jp-val { text-align: center; font-variant-numeric: tabular-nums; background: var(--surface-2); border-radius: 10px; padding: 8px 6px; }
+.jp-msg, #jp-gmsg { min-height: 1.4em; }
+.jp-msg.bad, #jp-gmsg.bad { color: #ff9b97; }
+#jp-grid[data-mode="hold"] .jp-b { outline: 1px dashed var(--accent); }
+
+/* ---- alet ---- */
+.jp-grip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.jp-grip input { width: 100%; height: 28px; }
+
+@media (max-width: 800px) {
+  .jp-pose { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .jp-jrow { grid-template-columns: 4em 44px minmax(0, 1fr) 44px; }
+}
