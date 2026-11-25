@@ -44,7 +44,8 @@ global.el = (tag, props = {}, children = []) => {                              /
 };
 class ApiError extends Error { constructor(status, body) { super((body && body.message) || `HTTP ${status}`); this.status = status; this.body = body || {}; } }
 global.S = { snap: { estop: { latched: false }, me: { can_control: true },
-  robot: { stale: false, tcp: { pos_m: [0.3, 0.0, 0.2], rpy_deg: [180, 0, 0] } } } };
+  robot: { mode: 'real', stale: false, tcp: { pos_m: [0.3, 0.0, 0.2], rpy_deg: [180, 0, 0] } } } };
+require(path.join(WEB, 'shell.js'));                                           // modeInfo: yönelim varsayılanı moda göre
 require(path.join(WEB, 'scene_logic.js'));
 require(path.join(WEB, 'approach.js'));
 const SL = SceneLogic;
@@ -219,6 +220,7 @@ const tick = () => new Promise((r) => setImmediate(r));
   await near.click();                                                      // d = 50 mm (varsayılan), hız %10
   let chk = callsTo('/api/move/check'); assert.strictEqual(chk.length, 1);
   const b = chk[0].body; assert.strictEqual(b.type, 'linear'); assert.strictEqual(b.speed_pct, 10);
+  assert.strictEqual(fld(root, 'orientmode').value, 'fixed', 'mode=real: varsayılan yönelim Sabit'); assert.strictEqual(b.orientation, 'fixed');
   b.pos_m.forEach((v, i) => assert.ok(Math.abs(v - [0.3, 0, 0.15][i]) < 1e-12, `hedef konumu: ${b.pos_m}`));
   const Rm = SL.rpyToMatrix(b.rpy_deg); [Rm[2], Rm[5], Rm[8]].forEach((v, i) => assert.ok(Math.abs(v - [0, 0, -1][i]) < 1e-9, 'takım z ekseni −normal olmalı'));
   assert.ok(!confirm.hidden, 'kontrol geçti: onay düğmesi görünmeli'); assert.strictEqual(callsTo('/api/move').length, 0, 'onaydan önce hareket yok');
@@ -264,6 +266,62 @@ const tick = () => new Promise((r) => setImmediate(r));
   assert.ok(near.disabled && touch.disabled && confirm.hidden, 'bayat veride hareket düğmeleri kapalı'); assert.match(text(root), /Robot verisi bayat/);
   const nMove = callsTo('/api/move').length; await confirm.click(); assert.strictEqual(callsTo('/api/move').length, nMove);
   S.snap.robot.stale = false; def.onState(S.snap);
+
+  /* --- yönelim kipi (UI_CONTRACT §9-B): SİM'de varsayılan Serbest, gerçek/tezgâhta Sabit; `orientation` HER çağrıda gider --- */
+  {
+    const mode = fld(root, 'orientmode'), orient = fld(root, 'orient');
+    const orientField = all(root, (n) => n.tagName === 'label' && n.children.includes(orient))[0];
+    const freeObjs = () => [scene.objs.has('parts:ap-tgt'), scene.objs.has('parts:ap-frame'), scene.objs.has('parts:ap-ghost')];
+    srv.checkReply = okReply; srv.moveReply = () => ({ ok: true, job_id: 'jm' });
+    assert.deepStrictEqual([...mode.children.map((o) => o.value)], ['free', 'fixed']);
+    assert.strictEqual(mode.value, 'fixed'); assert.ok(!orientField.hidden, 'Sabit: takım yönelimi alanı görünür');
+
+    S.snap.robot.mode = 'sim'; def.onState(S.snap);                          // mod SİM'e döndü: varsayılan Serbest
+    assert.strictEqual(mode.value, 'free'); assert.ok(orientField.hidden, 'Serbest: takım yönelimi alanı gizli');
+    assert.match(text(root), /yönelimi robot seçer/); assert.ok(!/GERÇEK ya da bilinmeyen/.test(text(root)));
+    const c0 = callsTo('/api/move/check').length, m0 = callsTo('/api/move').length;
+    await near.click();
+    let cb = callsTo('/api/move/check')[c0].body;
+    assert.deepStrictEqual(Object.keys(cb).sort(), ['orientation', 'pos_m', 'speed_pct', 'type'], 'serbest gövde rpy_deg taşımamalı');
+    assert.strictEqual(cb.orientation, 'free'); assert.ok(!('rpy_deg' in cb));
+    cb.pos_m.forEach((v, i) => assert.ok(Math.abs(v - [0.3, 0, 0.15][i]) < 1e-12, `serbest hedef konumu: ${cb.pos_m}`));
+    assert.deepStrictEqual(freeObjs(), [true, false, false], 'serbest: yalnız hedef noktası; çerçeve/gölge takım yok');
+    assert.match(text(root), /yönelimi robot seçer\)\. Onaylarsan/); assert.ok(!confirm.hidden);
+    await confirm.click();
+    assert.deepStrictEqual(callsTo('/api/move')[m0].body, cb, 'onaylanan hareket kontrol edilenle AYNI gövde'); assert.ok(!('rpy_deg' in callsTo('/api/move')[m0].body));
+
+    await near.click(); assert.ok(!confirm.hidden);                          // kipi elle Sabit yap: plan düşer, hedef işareti kalkar
+    mode.value = 'fixed'; await mode.fire('input');
+    assert.ok(confirm.hidden, 'kip değişince plan düşmeli'); assert.deepStrictEqual(freeObjs(), [false, false, false]);
+    assert.ok(!orientField.hidden); assert.match(text(root), /Sabit: alet yönelimi/);
+    await confirm.click(); assert.strictEqual(callsTo('/api/move').length, m0 + 1, 'kip değişince eski plan gitmemeli');
+    await near.click(); cb = callsTo('/api/move/check').pop().body;
+    assert.strictEqual(cb.orientation, 'fixed'); assert.ok(Array.isArray(cb.rpy_deg) && cb.rpy_deg.length === 3);
+    assert.deepStrictEqual(freeObjs(), [false, true, true], 'sabit: çerçeve + gölge takım, hedef noktası yok');
+    def.onState(S.snap); assert.strictEqual(mode.value, 'fixed', 'aynı modda durum yayını elle seçimi ezmemeli'); assert.ok(!confirm.hidden, 'plan korunmalı');
+
+    mode.value = 'free'; await mode.fire('input');                           // gerçek robota geçiş: elle seçim bile Sabit'e döner
+    S.snap.robot.mode = 'real'; await near.click(); assert.ok(!confirm.hidden);
+    def.onState(S.snap);
+    assert.strictEqual(mode.value, 'fixed', 'mod değişince varsayılan (gerçek: Sabit) yeniden uygulanmalı'); assert.ok(confirm.hidden, 'mod değişince plan düşmeli');
+    mode.value = 'free'; await mode.fire('input');                           // gerçek robotta bilerek Serbest: uyarı görünür
+    assert.match(text(root), /GERÇEK ya da bilinmeyen robotta/);
+    assert.ok(all(root, (n) => /GERÇEK ya da bilinmeyen/.test(n._text) && /warn/.test(n.className)).length, 'uyarı satırı warn sınıfında olmalı');
+    def.onState(S.snap); assert.strictEqual(mode.value, 'free', 'elle seçim aynı modda korunur');
+    mode.value = 'fixed'; await mode.fire('input');
+
+    const robot = S.snap.robot;                                             // bilinmeyen mod: seçime DOKUNULMAZ (yayın aksaması varsayılanı oynatmasın)
+    mode.value = 'free'; await mode.fire('input'); S.snap.robot = null; def.onState(S.snap);
+    assert.strictEqual(mode.value, 'free'); S.snap.robot = robot; mode.value = 'fixed'; await mode.fire('input');
+    S.snap.robot.mode = 'sim'; def.onState(S.snap); assert.strictEqual(mode.value, 'free');
+    S.snap.bench = { open: true }; def.onState(S.snap); assert.strictEqual(mode.value, 'fixed', 'tezgâh: Sabit'); delete S.snap.bench;
+    S.snap.robot.mode = 'real'; def.onState(S.snap); assert.strictEqual(mode.value, 'fixed');
+    /* serbest kipte de ACİL DUR: düğmeler kapanır, komut GİTMEZ */
+    S.snap.robot.mode = 'sim'; def.onState(S.snap); await near.click(); assert.ok(!confirm.hidden);
+    S.snap.estop.latched = true; def.onState(S.snap);
+    const mN = callsTo('/api/move').length; await confirm.click(); assert.strictEqual(callsTo('/api/move').length, mN); assert.ok(confirm.hidden);
+    S.snap.estop.latched = false; S.snap.robot.mode = 'real'; def.onState(S.snap); assert.strictEqual(mode.value, 'fixed');
+  }
 
   /* §9-C: 3B gerçeklenmemişse (implemented:false) sayfa liste yöneticisi olarak çalışır, hareket düğmeleri kapalı kalır */
 
