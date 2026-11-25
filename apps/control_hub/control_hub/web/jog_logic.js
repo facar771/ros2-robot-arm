@@ -117,9 +117,71 @@
   /* Tıkla-git kapalı nedeni: genel kapanma nedenleri + güvenli kutu bilinmiyor. */
   const targetDisabledReason = (s) => disabledReason(s) || (zoneOf(s && s.robot) ? null : 'Güvenli kutu bilinmiyor: 3B hedef seçimi kapalı.');
 
+  /* ---- P1c: klavye jog. Saf durum makinesi: olay girer, eylem listesi çıkar (DOM/saat yok; node ile test edilir). ----
+   * Kodlar event.code (fiziksel tuş): Türkçe Q klavyede I tuşu "ı" üretir, harf değil konum güvenilirdir.
+   * Sıra kuralı: ikilinin ilki "+" (W=X+, S=X−). Ok tuşlarında doğal yön (→ +). Tek eksen: ilk basılan sürer. */
+  const KEY_CART = { KeyW: [0, 1], KeyS: [0, -1], KeyA: [1, 1], KeyD: [1, -1], KeyQ: [2, 1], KeyE: [2, -1],
+                     KeyI: [3, 1], KeyK: [3, -1], KeyJ: [4, 1], KeyL: [4, -1], KeyU: [5, 1], KeyO: [5, -1] };
+  const KEY_ARROW = { ArrowRight: 1, ArrowLeft: -1 }, KEY_SPEED = { ArrowUp: 1, ArrowDown: -1 }, SPEED_KEY_STEP = 5;
+  const NO_TEXT_INPUT = ['button', 'checkbox', 'radio', 'submit', 'reset'];      // bunlar odaktayken tuşlar çalışır
+  const keyJoint = (code) => { const m = /^(?:Digit|Numpad)([1-6])$/.exec(code || ''); return m ? Number(m[1]) - 1 : null; };
+  const isEditable = (t) => !!t && (t.isContentEditable === true || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
+    (t.tagName === 'INPUT' && !NO_TEXT_INPUT.includes(String(t.type || 'text').toLowerCase())));   // range dahil: ok tuşu kaydırıcıyı oynatır
+  const keyInit = () => ({ held: [], driver: null, joint: null, blocked: false });
+  const connLost = (wsState) => wsState !== 'live';
+  const keyHelp = () => [['W / S', 'X +/−'], ['A / D', 'Y +/−'], ['Q / E', 'Z +/−'], ['I / K', 'RX +/−'], ['J / L', 'RY +/−'],
+    ['U / O', 'RZ +/−'], ['1–6', 'eklem seç'], ['← / →', 'seçili eklem −/+'], ['↑ / ↓', `hız %±${SPEED_KEY_STEP}`],
+    ['Boşluk', 'jog DUR'], ['Esc', 'ACİL DUR']];
+  function keyMotion(code, st) {                         // tuş → hareket tanımı (kartezyen eksen ya da seçili eklem)
+    if (KEY_CART[code]) return { kind: 'cart', id: KEY_CART[code][0], sign: KEY_CART[code][1], code };
+    if (KEY_ARROW[code]) return st.joint === null ? null : { kind: 'joint', id: st.joint, sign: KEY_ARROW[code], code };
+    return null;
+  }
+  /* ev: {type:'down'|'up'|'blur', code, repeat, mod, editable}; ctx: {enabled, disabled (neden|null), holdAllowed}.
+   * Dönen eylemler: start{m} | stop | estop | speed{delta} | say{text,bad}; handled=true ise sayfa tuşu engeller (preventDefault). */
+  function keyStep(st0, ev, ctx) {
+    const st = { held: st0.held.slice(), driver: st0.driver, joint: st0.joint, blocked: st0.blocked }, act = [];
+    const stop = () => { if (st.driver) act.push({ t: 'stop' }); st.driver = null; };
+    if (ev.type === 'blur') {                            // odak/sekme/sayfa kaybı: her şey bırakılır
+      if (st.driver) act.push({ t: 'stop' });
+      return { state: keyInit(), actions: act, handled: false };
+    }
+    if (ev.type === 'up') {                              // bırakma HER ZAMAN işlenir (odak başka yere geçmiş olsa da)
+      st.held = st.held.filter((c) => c !== ev.code);
+      if (st.driver && st.driver.code === ev.code) { st.driver = null; act.push({ t: 'stop' }); st.blocked = st.held.length > 0; }
+      if (!st.held.length) st.blocked = false;
+      return { state: st, actions: act, handled: !!(KEY_CART[ev.code] || KEY_ARROW[ev.code]) && st0.held.includes(ev.code) };
+    }
+    if (ev.code === 'Escape') { stop(); act.push({ t: 'estop' }); return { state: keyInit(), actions: act, handled: true }; }   // her zaman çalışır
+    if (ev.mod || ev.editable) return { state: st0, actions: [], handled: false };
+    const m = keyMotion(ev.code, st), jn = keyJoint(ev.code), isSpeed = !!KEY_SPEED[ev.code];
+    if (ev.code === 'Space') {                           // boşluk: jog DUR; basılı tuşlar yeniden basılana dek yok sayılır
+      stop(); st.blocked = st.held.length > 0;
+      return { state: st, actions: act, handled: true };
+    }
+    if (!m && jn === null && !isSpeed) {
+      if (KEY_ARROW[ev.code]) { act.push({ t: 'say', text: 'Önce 1–6 ile eklem seç.', bad: true }); return { state: st, actions: act, handled: true }; }
+      return { state: st0, actions: [], handled: false };
+    }
+    if (ev.repeat) return { state: st0, actions: [], handled: true };             // tekrar eden keydown yok sayılır
+    if (!ctx.enabled) { act.push({ t: 'say', text: 'Klavye jog kapalı: “Klavyeyi etkinleştir”i işaretle.', bad: true }); return { state: st, actions: act, handled: true }; }
+    if (ctx.disabled) { stop(); act.push({ t: 'say', text: ctx.disabled, bad: true }); return { state: st, actions: act, handled: true }; }
+    if (isSpeed) { act.push({ t: 'speed', delta: KEY_SPEED[ev.code] * SPEED_KEY_STEP }); return { state: st, actions: act, handled: true }; }
+    if (jn !== null) {                                   // eklem seç (hareket sırasında seçim değişmez)
+      if (!st.driver) { st.joint = jn; act.push({ t: 'say', text: `Eklem ${jn + 1} seçildi (←/→).`, bad: false }); }
+      return { state: st, actions: act, handled: true };
+    }
+    if (!ctx.holdAllowed) { act.push({ t: 'say', text: 'Sürekli jog kapalı (yalnız bu bilgisayardan ve sunucu izin verirse).', bad: true }); return { state: st, actions: act, handled: true }; }
+    if (!st.held.includes(m.code)) st.held.push(m.code);
+    if (st.driver && st.driver.kind === m.kind && st.driver.id === m.id && st.driver.sign !== m.sign) { stop(); st.blocked = true; }   // zıt tuşlar: DUR
+    else if (!st.driver && !st.blocked) { st.driver = m; act.push({ t: 'start', m }); }                                        // yalnız ilk basılan sürer
+    return { state: st, actions: act, handled: true };
+  }
+
   window.JogLogic = { AXES, STEPS, NEAR_FRACTION, HOLD_LIN, HOLD_ANG, BEAT_MS, TTL_MS, SPEED_MIN, SPEED_MAX,
     clampPct, sliderState, stepTarget, holdTwist, moveBody, checkVerdict, explain, disabledReason, badge, poseRows,
     gripperPct, homeDeg, jointsUsable,
-    ID_PLANE, ID_TARGET, zoneOf, defaultZ, clampZ, planeSpec, markerSpec, pickToTarget, orientationFor, linearBody, targetDisabledReason };
+    ID_PLANE, ID_TARGET, zoneOf, defaultZ, clampZ, planeSpec, markerSpec, pickToTarget, orientationFor, linearBody, targetDisabledReason,
+    KEY_CART, KEY_ARROW, SPEED_KEY_STEP, keyInit, keyStep, keyHelp, keyMotion, keyJoint, isEditable, connLost };
   if (typeof module !== 'undefined') module.exports = window.JogLogic;
 })();

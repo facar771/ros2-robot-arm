@@ -7,6 +7,67 @@ const WEB = path.resolve(process.argv[2]);
 global.window = global;
 const L = require(path.join(WEB, 'jog_logic.js'));
 
+// --- P1c: klavye durum makinesi (sahte olaylar) ---
+{
+  const ctx = { enabled: true, disabled: null, holdAllowed: true };
+  const run = (st, ev, c = ctx) => L.keyStep(st, ev, c);
+  const d = (code, extra = {}) => ({ type: 'down', code, repeat: false, mod: false, editable: false, ...extra });
+  const u = (code) => ({ type: 'up', code });
+  const kinds = (r) => r.actions.map((a) => a.t);
+  let st = L.keyInit();
+  // W basılı → X+ başlar; tekrar eden keydown yok sayılır; bırakınca DUR
+  let r = run(st, d('KeyW')); st = r.state; assert.deepStrictEqual(kinds(r), ['start']);
+  assert.deepStrictEqual([r.actions[0].m.kind, r.actions[0].m.id, r.actions[0].m.sign], ['cart', 0, 1]);
+  r = run(st, d('KeyW', { repeat: true })); assert.deepStrictEqual(kinds(r), []); assert.strictEqual(r.handled, true);
+  r = run(st, u('KeyW')); st = r.state; assert.deepStrictEqual(kinds(r), ['stop']); assert.strictEqual(st.driver, null);
+  // tek eksen: W sürerken A yok sayılır; W bırakılınca DUR (A basılı olsa da yeniden başlamaz)
+  r = run(L.keyInit(), d('KeyW')); st = r.state; r = run(st, d('KeyA')); st = r.state; assert.deepStrictEqual(kinds(r), []);
+  r = run(st, u('KeyW')); st = r.state; assert.deepStrictEqual(kinds(r), ['stop']); assert.strictEqual(st.blocked, true);
+  r = run(st, d('KeyD')); assert.deepStrictEqual(kinds(r), []);                       // engelli: A hâlâ basılı
+  r = run(st, u('KeyA')); st = r.state; assert.strictEqual(st.blocked, false);       // hepsi bırakıldı: yeni basış çalışır
+  // zıt tuşlar (W+S): DUR ve ikisi bırakılana dek başlamaz
+  r = run(L.keyInit(), d('KeyW')); st = r.state; r = run(st, d('KeyS')); st = r.state;
+  assert.deepStrictEqual(kinds(r), ['stop']); assert.strictEqual(st.blocked, true);
+  r = run(st, u('KeyW')); st = r.state; assert.strictEqual(st.blocked, true);
+  r = run(st, d('KeyQ')); assert.deepStrictEqual(kinds(r), []);
+  r = run(st, u('KeyS')); st = r.state; assert.strictEqual(st.blocked, false);
+  r = run(st, d('KeyQ')); assert.deepStrictEqual(kinds(r), ['start']);
+  // blur: bırakılır ve durum sıfırlanır; sürüş yokken blur eylem üretmez
+  r = run(L.keyInit(), d('KeyE')); st = r.state; r = run(st, { type: 'blur' }); assert.deepStrictEqual(kinds(r), ['stop']); assert.deepStrictEqual(r.state, L.keyInit());
+  assert.deepStrictEqual(kinds(run(L.keyInit(), { type: 'blur' })), []);
+  // metin kutusu odağı: tuşlar yok sayılır (preventDefault yok); ama Esc yine ACİL DUR; Ctrl+W yok sayılır
+  r = run(L.keyInit(), d('KeyW', { editable: true })); assert.deepStrictEqual(kinds(r), []); assert.strictEqual(r.handled, false);
+  assert.deepStrictEqual(kinds(run(L.keyInit(), d('KeyW', { mod: true }))), []);
+  r = run(L.keyInit(), d('Escape', { editable: true })); assert.deepStrictEqual(kinds(r), ['estop']);
+  // bırakma, odak metin kutusuna geçmiş olsa da işlenir (keyup'ta editable bakılmaz)
+  r = run(L.keyInit(), d('KeyL')); st = r.state; r = run(st, u('KeyL')); assert.deepStrictEqual(kinds(r), ['stop']);
+  // Esc sürerken: önce DUR sonra ACİL DUR
+  r = run(L.keyInit(), d('KeyI')); r = run(r.state, d('Escape')); assert.deepStrictEqual(kinds(r), ['stop', 'estop']);
+  // Boşluk: jog DUR, basılı tuş yeniden basılana dek engelli
+  r = run(L.keyInit(), d('KeyU')); st = r.state; r = run(st, d('Space')); st = r.state;
+  assert.deepStrictEqual(kinds(r), ['stop']); assert.strictEqual(st.blocked, true);
+  assert.deepStrictEqual(kinds(run(st, d('KeyO'))), []);
+  // eklem kipi: ok tuşu eklem seçmeden uyarır; 1–6 seçer; →/← ±; hareket sırasında seçim değişmez
+  r = run(L.keyInit(), d('ArrowRight')); assert.deepStrictEqual(kinds(r), ['say']); assert.strictEqual(r.actions[0].bad, true);
+  r = run(L.keyInit(), d('Digit3')); st = r.state; assert.strictEqual(st.joint, 2);
+  r = run(st, d('ArrowLeft')); st = r.state; assert.deepStrictEqual([r.actions[0].m.kind, r.actions[0].m.id, r.actions[0].m.sign], ['joint', 2, -1]);
+  r = run(st, d('Digit5')); assert.strictEqual(r.state.joint, 2);
+  r = run(st, d('ArrowRight')); assert.deepStrictEqual(kinds(r), ['stop']);                 // ←+→ zıt: DUR
+  // hız: ↑/↓ ±5; tekrar yok sayılır
+  r = run(L.keyInit(), d('ArrowUp')); assert.deepStrictEqual(r.actions, [{ t: 'speed', delta: 5 }]);
+  assert.deepStrictEqual(run(L.keyInit(), d('ArrowDown')).actions, [{ t: 'speed', delta: -5 }]);
+  // kapalı klavye (GERÇEK varsayılan), ACİL DUR kilidi, sürekli kip kapalı: hareket başlamaz, neden yazılır
+  r = run(L.keyInit(), d('KeyW'), { ...ctx, enabled: false }); assert.deepStrictEqual(kinds(r), ['say']); assert.strictEqual(r.state.driver, null);
+  r = run(L.keyInit(), d('KeyW'), { ...ctx, disabled: 'ACİL DUR kilidinde (423)' }); assert.ok(!kinds(r).includes('start')); assert.ok(r.actions.some((a) => a.text.includes('423')));
+  r = run(L.keyInit(), d('KeyW'), { ...ctx, holdAllowed: false }); assert.ok(!kinds(r).includes('start'));
+  // odak ve harita yardımcıları
+  assert.strictEqual(L.isEditable({ tagName: 'INPUT', type: 'number' }), true); assert.strictEqual(L.isEditable({ tagName: 'INPUT', type: 'range' }), true);
+  assert.strictEqual(L.isEditable({ tagName: 'TEXTAREA' }), true); assert.strictEqual(L.isEditable({ tagName: 'BUTTON' }), false);
+  assert.strictEqual(L.isEditable({ tagName: 'INPUT', type: 'checkbox' }), false); assert.strictEqual(L.isEditable(null), false);
+  assert.strictEqual(L.keyJoint('Digit6'), 5); assert.strictEqual(L.keyJoint('Digit7'), null); assert.strictEqual(L.connLost('live'), false); assert.strictEqual(L.connLost('down'), true);
+  assert.strictEqual(Object.keys(L.KEY_CART).length, 12);
+}
+
 // --- P1b: tıkla-git saf mantığı ---
 const Z = { min: [0.06, -0.1, 0.02], max: [0.22, 0.1, 0.22] };
 assert.ok(Math.abs(L.defaultZ(Z) - 0.12) < 1e-9);                                  // varsayılan z = güvenli kutu ortası
