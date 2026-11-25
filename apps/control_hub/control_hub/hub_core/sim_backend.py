@@ -22,15 +22,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 from robot_core.frames import FrameError, FrameStore
-from robot_core.jog import DlsJogEngine, JogConfig
-from robot_core.jogapi import (
-    JogApiConfig,
-    JogController,
-    JogDenied,
-    frames_document,
-    replace_frames,
-    sphere_reach,
-)
+from robot_core.jogapi import JogDenied, frames_document, replace_frames, sphere_reach
 from robot_core.modelapi import ModelUnavailable, load_model
 from robot_core.profile import load_profile
 from robot_core.se3 import display_wpr
@@ -42,41 +34,18 @@ from control_hub.hub_core.commands import CommandError, parse_robot_command
 from control_hub.hub_core.sim_assets import SimAssetsError, resolve
 from control_hub.hub_core.sim_jobs import Job, SimClock, parse_move
 from control_hub.hub_core.sim_plan import PlanError, SimModel, plan_joint, plan_linear, violations_for
+from control_hub.hub_core.sim_profile import OVERRIDE_NOTE, ProfileOverrideMixin, build_jog
 
 log = logging.getLogger('control_hub.sim')
 Reply = Tuple[int, Dict[str, Any]]
 DEFAULT_SPEED_PCT = 50
 GRIPPER_PCT_PER_S = 50.0         # alet açma/kapama hızı (%/s); SİM'e özgü sahte sayı
-JOG_SPEED_SCALE = 0.2            # jog hız ölçeği (robot_viz varsayılanı); profil tavanıyla kıstırılır
 MAX_JOBS_KEPT = 32
 __all__ = ('SimBackend', 'SimClock')
 SIM_NOTE = 'SİM: gerçek robot değil; değerler ölçüm değildir (tahmini)'
 
 
-class _Joints:
-    """JointPort: ``JogController`` ölçülen eklemleri buradan okur."""
-
-    def __init__(self, sim: 'SimBackend') -> None:
-        self._sim = sim
-
-    def joint_positions(self) -> Optional[Dict[str, float]]:
-        return self._sim.joint_dict()
-
-
-class _Sink:
-    """SetpointPort: SİM'de kontrolcü ilk hedef noktaya bir tick'te ulaşır (gecikme/izleme hatası yok)."""
-
-    def __init__(self, sim: 'SimBackend') -> None:
-        self._sim = sim
-
-    def send(self, names, positions, times_s) -> None:
-        self._sim.set_joints(positions[0])
-
-    def hold(self, names, position) -> None:
-        return None
-
-
-class SimBackend:
+class SimBackend(ProfileOverrideMixin):
     name = 'sim'
     can_interrupt = True
     caps = ('sim',)
@@ -107,12 +76,7 @@ class SimBackend:
         self._tmp = Path(tempfile.mkdtemp(prefix='hub_sim_'))     # çerçeveler: kapanınca silinir
         self.frames = FrameStore(self._tmp / 'frames.yaml')
         self.spheres = SphereStore(self._tmp / 'spheres.yaml')
-        jog_cfg = JogConfig(speed_scale=min(JOG_SPEED_SCALE, self.sm.velocity_cap))
-        engine = DlsJogEngine(self.sm.chain, self.profile.safety, jog_cfg)
-        self.jog = JogController(engine, self.sm.chain, _Joints(self), _Sink(self), self.estop, self.frames,
-                                 spheres=self.spheres,
-                                 config=JogApiConfig(hold_enabled=True, hold_remote_enabled=False),
-                                 jog_config=jog_cfg, busy=self._job_running, clock=self._clock)
+        self.jog = build_jog(self)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         if autostart:
@@ -330,7 +294,9 @@ class SimBackend:
             'name': self.name, 'connected': True, 'can_interrupt': True, 'mode': 'sim',
             'moving': moving or bool((jog or {}).get('moving')),
             'estop': {'tripped': self.estop.is_set, 'reason': None, 'since': None},
-            'speed_pct': self.speed_pct, 'maturity': 'tahmini', 'stale': False, 'note': SIM_NOTE,
+            'speed_pct': self.speed_pct, 'maturity': 'tahmini', 'stale': False,
+            'note': SIM_NOTE if self.override is None else f'{SIM_NOTE} · {OVERRIDE_NOTE}',
+            'profile_override': self.profile_override_public(),
             'tool': pos, 'gripper': {'open_pct': round(gripper, 1)},
             'tcp': {'frame': 'World', 'position': pos, 'wpr_deg': rpy, 'warning': tcp_doc.get('warning'),
                     'pos_m': pos, 'rpy_deg': rpy},

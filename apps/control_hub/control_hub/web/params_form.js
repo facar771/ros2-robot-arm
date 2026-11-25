@@ -98,5 +98,41 @@ window.ParamsLogic = (() => {
     return !!(row && row.zone === 'ok' && row.fresh !== 'stale' && Number.isInteger(row.raw));
   }
 
-  return { CORE, CORE_LABEL, parse, same, fmt, changed, byField, hasError, saveGate, project, boxOf, capturable };
+  /** Ekrandaki düzenlemeler KAYITLI taslakla aynı mı? SİM, ekrandakini değil KAYITLI taslağı yükler (sayısal tolerans 1e-9). */
+  function sameEdits(a, b) {
+    const ka = Object.keys(a || {}), kb = Object.keys(b || {});
+    if (ka.length !== kb.length) return false;
+    return ka.every((k) => k in b && (a[k] === null || b[k] === null ? a[k] === b[k] : Math.abs(a[k] - b[k]) < 1e-9));
+  }
+
+  /** "SİM'e uygula" / "Sıfırla" kapıları. `sim`: GET /api/params/sim yanıtı (null = okunamadı).
+   *  Ortak engeller (yetki, gerçek robot, SİM yok, ACİL DUR, program/hareket) iki düğmeyi de kapatır; neden yazılır.
+   *  Sunucu yine de her engeli kendisi denetler (burası yalnız erken ve açıklayıcı geri bildirim). */
+  function simGate({ sim, hasDraft, stale, dirty, canControl, busy, programRunning }) {
+    const no = (why) => ({ apply: { ok: false, why }, reset: { ok: false, why } });
+    if (!canControl) return no('Kilitli/izleyici kipi: SİM profili değiştirilemez');
+    if (!sim) return no('SİM durumu okunamadı');
+    if (sim.mode === 'real') return no('Gerçek robotta kapalı: taslak yalnız SİM arka ucuna uygulanır');
+    if (sim.blocker === 'not_sim') return no('Bu Hub SİM arka ucuyla çalışmıyor (--sim ile başlat)');
+    if (sim.blocker === 'estop_latched') return no('ACİL DUR aktif: önce kilidi aç');
+    if (programRunning) return no('Program sürerken profil değiştirilemez');
+    if (sim.blocker) return no(sim.reason || 'Hareket/jog/senaryo sürerken profil değiştirilemez');
+    if (busy) return no('İşleniyor…');
+    const active = !!(sim.override && sim.override.active);
+    const reset = active ? { ok: true, why: '' } : { ok: false, why: 'Etkin taslak profil yok: zaten gerçek profil' };
+    if (!hasDraft) return { apply: { ok: false, why: 'Önce "Taslak kaydet" ile bir taslak kaydet' }, reset };
+    if (dirty) return { apply: { ok: false, why: 'Kaydedilmemiş değişiklik var: SİM kayıtlı taslağı yükler, önce "Taslak kaydet"' }, reset };
+    if (stale) return { apply: { ok: false, why: 'Taslak eski profile göre kaydedilmiş: yeniden doğrula ve "Taslak kaydet" de' }, reset };
+    return { apply: { ok: true, why: '' }, reset };
+  }
+
+  /** Etkin geçersiz kılmanın tek satırlık özeti (override: anlık görüntüdeki `profile_override` ya da null). */
+  function overrideText(o) {
+    if (!o || !o.active) return 'Gerçek profil kullanılıyor.';
+    const names = (o.fields || []).join(', '), when = String(o.applied_at || '').slice(11, 16);
+    return `Taslak profil ETKİN (yalnız SİM belleğinde): ${o.changes} alan${names ? ` — ${names}` : ''}${when ? ` · ${when} UTC` : ''}`
+      + `${o.rehomed ? ' · robot yeni limit/kutu dışında kaldığı için home’a alındı' : ''}`;
+  }
+
+  return { CORE, CORE_LABEL, parse, same, fmt, changed, byField, hasError, saveGate, project, boxOf, capturable, sameEdits, simGate, overrideText };
 })();
