@@ -69,7 +69,8 @@ def test_extension_whitelist(name):
 
 
 @pytest.mark.parametrize('name', ['x.step', 'x.STP', 'x.iges', 'x.igs'])
-def test_step_is_refused_with_a_clear_message(name):
+def test_step_is_refused_with_a_clear_message_when_the_converter_is_missing(name, monkeypatch):
+    monkeypatch.setattr(mt.sc, 'available', lambda: False)           # S2b: cascadio yok -> bugünkü mesaj
     msg = reject(name, b'ISO-10303-21;', 'step_unsupported')
     assert "STL'e çevirip yükle" in msg
 

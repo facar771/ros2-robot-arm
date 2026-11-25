@@ -1,0 +1,7 @@
+# S2b: STEP/IGES -> mesh dönüştürücüsü (UI_EMIRLER #109 kararı). SÜRÜM SABİT; değişirse
+# tests/test_step_convert.py (birim tuzağı: STEP çıktısı metre, IGES çıktısı mm) kırılır.
+# cascadio, OpenCASCADE DLL'lerini içinde getirir (LGPL-2.1 + istisna): docs/THIRD_PARTY.md.
+# Modül kurulu değilse Hub açılır; yalnız STEP/IGES yüklemesi "dönüştürücü kurulu değil" der.
+cascadio==0.1.1
+# cascadio numpy'ı içe aktarır ama paket meta verisinde bildirmez; numpy zaten Hub bağımlılığıdır (hub.spec).
+numpy

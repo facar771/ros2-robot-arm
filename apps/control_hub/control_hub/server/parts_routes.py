@@ -29,7 +29,10 @@ from control_hub.hub_core import parts_store as ps
 B64_OVERHEAD = 4 / 3
 MAX_BODY = int(mt.MAX_FILE_BYTES * B64_OVERHEAD) + 64 * 1024        # base64 + JSON zarfı
 UPLOAD_STATUS = {'too_large': 413, 'bad_extension': 415, 'step_unsupported': 415, 'bad_filename': 400,
-                 'bad_unit': 400}                                    # diğer mesh hataları: 422
+                 'bad_unit': 400, 'step_timeout': 422, 'step_crashed': 422, 'step_failed': 422,
+                 'too_many_triangles': 422}                          # diğer mesh hataları: 422
+STEP_UNIT_NOTE = 'STEP/IGES dosyasında birim dosyadan okunur; parça mm olarak kaydedildi.'
+STEP_NOTICE = mt.sc.LICENSE_NOTICE
 
 
 def install(app, ctx) -> None:
@@ -38,6 +41,12 @@ def install(app, ctx) -> None:
         data_error = ''
     except ValueError as exc:             # geçersiz HUB_DATA_DIR: Hub açılır, yalnız parça uçları 503 verir
         store, data_error = None, str(exc)
+
+    try:                                   # alt sürecin geçici dosyaları: yalnız HUB_DATA_DIR/tmp (K6)
+        step_tmp = str(ps.parts_dir().parent / 'tmp')
+        mt.sc.sweep(step_tmp)
+    except (ValueError, OSError):
+        step_tmp = None
 
     def need_store():
         if store is None:
@@ -74,9 +83,10 @@ def install(app, ctx) -> None:
         parts, problems = await run(need_store().list)
         return {'ok': True, 'parts': [ps.public_view(p) for p in parts], 'problems': problems,
                 'limits': {'max_parts': ps.MAX_PARTS, 'max_file_mb': mt.MAX_FILE_BYTES // (1024 * 1024),
-                           'max_triangles': mt.MAX_TRIANGLES, 'formats': list(mt.ALLOWED_EXT),
+                           'max_triangles': mt.MAX_TRIANGLES, 'formats': mt.cad_formats(),
                            'units': list(mt.UNIT_FACTORS), 'kinds': ps.KIND_LABELS},
-                'step': {'available': False, 'message': mt.STEP_MESSAGE}}
+                'step': {'available': mt.sc.available(), 'message': mt.STEP_MESSAGE,
+                         'notice': STEP_NOTICE, 'timeout_s': mt.sc.TIMEOUT_S, 'unit': 'mm'}}
 
     @app.get('/api/parts/{part_id}/mesh')
     async def part_mesh(part_id: str, request: Request):
@@ -94,7 +104,10 @@ def install(app, ctx) -> None:
         kind = body.get('kind', 'workpiece')
         b64 = body.get('data_b64')
         try:
-            mt.extension_of(filename)                          # ad/uzantı, base64'ü çözmeden ÖNCE
+            ext = mt.extension_of(filename)                    # ad/uzantı, base64'ü çözmeden ÖNCE
+            is_cad = ext in mt.STEP_EXT
+            if is_cad:
+                unit = mt.DEFAULT_UNIT                         # STEP/IGES çıktısı hep mm (step_convert)
             mt.unit_factor(unit)
             ps.check_kind(kind)
             if not isinstance(b64, str) or not b64:
@@ -106,7 +119,7 @@ def install(app, ctx) -> None:
                 raw = base64.b64decode(b64, validate=True)
             except (binascii.Error, ValueError):
                 raise mt.MeshToolError('bad_base64', 'Dosya içeriği geçerli base64 değil') from None
-            mesh = await asyncio.to_thread(mt.import_mesh, filename, raw)
+            mesh = await asyncio.to_thread(mt.import_mesh, filename, raw, step_tmp)
         except mt.MeshToolError as exc:
             raise ctx.api_error(UPLOAD_STATUS.get(exc.code, 422), exc.code, str(exc)) from None
         except ps.PartError as exc:
@@ -116,6 +129,8 @@ def install(app, ctx) -> None:
         meta = await run(need_store().add, name=name, kind=kind, unit=unit, filename=filename, mesh=mesh)
         view = ps.public_view(meta)
         warnings: List[str] = list(mesh.warnings)
+        if is_cad and body.get('unit', mt.DEFAULT_UNIT) != mt.DEFAULT_UNIT:
+            warnings.append(STEP_UNIT_NOTE)
         if view['size_warning']:
             warnings.append(view['size_warning'])
         hub = ctx.hub
