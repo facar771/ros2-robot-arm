@@ -1,5 +1,5 @@
 """P1b 3B tıkla-git: sayfanın gönderdiği doğrusal hedef gövdesi (SİM: yönelim 'free') kuru kontrolden geçer,
-kontrol robotu oynatmaz, ACİL DUR'da hareket 423 alır. Tıklama/işaret mantığı node testinde (tests/js/jog_logic_check.js)."""
+kontrol robotu oynatmaz, ACİL DUR'da hareket 423 alır. Tıklama/işaret mantığı: tests/js/jog_logic_check.js."""
 import pytest
 from fastapi.testclient import TestClient
 
