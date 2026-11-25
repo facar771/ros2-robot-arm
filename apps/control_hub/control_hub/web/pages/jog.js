@@ -166,6 +166,85 @@
     f.value = (L.defaultZ(z) * 1000).toFixed(0); f.min = (z.min[2] * 1000).toFixed(0); f.max = (z.max[2] * 1000).toFixed(0);   // varsayılan = güvenli kutu ortası
   }
 
+  /* ---- Klavye jog (P1c): kararlar L.keyStep'te (saf); burada yalnız olay bağlama + kalp atışı. Kalp atışı basılı-tut motoruyla
+   * aynı: 100 ms, ttl_ms 250, aynı URL/gövde; asıl dead-man sunucuda. Motor (jog.js) dışa açmadığı için kendi kira (lease) kimliği
+   * kullanılır; mouse tutuşu varsa önce bırakılır (aynı anda tek hareket). Yalnız Kontrol sayfası görünürken dinler. ---- */
+  const K = { st: null, enabled: false, mode: null, lease: null, beat: null, held: null, allowed: false, on: false };
+  const newKeyLease = () => { const b = new Uint8Array(12); crypto.getRandomValues(b); return 'kb-' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(''); };
+  const kbCtx = () => ({ enabled: K.enabled, disabled: L.disabledReason(P.snap), holdAllowed: K.allowed });
+  function kbInfo() {
+    const n = q('jp-kb-info'); if (!n) return;
+    const d = K.st.driver, ax = d ? (d.kind === 'cart' ? L.AXES[d.id][0] : `J${d.id + 1}`) + (d.sign > 0 ? '+' : '−') : null;
+    n.textContent = `Eklem: ${K.st.joint === null ? 'seçilmedi' : K.st.joint + 1} · Hareket: ${ax || 'yok'} · Hız: %${JogPanel.speed()}`;
+  }
+  function kbStop(quiet) {
+    if (K.beat) { clearInterval(K.beat); K.beat = null; }
+    const h = K.held; K.held = null;
+    if (h && !quiet) api(h.spec.url, 'POST', { lease: K.lease, ttl_ms: 0 }).catch((e) => { if (e.status !== 423) JogPanel.say(L.explain(e), true); });   // bırakma; kaybolursa sunucu TTL'i durdurur
+  }
+  async function kbBeat() {
+    const h = K.held; if (!h || h.inflight) return;
+    if (L.connLost(typeof S !== 'undefined' ? S.wsState : 'live')) { kbEvent({ type: 'blur' }); JogPanel.say('Hub bağlantısı koptu: jog durdu.', true); return; }
+    h.inflight = true;
+    try {
+      const doc = await api(h.spec.url, 'POST', { lease: K.lease, frame: JogPanel.frame(), ...h.spec.body, ttl_ms: L.TTL_MS });
+      if (doc && doc.state === 'at_limit') kbEvent({ type: 'blur' });
+    } catch (e) {
+      JogPanel.say(L.explain(e), true);
+      if (e.status === 403) K.allowed = false;
+      kbEvent({ type: 'blur' });
+    } finally { h.inflight = false; }
+  }
+  function kbStart(m) {
+    JogPanel.stopHold(); kbStop(true);
+    const spec = m.kind === 'cart' ? { url: '/api/jog', body: { twist: L.holdTwist(m.id, m.sign, JogPanel.speed()) } }
+      : { url: '/api/jog/joint', body: { joint: m.id, dir: m.sign, speed_pct: JogPanel.speed() } };
+    K.held = { spec, inflight: false }; kbBeat(); K.beat = setInterval(kbBeat, L.BEAT_MS);
+  }
+  function kbEvent(ev) {
+    K.st = K.st || L.keyInit();
+    const r = L.keyStep(K.st, ev, kbCtx()); K.st = r.state;
+    for (const a of r.actions) {
+      if (a.t === 'start') kbStart(a.m);
+      else if (a.t === 'stop') kbStop();
+      else if (a.t === 'estop') { const b = q('btn-estop'); if (b) b.click(); }            // mevcut ACİL DUR düğmesiyle aynı yol (app.js onEstop)
+      else if (a.t === 'speed') { const sl = q('jp-speed'); if (sl) { sl.value = String(L.clampPct(Number(sl.value) + a.delta)); sl.dispatchEvent(new Event('input')); } }
+      else if (a.t === 'say') JogPanel.say(a.text, a.bad);
+    }
+    kbInfo(); return r.handled;
+  }
+  const onKeyDown = (ev) => { if (kbEvent({ type: 'down', code: ev.code, repeat: ev.repeat, mod: ev.ctrlKey || ev.altKey || ev.metaKey, editable: L.isEditable(ev.target) })) ev.preventDefault(); };
+  const onKeyUp = (ev) => { if (kbEvent({ type: 'up', code: ev.code })) ev.preventDefault(); };
+  const onBlur = () => kbEvent({ type: 'blur' });
+  const onVis = () => { if (document.hidden) kbEvent({ type: 'blur' }); };
+  const onPageHide = () => {
+    if (!K.held) return;
+    try { navigator.sendBeacon(K.held.spec.url, new Blob([JSON.stringify({ lease: K.lease, ttl_ms: 0 })], { type: 'application/json' })); } catch (e) { /* sunucu TTL'i durdurur */ }
+  };
+  function kbAttach(on) {
+    if (on === K.on) return;
+    K.on = on; K.st = K.st || L.keyInit(); const f = on ? 'addEventListener' : 'removeEventListener';
+    document[f]('keydown', onKeyDown); document[f]('keyup', onKeyUp); document[f]('visibilitychange', onVis);
+    window[f]('blur', onBlur); window[f]('pagehide', onPageHide);
+    if (on) { K.lease = K.lease || newKeyLease(); api('/api/jog').then((st) => { K.allowed = !!(st && st.hold_allowed); }).catch(() => { K.allowed = false; }); }
+    else kbEvent({ type: 'blur' });                              // sayfadan çıkış = DUR
+  }
+  function kbSyncMode(r) {                                       // GERÇEK/TEZGÂH'ta varsayılan KAPALI, SİM'de açık; mod değişince yeniden
+    if (!r || r.mode === K.mode) return;
+    K.mode = r.mode; K.enabled = r.mode === 'sim'; kbEvent({ type: 'blur' });
+    const c = q('jp-kb-en'); if (c) c.checked = K.enabled;
+  }
+  function buildKeys() {
+    const en = el('input', { type: 'checkbox', id: 'jp-kb-en' });
+    en.addEventListener('change', () => { K.enabled = en.checked; if (!K.enabled) kbEvent({ type: 'blur' }); });
+    const rows = L.keyHelp().map(([k, d]) => el('div', { class: 'kb-row' }, [el('kbd', { text: k }), el('span', { text: d })]));
+    return el('div', { class: 'card', id: 'p-keys' }, [el('h2', { text: 'Klavye jog' }),
+      el('label', { class: 'jp-f' }, [en, el('span', { text: 'Klavyeyi etkinleştir (SİM’de açık; GERÇEK/TEZGÂH’ta varsayılan kapalı)' })]),
+      el('div', { class: 'kb-map' }, rows),
+      el('div', { class: 'say', text: 'Basılı tut = hareket, bırak = DUR. Aynı anda tek eksen; zıt tuşlar birlikte = DUR. Metin kutusundayken tuşlar çalışmaz (Esc hariç).' }),
+      el('div', { class: 'say', id: 'jp-kb-info', text: 'Eklem: seçilmedi · Hareket: yok' })]);
+  }
+
   function buildPanels() {
     const go = el('button', { class: 'primary', id: 'jp-go', type: 'button', text: 'Git (önce kontrol)' });
     go.addEventListener('click', onGo);
@@ -187,7 +266,7 @@
       el('div', { class: 'card', id: 'p-joints' }, [el('h2', { text: 'Eklemler' }), el('div', { id: 'jp-joints', class: 'jp-joints' }),
         el('div', { class: 'row' }, [go, home, sync]), el('div', { class: 'say', id: 'jp-gwhy' }),
         el('div', { class: 'say jp-msg', id: 'jp-gmsg', role: 'alert' })]),
-      jogSlot,
+      jogSlot, buildKeys(),
       el('div', { class: 'card', id: 'p-tool' }, [el('h2', { text: 'Alet (gripper)' }),
         el('div', { class: 'jp-grip' }, [gbtn(100, 'Aç'), grip, gbtn(0, 'Kapat')]),
         el('div', { class: 'jp-vals' }, [el('span', { text: 'Hedef ' }), out('jp-grip-t', '%0'), el('span', { text: ' · Gerçek ' }), out('jp-grip-a')])])];
@@ -205,6 +284,7 @@
   function onState(s) {
     P.snap = s;
     JogPanel.onState(s);
+    kbSyncMode(s.robot); if (L.disabledReason(s) && K.held) kbEvent({ type: 'blur' });
     const r = s.robot || {};
     if (!q('p-pose')) return;
     initTargetZ();
@@ -251,8 +331,8 @@
       HubPages.mountView(P.view);
       trackTopbar();
     },
-    onShow() { HubPages.mountView(P.view); },
-    onHide() { if (window.JogPanel) { JogPanel.stopHold(); JogPanel.release(false); } setPickMode(false); clearTarget(); },
+    onShow() { HubPages.mountView(P.view); kbAttach(true); },
+    onHide() { if (window.JogPanel) { JogPanel.stopHold(); JogPanel.release(false); } setPickMode(false); clearTarget(); kbAttach(false); },
     onState,
   });
 })();
