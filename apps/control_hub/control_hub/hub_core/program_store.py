@@ -137,18 +137,29 @@ def _step(raw: Any, path: str, errs: List[Dict[str, str]], in_loop: bool) -> Dic
             out['joints_deg'] = _vec(raw['joints_deg'], (1, MAX_JOINTS), -JOINT_ABS_DEG, JOINT_ABS_DEG,
                                      f'{path}.joints_deg', errs)
     elif kind == 'move_l':
-        _keys(raw, {'kind', 'pos_m', 'rpy_deg', 'waypoint', 'offset_m'}, path, errs)
+        _keys(raw, {'kind', 'pos_m', 'rpy_deg', 'waypoint', 'offset_m', 'orientation'}, path, errs)
+        ori = raw.get('orientation', 'fixed')
+        free = ori == 'free'                      # yalnız konum hedefi; yönelimi çözücü belirler (#108)
+        if not free and ori != 'fixed':
+            _err(errs, f'{path}.orientation', "yönelim 'fixed' ya da 'free' olmalı")
+        if free:
+            out['orientation'] = 'free'                        # 'fixed' varsayılandır: kayda yazılmaz
         if 'waypoint' in raw:
             out['waypoint'] = _name(raw['waypoint'], f'{path}.waypoint', errs)
             out['offset_m'] = _vec(raw.get('offset_m', [0, 0, 0]), (3, 3), -OFFSET_ABS_M, OFFSET_ABS_M,
                                    f'{path}.offset_m', errs)
             if 'pos_m' in raw or 'rpy_deg' in raw:
                 _err(errs, path, 'move_l: waypoint ile pos_m/rpy_deg birlikte verilmez')
-        elif 'pos_m' in raw and 'rpy_deg' in raw and 'offset_m' not in raw:
+        elif free and 'rpy_deg' in raw:
+            _err(errs, path, "move_l: orientation:'free' ile rpy_deg birlikte verilmez")
+        elif 'pos_m' in raw and ('rpy_deg' in raw or free) and 'offset_m' not in raw:
             out['pos_m'] = _vec(raw['pos_m'], (3, 3), -POS_ABS_M, POS_ABS_M, f'{path}.pos_m', errs)
-            out['rpy_deg'] = _vec(raw['rpy_deg'], (3, 3), -RPY_ABS_DEG, RPY_ABS_DEG, f'{path}.rpy_deg', errs)
+            if not free:
+                out['rpy_deg'] = _vec(raw['rpy_deg'], (3, 3), -RPY_ABS_DEG, RPY_ABS_DEG,
+                                      f'{path}.rpy_deg', errs)
         else:
-            _err(errs, path, 'move_l: (pos_m + rpy_deg) ya da (waypoint [+ offset_m])')
+            _err(errs, path, "move_l: (pos_m + rpy_deg | pos_m + orientation:'free') "
+                             'ya da (waypoint [+ offset_m])')
     elif kind == 'wait':
         _keys(raw, {'kind', 's'}, path, errs)
         out['s'] = _num(raw.get('s'), 0.0, MAX_WAIT_S, f'{path}.s', errs)

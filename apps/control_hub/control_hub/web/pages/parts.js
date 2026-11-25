@@ -3,6 +3,7 @@
  * Sahne: HubScene (UI_CONTRACT §9-C); nesne kimlikleri `parts:` önekli (parça = `parts:<uuid>`, yardımcılar `parts:ap-…`).
  * GÜVENLİK: hareket yalnız "önce kontrol, sonra onay" akışıyla gider (approach.js: checkMove/executeMove): kontrolden
  * geçmeyen hedefe, bayat plana, bayat robot verisinde ya da ACİL DUR'da komut GİTMEZ. ACİL DUR yalnız üst çubuktadır.
+ * Yönelim kipi: SİM'de Serbest (rpy_deg gitmez), gerçek/tezgâhta Sabit; kip her çağrıda `orientation` olarak gider.
  * Bu sayfa hareketi TUTMAZ (tek seferlik komut); yine de sayfadan çıkınca plan düşer. Parça konumu ÖLÇÜM değildir
  * (gerçek parçayla uyuştuğu VARSAYILIR). Veri yalnız textContent ile yazılır. */
 'use strict';
@@ -15,15 +16,22 @@
   const MAX_BYTES = 50 * 1024 * 1024, B64_CHUNK = 0x8000, DELETE_ARM_MS = 4000;
   const DEFAULT_D_MM = 50, DEFAULT_SPEED_PCT = 10;                         // KARAR GEREKLİ: varsayılanlar (PR'da)
   const TINT = { pending: 0xf0883e, ok: 0x3fb950, bad: 0xda3633, tool: 0xd29922 };
-  const AP = { point: 'parts:ap-point', line: 'parts:ap-line', frame: 'parts:ap-frame', ghost: 'parts:ap-ghost' };
+  const AP = { point: 'parts:ap-point', line: 'parts:ap-line', frame: 'parts:ap-frame', ghost: 'parts:ap-ghost', tgt: 'parts:ap-tgt' };
   const PART_SCENE_ID = /^parts:[0-9a-f]{32}$/;                           // yalnız parça nesneleri; ap-* yardımcıları buraya girmez
   const POSE_KEYS = [['x', 'x (mm)'], ['y', 'y (mm)'], ['z', 'z (mm)'], ['r', 'roll (°)'], ['p', 'pitch (°)'], ['w', 'yaw (°)']];
   const ORIENT_TEXT = { normal: 'Takım yüzeye dik baksın (−normal)', down: 'Hep aşağı bak', keep: 'Mevcut yönelimi koru' };
+  /* Hareket yönelimi (UI_CONTRACT §9-B `orientation`): varsayılan SİM'de 'free', gerçek robotta 'fixed' (scene_logic.js). */
+  const MODE_TEXT = [['free', 'Serbest (robot yönelimi seçer)'], ['fixed', 'Sabit (yönelimi aşağıdan seç)']];
+  const MODE_HINT = {
+    free: ['Serbest: yalnız KONUM hedeflenir, yönelimi robot seçer; alet yüzeye dik BAKMAYABİLİR. Dik/aşağı bakış gerekiyorsa Sabit seç.', ''],
+    freeReal: ['Serbest yönelim GERÇEK ya da bilinmeyen robotta: alet beklenmedik açıyla gelebilir. Hedefi 3B’de iyi kontrol et.', 'warn'],
+    fixed: ['Sabit: alet yönelimi seçtiğin gibi tutulur; bilek tekilliği yanındaki hedefler reddedilebilir (o zaman Serbest dene).', ''],
+  };
   const ASSUMPTION = 'Not: 3B’deki parça konumunun gerçek parçayla uyuştuğu VARSAYILIR; bu bir ölçüm değildir (tahmini).';
 
   const P = { root: null, view: null, scene: null, parts: [], limits: null, step: null, selId: null, pick: null, target: null,
     plan: null, speed: null, busy: false, unsub: [], ui: {}, delTimer: null, gizmo: null, fresh: false,
-    saving: Promise.resolve(), editSeq: 0 };                                // kayıt zinciri + kullanıcı yazım sayacı
+    saving: Promise.resolve(), editSeq: 0, modeKey: null };                                // kayıt zinciri + kullanıcı yazım sayacı
 
   /* ---------- küçük yardımcılar ---------- */
   const say = (n, text, cls = '') => { n.textContent = text; n.className = 'say ' + cls; };
@@ -216,17 +224,23 @@
     P.ui.ap.info.textContent = `Nokta (mm): ${P.pick.point_m.map(mm).join(' · ')}  ·  yüzey normali: ${n}`;
   }
   function drawTarget(t) {
-    put({ id: AP.frame, kind: 'frame', layer: 'path', geometry: { size_m: 0.05 }, pose: t });
     put({ id: AP.line, kind: 'polyline', layer: 'path', geometry: { points_m: [P.pick.point_m, t.pos_m] }, color: TINT.pending });
+    if (t.orientation === 'free') {                                        // yönelim yok: çerçeve/gölge takım çizilmez, yalnız hedef noktası
+      drop(AP.frame); drop(AP.ghost);
+      put({ id: AP.tgt, kind: 'marker', layer: 'path', geometry: { radius_m: 0.008 }, pose: { pos_m: t.pos_m, rpy_deg: [0, 0, 0] }, color: TINT.pending, opacity: 0.9 });
+      return;
+    }
+    drop(AP.tgt);
+    put({ id: AP.frame, kind: 'frame', layer: 'path', geometry: { size_m: 0.05 }, pose: t });
     const tool = P.parts.find((p) => p.kind === 'tool' && p.visible), off = P.scene && P.scene.tcpOffset();
     if (tool && off) {                                                     // gölge takım: bu hedefte takım nerede olur
       put({ id: AP.ghost, kind: 'mesh', layer: 'path', geometry: { url: tool.url, scale: tool.unit_m * tool.scale },
         pose: SL().ghostToolPose(t, off, tool.tool_offset), color: TINT.tool, opacity: 0.4 });
     } else drop(AP.ghost);
   }
-  function tint(c) { for (const id of [AP.line, AP.ghost]) if (has(id)) P.scene.updateObject(id, { color: c }); }
+  function tint(c) { for (const id of [AP.line, AP.ghost, AP.tgt]) if (has(id)) P.scene.updateObject(id, { color: c }); }
   function clearPlan(msg) {
-    P.plan = null; P.target = null; for (const id of [AP.frame, AP.line, AP.ghost]) drop(id);
+    P.plan = null; P.target = null; for (const id of [AP.frame, AP.line, AP.ghost, AP.tgt]) drop(id);
     P.ui.ap.warn.textContent = ''; say(P.ui.ap.say, msg || '', ''); setApButtons();
   }
   function onPick(res) {                                                    // §9-C: yalnız isabette çağrılır (boşluğa dokunuş gelmez)
@@ -234,6 +248,20 @@
     P.pick = res; clearPlan(''); drawPoint();
     if (PART_SCENE_ID.test(res.objectId || '')) choose(res.objectId.slice('parts:'.length), false);
     setApButtons();
+  }
+  /* Yönelim kipi: SİM'de varsayılan Serbest, gerçek/tezgâhta Sabit. Mod DEĞİŞİNCE (sim↔real) varsayılan yeniden uygulanır ve plan düşer;
+   * kullanıcı kipi elle değiştirdiyse aynı modda durum yayınları onu ezmez. Mod bilinmiyorsa (robot bildirimi yok) dokunulmaz. */
+  function showMoveMode() {
+    const A = P.ui.ap, free = A.mode.value === 'free', [txt, cls] = MODE_HINT[free ? (P.modeKey === 'sim' ? 'free' : 'freeReal') : 'fixed'];
+    A.orientField.hidden = free; say(A.modeHint, txt, cls);
+  }
+  function syncMoveMode() {
+    const A = P.ui.ap, key = window.ShellLogic ? window.ShellLogic.modeInfo(S.snap).key : 'unknown';
+    if (key !== 'unknown' && key !== P.modeKey) {
+      P.modeKey = key; const want = SL().defaultMoveOrientation(key);
+      if (A.mode.value !== want) { A.mode.value = want; if (P.plan || P.target) clearPlan('Mod değişti: yönelim varsayılanı uygulandı, yeniden kontrol et'); }
+    }
+    showMoveMode();
   }
   async function approach(zero) {
     const A = P.ui.ap;
@@ -243,7 +271,7 @@
     let t;
     try {
       const cur = reportedTcp();
-      t = SL().approachTarget(P.pick.point_m, P.pick.normal, cfg.dMm, { orientation: A.orient.value, currentRpy: cur && cur.rpy_deg });
+      t = SL().approachTarget(P.pick.point_m, P.pick.normal, cfg.dMm, { orientation: A.orient.value, currentRpy: cur && cur.rpy_deg, moveOrientation: A.mode.value });
     } catch (e) { say(A.say, e.message, 'bad'); return; }
     P.target = t; P.speed = cfg.speedPct; P.plan = null; drawTarget(t);
     say(A.warn, t.gimbal ? 'Hedef yönelimi pitch ±90° yakınında (kilitlenme): roll/yaw birleşir.' : '', 'warn');
@@ -251,7 +279,7 @@
     const res = await AM().checkMove(api, t, cfg.speedPct);
     P.busy = false;
     if (P.target !== t) { setApButtons(); return; }                        // bu arada başka hedef seçildi
-    if (res.ok) { P.plan = res.plan; tint(TINT.ok); say(A.say, 'Kontrol geçti. Onaylarsan robot hareket eder.', 'ok'); }
+    if (res.ok) { P.plan = res.plan; tint(TINT.ok); say(A.say, `Kontrol geçti${t.orientation === 'free' ? ' (yönelimi robot seçer)' : ''}. Onaylarsan robot hareket eder.`, 'ok'); }
     else { P.plan = null; tint(TINT.bad); say(A.say, `${res.message} — hareket GÖNDERİLMEDİ`, 'bad'); }
     setApButtons();
   }
@@ -301,15 +329,17 @@
   }
   function buildApproach() {
     const A = P.ui.ap = { d: input('d', { value: String(DEFAULT_D_MM) }), speed: input('speed', { value: String(DEFAULT_SPEED_PCT) }),
-      orient: select('orient', Object.entries(ORIENT_TEXT)), info: el('div', { class: 'muted', text: 'Henüz nokta seçilmedi.' }),
+      orient: select('orient', Object.entries(ORIENT_TEXT)), mode: select('orientmode', MODE_TEXT), modeHint: el('div', { class: 'say' }), info: el('div', { class: 'muted', text: 'Henüz nokta seçilmedi.' }),
       say: el('div', { class: 'say' }), warn: el('div', { class: 'say warn' }), why: el('div', { class: 'say' }) };
-    for (const e of [A.d, A.speed, A.orient]) e.addEventListener('input', () => { if (P.plan || P.target) clearPlan('Ayar değişti: yeniden kontrol et'); });
+    A.mode.value = SL().defaultMoveOrientation(P.modeKey); A.orientField = field('Sabit yönelimde alet nasıl baksın', A.orient);
+    for (const e of [A.d, A.speed, A.orient, A.mode]) e.addEventListener('input', () => { if (P.plan || P.target) clearPlan('Ayar değişti: yeniden kontrol et'); });
+    A.mode.addEventListener('input', showMoveMode);
     A.near = btn('Yaklaş (mesafe kadar önünde dur)', 'approach', () => approach(false));
     A.go0 = btn('Git (yüzeye değ, d = 0)', 'touch', () => approach(true));
     A.ok = btn('Onayla ve hareket et', 'confirm', confirmMove, 'primary'); A.ok.hidden = true;
     return el('div', { class: 'card' }, [el('h2', { text: 'Dokun-git / Yaklaş' }),
       el('div', { class: 'say', text: '3B’de parça yüzeyine dokun: nokta ve yüzey normali alınır. Önce kontrol edilir, sonra onayınla hareket eder.' }),
-      A.info, el('div', { class: 'pose-grid' }, [field('Mesafe d (mm)', A.d), field('Hız (%)', A.speed)]), field('Takım yönelimi', A.orient),
+      A.info, el('div', { class: 'pose-grid' }, [field('Mesafe d (mm)', A.d), field('Hız (%)', A.speed)]), field('Yönelim', A.mode), A.modeHint, A.orientField,
       el('div', { class: 'row' }, [A.near, A.go0]), A.why, A.warn, A.say, A.ok, el('div', { class: 'say warn', text: ASSUMPTION })]);
   }
   function buildSide(viewTools) {                                           // yan sütun: görünüm araçları, liste, yükleme, seçili parça, dokun-git
@@ -346,7 +376,7 @@
     async mount(root) {
       P.root = root; P.view = el('div', { class: 'parts-view' });
       root.append(el('div', { class: 'page-grid two' }, [P.view, buildSide(buildViewTools())]));   // 3B tuval ızgaranın DOĞRUDAN çocuğu (sticky için)
-      await attachScene(); await reload(); P.fresh = true;                   // show() mount'tan hemen sonra onShow çağırır: ikinci yükleme gereksiz
+      syncMoveMode(); await attachScene(); await reload(); P.fresh = true;                   // show() mount'tan hemen sonra onShow çağırır: ikinci yükleme gereksiz
     },
     onShow() {
       if (P.fresh) { P.fresh = false; return; }
@@ -357,6 +387,6 @@
       if (P.scene) { P.scene.disableGizmo(); P.scene.setPickLayers(DEFAULT_PICK); P.scene.select(null); }
       P.gizmo = null; P.pick = null; clearPlan(''); drop(AP.point); P.ui.ap.info.textContent = 'Henüz nokta seçilmedi.';
     },
-    onState() { if (!P.root) return; if (estopped() || robotStale()) P.plan = null; setApButtons(); },
+    onState() { if (!P.root) return; if (estopped() || robotStale()) P.plan = null; syncMoveMode(); setApButtons(); },
   });
 })();

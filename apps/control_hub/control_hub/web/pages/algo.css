@@ -1,0 +1,43 @@
+/* Algoritmalar sayfası (A1). Yalnız .al* sınıfları; ortak style.css'e dokunulmaz. Dış adres ve içe aktarma yok (CSP: default-src 'self').
+ * Telefon (390 px): tek sütun, sıra: form -> 3B görünüm -> sonuç (değer değişince etkisi hemen altında görünür), dokunma hedefleri
+ * ≥ 44 px, 16 px yazı (iOS yakınlaştırmasın). */
+.al-side, .al-main { min-width: 0; }
+.al-view { margin-bottom: 14px; }
+@media (max-width: 1099px) {
+  .al-main { display: contents; }                 /* kartlar ızgaranın doğrudan çocuğu olur: 3B ikisinin arasına girer */
+  .al-main > .banner { order: 0; } .al-c1 { order: 1; } .al-side { order: 2; } .al-c2 { order: 3; }
+}
+
+.al input[type=text], .al select { font: inherit; font-size: 16px; min-height: 44px; min-width: 0; padding: 6px 10px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); width: 100%; box-sizing: border-box; }
+.al input[type=text].bad { border-color: var(--danger); background: #2b1211; }
+.al button.small, .al .primary { min-height: 44px; }
+.al .al-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); text-decoration: underline; }
+
+/* Üreteç seçimi: üç düğme, seçili olan vurgulu */
+.al-kinds { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.al-kind[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Parametre formu: etiket üstte, alan altta; geniş ekranda iki sütun */
+.al-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 10px 0; }
+.al-f { display: grid; gap: 4px; min-width: 0; }
+.al-f > span { color: var(--muted); font-size: .85rem; overflow-wrap: anywhere; }
+
+/* Sonuç: özet rengi = durum (yeşil: hepsi güvenli, kırmızı: ihlal var) */
+.al-sum { margin: 6px 0; font-weight: 600; color: var(--muted); }
+.al-sum.ok { color: #7ee787; }
+.al-sum.bad { color: #ff9b97; }
+.al-btns { display: grid; margin: 8px 0; }
+.al-btns .primary:disabled { opacity: .4; cursor: not-allowed; background: var(--surface-2); color: var(--muted); }
+.al-list { display: grid; gap: 4px; margin-top: 8px; max-height: 60vh; overflow: auto; }
+
+/* Adım satırı: kırmızı = ihlal (neden yazılı), yeşil kenar = denetimi geçti, soluk = not/denetlenmeyen */
+.al-step { display: grid; grid-template-columns: 2.4em auto minmax(0, 1fr); gap: 2px 8px; align-items: baseline; padding: 6px 8px;
+  border: 1px solid var(--border); border-left-width: 5px; border-radius: 10px; background: var(--surface-2); }
+.al-step.ok { border-left-color: #23552f; }
+.al-step.note { opacity: .7; }
+.al-step.bad { border-color: var(--danger); background: #2b1211; }
+.al-n { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.al-d { overflow-wrap: anywhere; }
+.al-why { grid-column: 2 / -1; font-size: .85rem; color: #ffb4b0; overflow-wrap: anywhere; }
+.al-why:empty { display: none; }

@@ -239,5 +239,53 @@ const PREVIEW_OK = { ok: true, violations: 0, rows: [{ line: 0, sub: null, kind:
     pose: { joints_deg: [0, 0, 0, 0, 0, 0] }, backend: { label: 'SİM', measured: false, mock: false }, limits: {} }) });
   const r6 = new N('section'); await sim.def.mount(r6); await flush(); sim.def.onState(snap());
   assert.strictEqual(banner(r6).hidden, true, 'SİM: SAHTE bandı görünmez');
+  /* ---- 7) Algoritmalar'dan aktarım (HubProgram.addSteps) ve orientation:'free' ---- */
+  const FREE = { kind: 'move_l', pos_m: [0.1, 0, 0.08], orientation: 'free' };
+  const t0 = load({ 'POST /api/program/check': () => PREVIEW_OK });
+  assert.strictEqual(typeof window.HubProgram.addSteps, 'function');
+  assert.strictEqual(t0.def.logic.total([{ kind: 'wait' }, { kind: 'loop', steps: [{}, {}] }]), 4, 'döngü gövdesi sayılır');
+  assert.deepStrictEqual(window.HubProgram.addSteps([]), { ok: false, message: 'Eklenecek adım yok' });
+  assert.strictEqual(window.HubProgram.addSteps('x').ok, false);
+  const early = window.HubProgram.addSteps([FREE, { kind: 'tool', open_pct: 30 }]);        // sayfa henüz AÇILMADAN
+  assert.deepStrictEqual(early, { ok: true, total: 2 });
+  const r7 = new N('section'); await t0.def.mount(r7); await flush(); t0.def.onState(snap());
+  assert.strictEqual(all(r7, (n) => n.className.includes('pg-step')).length, 2, 'açılış öncesi eklenen adımlar sayfada görünür');
+  assert.match(r7.textContent, /yönelim: serbest/, 'serbest yönelim etiketi');
+  assert.strictEqual(byTitle(r7, 'rpy (°)').length, 0, 'serbest adımda rpy alanı YOK');
+  assert.strictEqual(byTitle(r7, 'x,y,z (m)').length, 1, 'konum alanı var');
+  btn(r7, 'Önizle').click(); await flush();
+  assert.strictEqual(btn(r7, 'Çalıştır').disabled, false, 'önizleme geçti');
+  const more = window.HubProgram.addSteps([{ kind: 'comment', text: 'sonra' }]);          // sayfa açıkken
+  assert.deepStrictEqual(more, { ok: true, total: 3 });
+  assert.strictEqual(btn(r7, 'Çalıştır').disabled, true, 'eklemek önizlemeyi geçersiz kılar');
+  assert.strictEqual(all(r7, (n) => n.className.includes('pg-step')).length, 3);
+  assert.match(r7.textContent, /kaydedilmemiş/, 'ekleme kaydedilmemiş değişiklik sayılır');
+  const src = byTitle(r7, 'Hedef kaynağı')[0]; src.value = 'wp'; src.fire('change');       // Değer -> Waypoint
+  assert.ok(!/yönelim: serbest/.test(r7.textContent), 'kaynak değişince serbest yönelim bayrağı silinir (waypoint kendi yönelimini taşır)');
+  const big = Array.from({ length: 498 }, () => ({ kind: 'wait', s: 1 }));
+  const refused = window.HubProgram.addSteps(big);                                        // 3 + 498 > 500
+  assert.strictEqual(refused.ok, false); assert.match(refused.message, /En çok 500/);
+  assert.strictEqual(all(r7, (n) => n.className.includes('pg-step')).length, 3, 'reddedilince hiçbir adım eklenmez');
+  const mine = { kind: 'move_l', pos_m: [0.1, 0, 0.08], orientation: 'free' };
+  assert.strictEqual(window.HubProgram.addSteps([mine]).ok, true);
+  mine.pos_m[0] = 9;                                                                      // kaynak sonradan değişir
+  assert.strictEqual(window.HubProgram.addSteps([{ kind: 'comment', text: 'yeniden çiz' }]).ok, true);   // sayfa yeniden çizilir
+  assert.deepStrictEqual(byTitle(r7, 'x,y,z (m)').map((n) => n.value).pop(), '0.1, 0, 0.08', 'aktarılan adımlar KOPYALANIR');
+  // ad: adsız programa varsayılan ad yazılır, kullanıcının/önceki adı EZİLMEZ (Önizle/Kaydet ad ister)
+  const nameIn = () => byTitle(r7, 'Program adı')[0];
+  assert.strictEqual(nameIn().value, '', 'ad verilmeyen eklemeler adı boş bırakır');
+  assert.strictEqual(window.HubProgram.addSteps([{ kind: 'comment', text: 'a' }], 42).ok, true);
+  assert.strictEqual(nameIn().value, '', 'dize olmayan ad yok sayılır');
+  window.HubProgram.addSteps([{ kind: 'comment', text: 'b' }], '  Daire yay  ');
+  assert.strictEqual(nameIn().value, 'Daire yay', 'adsız programa varsayılan ad yazılır (kırpılmış)');
+  window.HubProgram.addSteps([{ kind: 'comment', text: 'c' }], 'Zigzag tarama');
+  assert.strictEqual(nameIn().value, 'Daire yay', 'dolu ad ezilmez');
+  nameIn().value = 'Benim programım'; nameIn().fire('change');
+  window.HubProgram.addSteps([{ kind: 'comment', text: 'd' }], 'Izgara');
+  assert.strictEqual(nameIn().value, 'Benim programım', 'kullanıcının yazdığı ad ezilmez');
+  const t1 = load({ 'GET /api/program/state': () => ({ ok: true, runner: { state: 'running', running: true, line: 0, sub: null, done: 0, total: 1, say: '' },
+    estop: false, pose: null, backend: { label: 'SİM', measured: false, mock: false }, limits: {} }) });
+  const r8 = new N('section'); await t1.def.mount(r8); await flush(); t1.def.onState(snap());
+  assert.deepStrictEqual(window.HubProgram.addSteps([FREE]), { ok: false, message: 'Program çalışıyor: bitince ekle' }, 'çalışırken ekleme reddedilir');
   console.log('PROGRAM_PAGE_OK'); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

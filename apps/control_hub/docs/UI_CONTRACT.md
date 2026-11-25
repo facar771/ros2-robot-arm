@@ -171,6 +171,7 @@ KIRMAMAK için olduğu gibi kalır; yenileri **ekle**nir. Yeni sayfa yalnız aş
 | `snap.robot.joints[]` | `{name, rad, deg}` | VAR | S1 ekler: `min_deg`, `max_deg`, `near_limit` (bool; limitin %5'i içinde). |
 | `snap.robot.tcp` | `{frame, position, wpr_deg, warning}` | VAR | S1 ekler: `pos_m` (= `position`, metre, dünya), `rpy_deg` (= `wpr_deg`: **W-P-R, derece**, `R = Rz(R)·Ry(P)·Rx(W)`; FANUC düzeni, `robot_core.se3`). Yeni sayfa `pos_m`/`rpy_deg` okur. |
 | `snap.robot.gripper` | `{open_pct: sayı\|null}` | S1 | `null` = alet yok/bilinmiyor. (`robot.tool` eski alan: uç konumu, okunmaz.) |
+| `snap.robot.home_deg` | `[derece,…]` (isteğe bağlı) | S1/P1 | Başlangıç (home) eklem açıları; yoksa Kontrol sayfasında Home kapalı. Yalnız `--sim` doldurur. |
 | `snap.robot.safe_zone` | `{min:[x,y,z], max:[x,y,z]}` metre | S1 | Robotun kendi güvenli kutusu; Hub yalnız GÖSTERİR (K3-c). |
 | `snap.robot.maturity` | `'tahmini'\|'olculdu'` | S1 | Ölçülmemiş her değer "tahmini" etiketi taşır (K3-e). |
 | `snap.robot.stale` | bool | S1 | `stale_s > 1`. Bayatken sayfa komut düğmelerini kapatır. |
@@ -186,6 +187,7 @@ ACİL DUR sonrası hiçbir iş kendiliğinden devam etmez.
 | `POST /api/move/check` | `/api/move` ile AYNI gövde; **hareket ETMEZ** → **200** `{ok, violations:[{kind, at_pct, message}]}` (`ok:false` ise ihlal var; `at_pct` 0–100: yolun neresinde) | S1 |
 | `POST /api/move/stop` · `pause` · `resume` | `{}` → `{ok:true}`; çalışan iş yoksa **409** `not_running` | S1 |
 | `GET /api/move/{job_id}` | → `{ok, job:{id, type, state:'running\|paused\|done\|failed\|cancelled', progress_pct, error, message}}`; bilinmeyen **404** `unknown_job` | S1 |
+| `POST /api/jog/joint` | `{lease, joint, dir:±1, ttl_ms, speed_pct?}`: TEK eklemi basılı-tutla sürer (P1). Komut = heartbeat; `ttl_ms` ≤ 500 (varsayılan 250) içinde yenilenmezse **sunucu** durdurur; `ttl_ms:0` bırakır. 423 ACİL DUR · 403 `hold_local_only` (telefon) · 409 `joint_limit`/`busy` · 501 backend yok | P1 |
 | `POST /api/sim/speed` | `{speed_pct}` (1–100) → `{ok, speed_pct}`; robotun genel hızı. Yalnız SİM | S1 |
 | `POST /api/sim/reset` | `{}` → home'a döner. Yalnız SİM'de; başka modda **409** `not_sim`; ACİL DUR'da **423** | S1 |
 | `POST /api/jog`, `/api/jog` (GET), `/api/frames*`, `/api/model` | mevcut jog uçları | VAR (korunur) |

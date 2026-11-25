@@ -1,204 +1,235 @@
-/* Jog paneli (J3; app.js'ten sonra yüklenir). Veri textContent ile yazılır (innerHTML yok).
- * Varsayılan ARTIMLI: tek tık = tek adım (0.1 / 1 / 10 mm ya da °). Basılı-tut yalnızca sunucu izin verirse
- * (GET /api/jog -> hold_allowed) ve kullanıcı açıkça seçerse; tuş bırakılınca/sekme gizlenince/odak kaybında
- * anında bırakılır. Her komut heartbeat'tir (100 ms); asıl dead-man SUNUCUDA (TTL), bu kod yalnızca kibar
- * davranır. Yazılım ACİL DUR/dead-man donanım acil durdurmanın yerine geçmez. */
+/* Jog motoru + kartezyen jog kartı (P1; app.js ve jog_logic.js'ten sonra yüklenir). Veri textContent ile yazılır.
+ * Kipler: ADIM (varsayılan; tek tık = tek adım 0.1/1/10 mm ya da °) ve SÜREKLİ (basılı-tut; yalnız sunucu izin
+ * verirse ve bu bilgisayardan). Bırakınca, sekme gizlenince, odak kaybında ya da bağlantı kopunca DURUR:
+ * her komut heartbeat'tir (100 ms), asıl dead-man SUNUCUDA (TTL 250 ms; JointHold / robot jog). Yazılım ACİL DUR
+ * ve dead-man donanım acil durdurmanın yerine geçmez. Eklem ± ve "Git/Home/Alet" aynı motoru kullanır. */
 'use strict';
 
 window.JogPanel = (() => {
-  const AX = [['X', 'mm', 0], ['Y', 'mm', 1], ['Z', 'mm', 2], ['W', '°', 3], ['P', '°', 4], ['R', '°', 5]];
-  const STEPS = [0.1, 1, 10];
-  const HOLD_LIN = 0.02, HOLD_ANG = 0.10, BEAT_MS = 100, TTL_MS = 250;   // sunucu zaten kırpar; dar tutuyoruz
+  const L = window.JogLogic;
   const J = { mounted: false, host: null, st: null, lease: newLease(), step: 1, hold: false, frame: 'World',
-              frames: [], busy: false, beat: null, held: null, holdBlocked: null, snap: null, msg: null };
+              speed: 50, busy: false, beat: null, held: null, holdBlocked: null, snap: null };
   const q = (id) => document.getElementById(id);
 
   function newLease() {
     const b = new Uint8Array(12); crypto.getRandomValues(b);
     return 'hub-' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   }
-
-  /* Hata kodlarını net metne çevirir (409 başka istemci/iş, 423 e-stop, 403 izin, 502 robot yok). */
-  function explain(e) {
-    const m = (e.body && (e.body.message || e.body.error)) || e.message;
-    switch (e.status) {
-      case 409: return `Başka bir istemci jog yapıyor ya da robot meşgul (409): ${m}`;
-      case 423: return `ACİL DUR kilidinde (423): önce kilidi aç. ${m}`;
-      case 403: return `İzin yok (403): ${m}`;
-      case 502: return `Robota ulaşılamıyor (502): ${m}`;
-      case 503: return `Robot eklem durumu yok (503): ${m}`;
-      case 0: return 'Hub’a ulaşılamıyor';
-      default: return `${m} (HTTP ${e.status})`;
-    }
-  }
   function say(text, bad = false) {
-    J.msg = text ? { text, bad } : null;
-    const n = q('jg-msg'); if (!n) return;
+    const n = q('jp-msg'); if (!n) return;
     n.textContent = text || ''; n.classList.toggle('bad', !!bad);
   }
+  const post = (body) => api('/api/jog', 'POST', { lease: J.lease, frame: J.frame, ...body });
 
-  async function post(body) { return api('/api/jog', 'POST', { lease: J.lease, frame: J.frame, ...body }); }
+  /* ---- ortak: eklem hedefine git (önce kuru kontrol, sonra hareket) ---- */
+  async function goJoints(targets) {
+    const body = L.moveBody(targets, J.speed);
+    let check;
+    try { check = await api('/api/move/check', 'POST', body); } catch (e) { return { ok: false, text: L.explain(e) }; }
+    const v = L.checkVerdict(check);
+    if (!v.ok) return v;                                     // ihlal varsa hareket komutu HİÇ gitmez
+    try { await api('/api/move', 'POST', body); } catch (e) { return { ok: false, text: L.explain(e) }; }
+    return { ok: true, text: 'Hareket başladı.' };
+  }
+  async function setGripper(pct) {
+    try { await api('/api/move', 'POST', { type: 'tool', open_pct: pct, speed_pct: J.speed }); return { ok: true, text: '' }; }
+    catch (e) { return { ok: false, text: L.explain(e) }; }
+  }
+  async function stopMotion() {
+    try { await api('/api/move/stop', 'POST', {}); } catch (e) { if (e.status !== 409) say(L.explain(e), true); }
+  }
 
+  /* ---- bağlama ---- */
   function mount(host) {
     if (J.mounted) return;
-    if (host) J.host = host;                      // sayfa kutusu (yoksa eski #panels)
+    if (host) J.host = host;
     api('/api/jog').then((st) => {
       if (!st || !st.enabled) return unavailable('robot jog\'u kapalı bildirdi (enabled=false)');
       const old = q('p-jog'); if (old) old.remove();
       J.st = st; J.mounted = true; build(); refreshFrames();
       if (window.FrameWizard) FrameWizard.mount(J.host);
-      if (J.snap) onState(J.snap); else apply();   // ilk durum mount'tan önce gelmiş olabilir
+      if (J.snap) onState(J.snap); else apply();
     }).catch((e) => {
-      // Panel sessizce kaybolmaz: neden yazılır (robot yığını eski olabilir, robot kapalı olabilir…)
       const old = e && (e.status === 404 || e.status === 501);
-      unavailable(explain(e) + (old ? ' — robot yığını eski olabilir: WSL\'de `docker compose build` sonra yeniden başlat' : ''));
+      unavailable(L.explain(e) + (old ? ' — robot yığını eski olabilir: WSL\'de `docker compose build` sonra yeniden başlat' : ''));
     });
   }
-
   function unavailable(reason) {
     const prev = q('p-jog'); if (prev) prev.remove();
     const retry = el('button', { class: 'small', type: 'button', text: 'Yeniden dene' });
     retry.addEventListener('click', () => { const c = q('p-jog'); if (c) c.remove(); mount(J.host); });
-    (J.host || q('panels')).append(el('div', { class: 'card', id: 'p-jog' }, [
+    J.host.append(el('div', { class: 'card', id: 'p-jog' }, [
       el('h2', { text: 'Jog (elle hareket)' }),
       el('div', { class: 'say bad', id: 'jg-off', text: `Jog kullanılamıyor: ${reason}` }),
       el('div', { class: 'row' }, [retry])]));
   }
 
   function build() {
-    const grid = el('div', { class: 'jg-grid', id: 'jg-grid' });
-    for (const [name, unit, i] of AX) {
-      grid.append(el('div', { class: 'jg-ax', text: `${name} (${unit})` }),
-        axisBtn(i, -1), el('output', { class: 'jg-val', id: `jg-v${i}`, text: '—' }), axisBtn(i, +1));
+    const grid = el('div', { class: 'jp-grid', id: 'jp-grid' });
+    for (const [name, unit, i] of L.AXES) {
+      grid.append(el('div', { class: 'jp-ax', text: `${name} (${unit})` }), axisBtn(i, -1),
+        el('output', { class: 'jp-val', id: `jp-v${i}`, text: '—' }), axisBtn(i, +1));
     }
-    (J.host || q('panels')).append(el('div', { class: 'card', id: 'p-jog' }, [
+    const modeBtn = (hold, text) => {
+      const b = el('button', { class: 'small jp-mode', type: 'button', text, 'data-hold': hold ? '1' : '0' });
+      b.addEventListener('click', () => { if (!hold || holdAllowed()) { stopHold(); J.hold = hold; apply(); } });
+      return b;
+    };
+    const speed = el('input', { type: 'range', id: 'jp-speed', min: String(L.SPEED_MIN), max: String(L.SPEED_MAX), step: '1',
+                                value: String(J.speed), 'aria-label': 'Hız yüzdesi' });
+    speed.addEventListener('input', () => { J.speed = L.clampPct(speed.value); q('jp-speed-v').textContent = `%${J.speed}`; });
+    J.host.append(el('div', { class: 'card', id: 'p-jog' }, [
       el('h2', { text: 'Jog (elle hareket)' }),
+      el('div', { class: 'jp-bar' }, [
+        el('div', { class: 'jp-seg', role: 'group', 'aria-label': 'Jog kipi' }, [modeBtn(false, 'Adım'), modeBtn(true, 'Sürekli')]),
+        el('div', { class: 'jp-seg', id: 'jp-steps', role: 'group', 'aria-label': 'Adım büyüklüğü (mm ya da °)' })]),
       el('div', { class: 'row' }, [
-        el('label', { class: 'jg-f', text: 'Çerçeve ' }, [el('select', { id: 'jg-frame', 'aria-label': 'Çerçeve' })]),
-        el('div', { class: 'jg-steps', id: 'jg-steps', role: 'group', 'aria-label': 'Adım' })]),
+        el('label', { class: 'jp-f', text: 'Çerçeve ' }, [el('select', { id: 'jg-frame', 'aria-label': 'Çerçeve' })]),
+        el('label', { class: 'jp-f jp-speed', text: 'Hız ' }, [speed, el('output', { id: 'jp-speed-v', text: `%${J.speed}` })])]),
       grid,
-      el('label', { class: 'jg-hold' }, [
-        el('input', { type: 'checkbox', id: 'jg-hold' }), document.createTextNode(' Basılı-tut modu (tuşa basılı tutarken hareket)')]),
-      el('div', { class: 'say', id: 'jg-why' }),
-      el('div', { class: 'row' }, [
-        el('button', { class: 'small', id: 'jg-release', type: 'button', text: 'Jog’u bırak' })]),
-      el('div', { class: 'say jg-msg', id: 'jg-msg', role: 'alert' }),
+      el('div', { class: 'say', id: 'jp-why' }),
+      el('div', { class: 'row' }, [el('button', { class: 'small', id: 'jp-release', type: 'button', text: 'Jog’u bırak' }),
+                                   el('button', { class: 'small', id: 'jp-stop', type: 'button', text: 'Hareketi durdur' })]),
+      el('div', { class: 'say jp-msg', id: 'jp-msg', role: 'alert' }),
       el('div', { class: 'say', id: 'jg-info' })]));
-    for (const s of STEPS) {
-      const b = el('button', { class: 'small jg-step', type: 'button', text: String(s), 'data-step': String(s) });
+    for (const s of L.STEPS) {
+      const b = el('button', { class: 'small jp-step', type: 'button', text: String(s), 'data-step': String(s) });
       b.addEventListener('click', () => { J.step = s; apply(); });
-      q('jg-steps').append(b);
+      q('jp-steps').append(b);
     }
     q('jg-frame').addEventListener('change', (ev) => { J.frame = ev.target.value; });
-    q('jg-hold').addEventListener('change', (ev) => { J.hold = ev.target.checked; stopHold(); apply(); });
-    q('jg-release').addEventListener('click', () => release(true));
+    q('jp-release').addEventListener('click', () => release(true));
+    q('jp-stop').addEventListener('click', () => { stopHold(); stopMotion(); });
     window.addEventListener('blur', () => stopHold());
     document.addEventListener('visibilitychange', () => { if (document.hidden) stopHold(); });
     window.addEventListener('pagehide', () => {
-      try { navigator.sendBeacon('/api/jog', new Blob([JSON.stringify({ lease: J.lease, ttl_ms: 0 })],
-        { type: 'application/json' })); } catch (e) { /* yok say */ }
+      for (const url of ['/api/jog', '/api/jog/joint']) {
+        try { navigator.sendBeacon(url, new Blob([JSON.stringify({ lease: J.lease, ttl_ms: 0 })], { type: 'application/json' })); }
+        catch (e) { /* yok say: sunucu TTL'i zaten durdurur */ }
+      }
     });
   }
 
-  function axisBtn(i, sign) {
-    const b = el('button', { class: 'jg-b', type: 'button', 'data-axis': String(i), 'data-sign': String(sign),
-      text: sign < 0 ? '−' : '+', 'aria-label': `${AX[i][0]} ${sign < 0 ? 'eksi' : 'artı'}` });
-    b.addEventListener('click', () => { if (!J.hold) onStep(i, sign); });
-    b.addEventListener('pointerdown', (ev) => { if (J.hold && ev.button === 0) { b.setPointerCapture(ev.pointerId); startHold(i, sign); } });
+  /* Basılı-tut/adım bağlayıcı: hem kartezyen hem eklem düğmeleri bunu kullanır. */
+  function bindHoldButton(b, onStep, onHoldStart) {
+    b.addEventListener('click', (ev) => { if (!J.hold) onStep(); });
+    b.addEventListener('pointerdown', (ev) => {
+      if (J.hold && ev.button === 0) { b.setPointerCapture(ev.pointerId); onHoldStart(); }
+    });
     for (const t of ['pointerup', 'pointercancel', 'lostpointercapture']) b.addEventListener(t, () => stopHold());
     b.addEventListener('contextmenu', (ev) => ev.preventDefault());
+  }
+  const axisBtn = (i, sign) => {
+    const b = el('button', { class: 'jp-b', type: 'button', 'data-axis': String(i), 'data-sign': String(sign),
+                             text: sign < 0 ? '−' : '+', 'aria-label': `${L.AXES[i][0]} ${sign < 0 ? 'eksi' : 'artı'}` });
+    bindHoldButton(b, () => cartStep(i, sign), () => startHold({ url: '/api/jog', body: { twist: L.holdTwist(i, sign, J.speed) } }));
+    return b;
+  };
+  function jointButton(i, sign, text) {
+    const b = el('button', { class: 'jp-jb', type: 'button', text, 'data-joint': String(i), 'data-sign': String(sign),
+                             'aria-label': `Eklem ${i + 1} ${sign < 0 ? 'eksi' : 'artı'}` });
+    bindHoldButton(b, () => jointStep(i, sign), () => startHold({ url: '/api/jog/joint',
+      body: { joint: i, dir: sign, speed_pct: J.speed } }));
     return b;
   }
 
-  /* ---- artımlı ---- */
-  async function onStep(axis, sign) {
+  /* ---- adım modu ---- */
+  async function cartStep(axis, sign) {
     if (J.busy) return;
     J.busy = true; apply();
-    try {
-      await post({ increment: { axis, amount: sign * J.step }, ttl_ms: TTL_MS });
-      say('');
-    } catch (e) { say(explain(e), true); } finally { J.busy = false; apply(); }
+    try { await post({ increment: { axis, amount: sign * J.step }, ttl_ms: L.TTL_MS }); say(''); }
+    catch (e) { say(L.explain(e), true); } finally { J.busy = false; apply(); }
+  }
+  async function jointStep(i, sign) {
+    if (J.busy) return;
+    const joints = (J.snap && J.snap.robot && J.snap.robot.joints) || [];
+    if (!joints[i]) return say('Eklem durumu yok.', true);
+    J.busy = true; apply();
+    const targets = joints.map((j) => j.deg);
+    targets[i] = L.stepTarget(targets[i], sign, J.step);
+    const r = await goJoints(targets);
+    say(r.ok ? '' : r.text, !r.ok); J.busy = false; apply();
   }
 
-  /* ---- basılı-tut: her 100 ms bir komut (öncekisi bitmediyse atlanır: kuyruk birikmez) ---- */
-  function startHold(axis, sign) {
+  /* ---- sürekli (basılı-tut): her 100 ms bir komut; önceki bitmediyse atlanır (kuyruk birikmez) ---- */
+  function startHold(spec) {
     stopHold(true);
-    const twist = [0, 0, 0, 0, 0, 0]; twist[axis] = sign * (axis < 3 ? HOLD_LIN : HOLD_ANG);
-    J.held = { twist, inflight: false };
+    J.held = { spec, inflight: false };
     const beat = async () => {
       const h = J.held; if (!h || h.inflight) return;
       h.inflight = true;
-      try { await post({ twist, ttl_ms: TTL_MS }); say(''); }
-      catch (e) {
-        say(explain(e), true);
+      try {
+        const doc = await api(spec.url, 'POST', { lease: J.lease, frame: J.frame, ...spec.body, ttl_ms: L.TTL_MS });
+        say('');
+        if (doc && doc.state === 'at_limit') stopHold(true);          // eklem limite vardı
+      } catch (e) {
+        say(L.explain(e), true);
         if (e.status === 403) blockHold(e.body && (e.body.message || e.body.error) || 'sunucu reddetti');
         stopHold(true);
-      } finally { if (h) h.inflight = false; }
+      } finally { h.inflight = false; }
     };
-    beat(); J.beat = setInterval(beat, BEAT_MS);
+    beat(); J.beat = setInterval(beat, L.BEAT_MS);
   }
   function stopHold(quiet) {
     if (J.beat) { clearInterval(J.beat); J.beat = null; }
-    if (J.held) {
-      J.held = null;
-      if (!quiet) release(false);              // bırakma = ttl_ms:0; kaybolursa sunucu TTL'i zaten durdurur
+    const h = J.held; J.held = null;
+    if (h && !quiet) {                       // bırakma = ttl_ms:0; kaybolursa sunucu TTL'i zaten durdurur
+      api(h.spec.url, 'POST', { lease: J.lease, ttl_ms: 0 }).catch((e) => { if (e.status !== 423) say(L.explain(e), true); });
     }
   }
   function blockHold(reason) { J.holdBlocked = reason; J.hold = false; apply(); }
+  function holdAllowed() { return !!(J.st && J.st.hold_allowed) && !J.holdBlocked; }
 
   async function release(loud) {
-    try { await api('/api/jog', 'POST', { lease: J.lease, ttl_ms: 0 }); if (loud) say('Jog bırakıldı.'); }
-    catch (e) { if (loud || e.status !== 423) say(explain(e), true); }
+    stopHold(true);
+    try {
+      await api('/api/jog', 'POST', { lease: J.lease, ttl_ms: 0 });
+      await api('/api/jog/joint', 'POST', { lease: J.lease, ttl_ms: 0 }).catch(() => null);
+      if (loud) say('Jog bırakıldı.');
+    } catch (e) { if (loud || e.status !== 423) say(L.explain(e), true); }
   }
 
-  /* ---- çerçeveler ---- */
+  /* ---- çerçeveler: Dünya, Alet ve öğretilmiş kullanıcı çerçeveleri ---- */
   async function refreshFrames() {
-    try {
-      const d = await api('/api/frames');
-      J.frames = ['World', 'Tool', ...d.frames.map((f) => f.name)];
-    } catch (e) { J.frames = ['World', 'Tool']; }
-    const sel = q('jg-frame'); sel.replaceChildren();
-    for (const n of J.frames) sel.append(el('option', { value: n, text: n }));
+    try { const d = await api('/api/frames'); J.frames = ['World', 'Tool', ...d.frames.map((f) => f.name)]; }
+    catch (e) { J.frames = ['World', 'Tool']; }
+    const sel = q('jg-frame'); if (!sel) return;
+    sel.replaceChildren();
+    const label = { World: 'Dünya', Tool: 'Alet' };
+    for (const n of J.frames) sel.append(el('option', { value: n, text: label[n] || n }));
     if (!J.frames.includes(J.frame)) J.frame = 'World';
     sel.value = J.frame;
   }
 
   /* ---- görünüm ---- */
-  function disabledReason(s) {
-    if (!s.me.can_control) return 'Arayüz salt okunur: jog kapalı.';
-    if (s.estop.latched) return 'ACİL DUR kilidinde (423): jog kapalı. Önce kilidi aç.';
-    if (s.runner && s.runner.running) return 'Bir senaryo çalışıyor: jog ve senaryolar birbirini dışlar (409).';
-    return null;
-  }
   function apply() {
     if (!J.mounted) return;
-    const s = J.snap, why = s ? disabledReason(s) : null;
+    const s = J.snap, why = L.disabledReason(s);
     const lock = !!why || (J.busy && !J.hold);
-    for (const b of document.querySelectorAll('#jg-grid .jg-b')) b.disabled = !!why || (J.busy && !J.hold);
-    for (const b of document.querySelectorAll('.jg-step')) b.classList.toggle('on', Number(b.dataset.step) === J.step);
-    q('jg-release').disabled = !!(s && !s.me.can_control);
-    const allowed = !!(J.st && J.st.hold_allowed) && !J.holdBlocked;
-    const hold = q('jg-hold'); hold.disabled = !allowed || !!why; hold.checked = J.hold && allowed;
-    q('jg-why').textContent = why || (allowed ? '' : `Basılı-tut kapalı: ${J.holdBlocked || (J.st && J.st.hold_reason) || 'bilinmiyor'}`);
-    q('jg-grid').classList.toggle('lock', lock);
-    q('jg-grid').dataset.mode = J.hold ? 'hold' : 'increment';
+    for (const b of document.querySelectorAll('#jp-grid .jp-b')) b.disabled = lock;
+    for (const b of document.querySelectorAll('.jp-jb')) b.disabled = lock;
+    for (const b of document.querySelectorAll('.jp-step')) b.classList.toggle('on', Number(b.dataset.step) === J.step);
+    for (const b of document.querySelectorAll('.jp-mode')) b.classList.toggle('on', (b.dataset.hold === '1') === J.hold);
+    const cont = document.querySelector('.jp-mode[data-hold="1"]'); if (cont) cont.disabled = !holdAllowed() || !!why;
+    q('jp-release').disabled = !!(s && s.me && !s.me.can_control);
+    q('jp-why').textContent = why || (holdAllowed() ? '' : `Sürekli kip kapalı: ${J.holdBlocked || (J.st && J.st.hold_reason) || 'bilinmiyor'}`);
+    q('jp-grid').classList.toggle('lock', lock);
+    q('jp-grid').dataset.mode = J.hold ? 'hold' : 'step';
   }
   function onState(s) {
     J.snap = s;
     if (!J.mounted) return;
     if (window.FrameWizard) FrameWizard.onState(s);
-    const r = s.robot || {}, tcp = r.tcp;
-    if (tcp) {
-      [0, 1, 2].forEach((i) => { q(`jg-v${i}`).textContent = (tcp.position[i] * 1000).toFixed(1); });
-      [0, 1, 2].forEach((i) => { q(`jg-v${i + 3}`).textContent = tcp.wpr_deg[i].toFixed(1); });
-    }
+    const r = s.robot || {}, row = L.poseRows(r);
+    if (row.tcp) { row.tcp.mm.forEach((v, i) => { q(`jp-v${i}`).textContent = v; });
+                   row.tcp.deg.forEach((v, i) => { q(`jp-v${i + 3}`).textContent = v; }); }
     const jg = r.jog;
     q('jg-info').textContent = jg ? `Jog: ${jg.mode || '—'} · çerçeve ${jg.frame || '—'} · durum ${jg.status}` +
       (jg.messages && jg.messages.length ? ` · ${jg.messages.join('; ')}` : '') : (r.state ? `Robot: ${r.state}` : '');
     apply();
   }
-  /* Öğretme sihirbazı (frames.js) için: çerçeve seçimi/yenileme, bırakma, hata metni, ham TCP. */
   function setFrame(name) { J.frame = name; const sel = q('jg-frame'); if (sel) sel.value = name; }
   const tcp = () => (J.snap && J.snap.robot && J.snap.robot.tcp) || null;
-  return { mount, onState, explain, release, refreshFrames, setFrame, tcp, frame: () => J.frame };
+  return { mount, onState, explain: L.explain, release, refreshFrames, setFrame, tcp, frame: () => J.frame,
+           goJoints, setGripper, stopMotion, jointButton, say, speed: () => J.speed, stopHold };
 })();

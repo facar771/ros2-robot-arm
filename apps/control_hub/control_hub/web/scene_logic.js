@@ -123,14 +123,23 @@ window.SceneLogic = (() => {
   /* Yüzey normalini bakan ışına çevir: ağın sarma yönü karışıksa face.normal içe bakabilir; kullanıcı dışarıdan dokundu. */
   function facingNormal(normal, rayDir) { const n = unit(normal); return dot(n, rayDir) > 0 ? n.map((x) => 0 - x) : n; }   // 0 - x: -0 üretmez
 
+  /* Hareket yönelim kipi (UI_CONTRACT §9-B `orientation`): 'free' = IK yönelimi kendi çözer (rpy_deg GİTMEZ),
+   * 'fixed' = rpy_deg ile verilen yönelim tutulur. SİM'de varsayılan 'free' (bilek tekilliği yanındaki hedefler geçsin),
+   * gerçek robotta 'fixed' (alet yönelimi belli olmadan gerçek robota "serbest" gitmesin). Bilinmeyen kipte 'fixed'. */
+  const MOVE_ORIENTATIONS = ['free', 'fixed'];
+  const defaultMoveOrientation = (modeKey) => (modeKey === 'sim' ? 'free' : 'fixed');
+
   /* hedef = nokta + normal·d (d mm). Yönelim: 'normal' (varsayılan): aletin z ekseni −normale bakar; 'down': z = −Z dünya;
-   * 'keep': mevcut rpy korunur (opts.currentRpy). Dönüş: {pos_m, rpy_deg, gimbal}. */
+   * 'keep': mevcut rpy korunur (opts.currentRpy). opts.moveOrientation === 'free': yalnız KONUM hesaplanır, rpy_deg = null
+   * (hayalet takım/yön oku çizilmez; hareket gövdesine rpy_deg yazılmaz). Dönüş: {pos_m, rpy_deg, orientation, gimbal}. */
   function approachTarget(pointM, normal, dMm, opts = {}) {
     if (!finite3(pointM)) throw new Error('nokta 3 sonlu sayı olmalı');
-    const d = Number(dMm), mode = opts.orientation || 'normal';
+    const d = Number(dMm), mode = opts.orientation || 'normal', mo = opts.moveOrientation || 'fixed';
     if (!Number.isFinite(d) || d < 0 || d > MAX_APPROACH_MM) throw new Error(`mesafe 0 ile ${MAX_APPROACH_MM} mm arasında olmalı`);
     if (!ORIENTATIONS.includes(mode)) throw new Error(`yönelim ${ORIENTATIONS.join('/')} olmalı`);
+    if (!MOVE_ORIENTATIONS.includes(mo)) throw new Error(`hareket yönelimi ${MOVE_ORIENTATIONS.join('/')} olmalı`);
     const n = unit(normal), pos = add(pointM, n, d / 1000);
+    if (mo === 'free') return { pos_m: pos, rpy_deg: null, orientation: 'free', gimbal: false };
     let rpy;
     if (mode === 'keep') {
       if (!finite3(opts.currentRpy)) throw new Error('mevcut yönelim bilinmiyor');
@@ -141,7 +150,7 @@ window.SceneLogic = (() => {
       const x = unit(add(helper, z, -dot(helper, z))), y = cross(z, x);
       rpy = matrixToRpy([x[0], y[0], z[0], x[1], y[1], z[1], x[2], y[2], z[2]]);
     }
-    return { pos_m: pos, rpy_deg: rpy, gimbal: nearGimbal(rpy) };
+    return { pos_m: pos, rpy_deg: rpy, orientation: 'fixed', gimbal: nearGimbal(rpy) };
   }
 
   /* Hayalet takım: hedef TCP pozundan flanş pozunu bul (TCP = flanş · ofset), takımı flanşa ofsetiyle tak. */
@@ -271,7 +280,7 @@ window.SceneLogic = (() => {
 
   return { STALE_MS, parseStl, orderJoints, jointProblem, staleReason, modeNote, approach,
     KIND_LABEL, num, readPoseFields, poseFields, readScale, readApproach, sizeText,
-    D2R, R2D, LAYERS, KINDS, ORIENTATIONS, MAX_APPROACH_MM, DEFAULT_SNAP, MIN_SNAP_M,
+    D2R, R2D, LAYERS, KINDS, ORIENTATIONS, MOVE_ORIENTATIONS, defaultMoveOrientation, MAX_APPROACH_MM, DEFAULT_SNAP, MIN_SNAP_M,
     unit, dot, cross, rpyToMatrix, matrixToRpy, nearGimbal, poseOf, poseMul, poseInv, poseJson,
     facingNormal, approachTarget, ghostToolPose,
     validateSpec, snapSettings, snapTo, trailPush, distance, isClick, partSpec };
