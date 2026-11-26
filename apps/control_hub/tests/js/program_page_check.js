@@ -1,11 +1,14 @@
-/* P2 Program sayfası: saf mantık + sahte DOM ile sayfa davranışı (tarayıcı gerekmez).
- *   node program_page_check.js <program.js>
- * Sınananlar: sayı ayrıştırma (NaN/∞ red), silinmiş waypoint, Çalıştır kapısı (önizleme zorunlu, düzenleme önizlemeyi
+/* P2 Program sayfası: sahte DOM ile sayfa davranışı (tarayıcı gerekmez). Saf mantık (R12): program_logic_check.js.
+ *   node program_page_check.js <web dizini>
+ * Sınananlar: mantık betiğinin sayfa açılmadan yüklenmesi (R12), Çalıştır kapısı (önizleme zorunlu, düzenleme önizlemeyi
  * geçersiz kılar, ihlal/ACİL DUR/boş), satır renkleri, çalışırken düzenleme kilidi, gerçek mod onayı, 409 busy,
  * kalp atışı, sayfa gizlenince duraklatma ve (varsa) HubScene işaret/yol/onPick. */
 'use strict';
 const assert = require('assert');
 const fs = require('fs');
+const path = require('path');
+const WEB = path.resolve(process.argv[2]);
+const PAGE = path.join(WEB, 'pages', 'program.js'), LOGIC = path.join(WEB, 'program_logic.js');
 
 class N {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.parent = null; this._text = ''; this._cls = new Set();
@@ -63,7 +66,8 @@ function fakeScene(calls, { implemented = true, reject = null } = {}) {
 }
 
 /* Her senaryo kendi sayfa kopyasını (taze durum) yükler. */
-function load(script, { scene = false } = {}) {
+function load(script, opts = {}) {
+  const { scene = false } = opts;
   const calls = [], toasts = [], timers = [];
   const handlers = {
     'GET /api/program/state': () => ({ ok: true, runner: { state: 'idle', running: false }, estop: false,
@@ -86,44 +90,29 @@ function load(script, { scene = false } = {}) {
   if (scene) global.HubScene = fakeScene(sceneCalls, scene === true ? {} : scene);
   else delete global.HubScene;
   let def = null;
-  global.HubPages = { register(d) { def = d; }, mountView: async () => {} };
-  new Function(fs.readFileSync(process.argv[2], 'utf8'))();
-  return { def, calls, toasts, timers, sceneCalls, H: global.HubScene };
+  delete global.ProgramLogic;                  // her senaryoda mantık betiği TAZE yüklenir (sayfa kaydı bunu ister)
+  const loads = [];
+  global.HubPages = { register(d) { def = d; }, mountView: async () => {},
+    loadScript: (src) => { loads.push(src); return opts.logicFails ? Promise.reject(new Error(`yüklenemedi: ${src}`))
+      : Promise.resolve().then(() => { delete require.cache[LOGIC]; require(LOGIC); }); } };   // gerçek pages.js gibi: betik yüklenince window.<Ad> hazır
+  new Function(fs.readFileSync(PAGE, 'utf8'))();
+  return { def, calls, toasts, timers, sceneCalls, loads, H: global.HubScene };
 }
 const snap = (o = {}) => ({ estop: { latched: false }, robot: { mode: 'fake' }, me: { can_control: true }, ...o });
 const PREVIEW_OK = { ok: true, violations: 0, rows: [{ line: 0, sub: null, kind: 'move_j', ok: true, violations: [] }] };
 
 (async () => {
-  /* ---- 1) saf mantık ---- */
-  const probe = load({}), L = probe.def.logic;
+  /* ---- 1) kayıt: mantık betiği sayfa AÇILMADAN yüklenir; hazır olana dek ekleme nazikçe reddedilir ---- */
+  const probe = load({});
   assert.strictEqual(probe.def.id, 'program');
-  assert.deepStrictEqual(L.nums('1, 2  3', 3, 3), [1, 2, 3]);
-  for (const bad of ['', '1,2', '1,2,x', 'NaN,1,2', 'Infinity,1,2', '1,2,3,4']) assert.strictEqual(L.nums(bad, 3, 3), null, bad);
-  assert.strictEqual(L.unique('Nokta 3', ['Nokta 1', 'Nokta 2']), 'Nokta 3');
-  assert.strictEqual(L.unique('A', []), 'A 1');
-  const prog = { version: 1, name: 'x', waypoints: [{ name: 'A', joints_deg: [0] }], steps: [
-    { kind: 'move_j', waypoint: 'A' }, { kind: 'loop', count: 2, steps: [{ kind: 'move_j', waypoint: 'SİLİNMİŞ' }] }] };
-  assert.deepStrictEqual([...L.dangling(prog).keys()], ['1.0']);
-  assert.ok(L.empty({ steps: [] }) && L.empty({ steps: [{ kind: 'comment' }, { kind: 'loop', steps: [{ kind: 'comment' }] }] }));
-  assert.ok(!L.empty({ steps: [{ kind: 'wait', s: 1 }] }));
-  const ok = { prog: { steps: [{ kind: 'wait', s: 1 }], waypoints: [] }, check: { sig: 's', res: { ok: true } }, sig: 's', running: false, estop: false, canControl: true };
-  assert.strictEqual(L.gate(ok).ok, true);
-  const why = (o) => { const g = L.gate({ ...ok, ...o }); assert.strictEqual(g.ok, false); return g.why; };
-  assert.match(why({ canControl: false }), /kilitli/);
-  assert.match(why({ estop: true }), /ACİL DUR/);
-  assert.match(why({ running: true }), /çalışıyor/);
-  assert.match(why({ prog: { steps: [], waypoints: [] } }), /boş/);
-  assert.match(why({ prog }), /Silinmiş waypoint/);
-  assert.match(why({ check: null }), /Önizle/);
-  assert.match(why({ sig: 'değişti' }), /Önizle/);                      // düzenleme sonrası önizleme geçersiz
-  assert.match(why({ check: { sig: 's', res: { ok: false, violations: 3 } } }), /3 ihlal/);
-  const info = L.rowInfo({ dangling: new Map(), run: null, check: { res: { rows: [{ line: 0, sub: null, ok: false, violations: [{ message: 'kutu dışı' }] },
-    { line: 1, sub: 0, ok: true, violations: [] }] } } }, '0');
-  assert.deepStrictEqual(info, { cls: 'bad', msgs: ['kutu dışı'] });
-  assert.strictEqual(L.rowInfo({ dangling: new Map(), run: { running: true, line: 1, sub: 0 }, check: null }, '1.0').cls, 'run');
-  assert.match(L.rowInfo({ dangling: new Map(), check: null, run: { error: { line: 2, sub: null, message: 'reddedildi' } } }, '2').msgs[0], /reddedildi/);
-  assert.match(L.status({ state: 'failed', error: { line: 2, sub: 1, message: 'x' } }), /satır 3\.2/);
-  L.rename(prog, 'A', 'B'); assert.strictEqual(prog.steps[0].waypoint, 'B');
+  assert.deepStrictEqual(probe.loads, ['/program_logic.js'], 'sayfa betiği mantığı kendisi ister (Algoritmalar Program açılmadan ekleyebilir)');
+  assert.deepStrictEqual(window.HubProgram.addSteps([{ kind: 'wait', s: 1 }]), { ok: false, message: 'Program mantığı yükleniyor: birkaç saniye sonra tekrar dene' });
+  await flush();
+  assert.ok(window.ProgramLogic, 'mantık yüklendi');
+  assert.deepStrictEqual(window.HubProgram.addSteps([{ kind: 'wait', s: 1 }]), { ok: true, total: 1 }, 'yüklenince ekleme çalışır (sayfa açılmadan)');
+  const broken = load({}, { logicFails: true });
+  await assert.rejects(broken.def.mount(new N('section')), /program_logic\.js/, 'mantık yüklenemezse sayfa kendi kutusunda hata verir (mount reddeder)');
+  assert.strictEqual(window.HubProgram.addSteps([{ kind: 'wait', s: 1 }]).ok, false, 'mantıksız ekleme sessizce kabul edilmez');
 
   /* ---- 2) sayfa: waypoint kaydet, adım ekle, ZORUNLU önizleme, düzenleme önizlemeyi bozar ---- */
   let previewReply = PREVIEW_OK;
@@ -241,9 +230,9 @@ const PREVIEW_OK = { ok: true, violations: 0, rows: [{ line: 0, sub: null, kind:
   assert.strictEqual(banner(r6).hidden, true, 'SİM: SAHTE bandı görünmez');
   /* ---- 7) Algoritmalar'dan aktarım (HubProgram.addSteps) ve orientation:'free' ---- */
   const FREE = { kind: 'move_l', pos_m: [0.1, 0, 0.08], orientation: 'free' };
-  const t0 = load({ 'POST /api/program/check': () => PREVIEW_OK });
+  const t0 = load({ 'POST /api/program/check': () => PREVIEW_OK }); await flush();              // mantık betiği yüklensin (sayfa açılmadan)
   assert.strictEqual(typeof window.HubProgram.addSteps, 'function');
-  assert.strictEqual(t0.def.logic.total([{ kind: 'wait' }, { kind: 'loop', steps: [{}, {}] }]), 4, 'döngü gövdesi sayılır');
+  assert.strictEqual(window.ProgramLogic.total([{ kind: 'wait' }, { kind: 'loop', steps: [{}, {}] }]), 4, 'döngü gövdesi sayılır');
   assert.deepStrictEqual(window.HubProgram.addSteps([]), { ok: false, message: 'Eklenecek adım yok' });
   assert.strictEqual(window.HubProgram.addSteps('x').ok, false);
   const early = window.HubProgram.addSteps([FREE, { kind: 'tool', open_pct: 30 }]);        // sayfa henüz AÇILMADAN

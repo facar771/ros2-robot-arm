@@ -33,6 +33,6 @@ def test_program_page_files_follow_the_contract():
 
 @needs_node
 def test_program_page_logic_in_node():
-    r = subprocess.run(['node', str(JS / 'program_page_check.js'), str(WEB / 'pages' / 'program.js')],
+    r = subprocess.run(['node', str(JS / 'program_page_check.js'), str(WEB)],
                        capture_output=True, text=True, timeout=60)
     assert r.returncode == 0 and 'PROGRAM_PAGE_OK' in r.stdout, r.stdout + r.stderr

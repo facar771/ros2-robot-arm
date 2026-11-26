@@ -53,7 +53,8 @@ def test_every_new_or_touched_file_stays_under_400_lines():
 
 def test_program_page_exposes_the_handoff_the_algo_page_uses():
     prog = read('web/pages/program.js')
-    assert 'window.HubProgram' in prog and 'addSteps' in prog and 'MAX_STEPS = 500' in prog
+    assert 'window.HubProgram' in prog and 'addSteps' in prog
+    assert 'MAX_STEPS = 500' in read('web/program_logic.js')     # R12: sınır mantık dosyasına taşındı
 
 
 @needs_node
