@@ -17,7 +17,9 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
+
+from control_hub.server.errors import fail
 
 LEVELS = ('info', 'warning', 'error', 'critical')              # hub_core.events.LEVELS (testte eşitlik)
 MAX_ROWS = 500
@@ -110,9 +112,6 @@ def to_csv(rows: Sequence[Dict[str, Any]]) -> str:
 
 
 def install_log_routes(app: FastAPI, hub: Any, *, need_view: Any) -> None:
-    def fail(status: int, code: str, message: str) -> JSONResponse:
-        return JSONResponse({'ok': False, 'error': code, 'message': message}, status_code=status)
-
     def secrets() -> List[str]:
         pin = getattr(getattr(hub, 'access', None), 'pin', None)
         return [pin] if isinstance(pin, str) else []

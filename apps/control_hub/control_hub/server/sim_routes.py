@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from control_hub.server.move_routes import read_json
+from control_hub.server.errors import read_json
 
 
 def install(app, ctx) -> None:

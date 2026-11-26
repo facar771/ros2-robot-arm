@@ -31,6 +31,7 @@ from control_hub import __version__
 from control_hub.hub_core import BusyError, EstopLatchedError, Hub, ResetRefusedError, UnknownScenarioError
 from control_hub.hub_core.access import Decision
 from control_hub.paths import web_dir
+from control_hub.server.errors import ApiError, api_error_response, fail
 from control_hub.server.registry import RouteContext, install_routes, page_files
 
 log = logging.getLogger('control_hub.server')
@@ -44,11 +45,6 @@ WS_TICK_S = 0.4                                   # durum değişmese de en geç
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self' ws: wss:; manifest-src 'self'; base-uri 'none'; form-action 'self'; "
        "frame-ancestors 'none'")
-
-
-class ApiError(Exception):
-    def __init__(self, status: int, code: str, message: str, **extra: Any):
-        self.status, self.code, self.message, self.extra = status, code, message, extra
 
 
 class LoginBody(BaseModel):
@@ -112,27 +108,21 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
     # --- hatalar ve ara katman -----------------------------------------------------------------
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError):
-        headers = {'Retry-After': str(int(exc.extra['retry_after_s']) + 1)} \
-            if 'retry_after_s' in exc.extra else None
-        return JSONResponse({'ok': False, 'error': exc.code, 'message': exc.message, **exc.extra},
-                            status_code=exc.status, headers=headers)
+        return api_error_response(exc)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError):
-        return JSONResponse({'ok': False, 'error': 'bad_request', 'message': 'Geçersiz istek gövdesi'},
-                            status_code=400)
+        return fail(400, 'bad_request', 'Geçersiz istek gövdesi')
 
     @app.middleware('http')
     async def _guard(request: Request, call_next):
         host = request.headers.get('host')
         if not host_allowed(host, extra):
-            return JSONResponse({'ok': False, 'error': 'bad_host', 'message': 'Host reddedildi'},
-                                status_code=403)
+            return fail(403, 'bad_host', 'Host reddedildi')
         if request.url.path.startswith('/api/') and request.method not in ('GET', 'HEAD'):   # POST/PUT
             if not _origin_ok(request.headers.get('origin'), host) or \
                     request.headers.get('sec-fetch-site') == 'cross-site':
-                return JSONResponse({'ok': False, 'error': 'cross_origin',
-                                     'message': 'Başka kaynaktan istek reddedildi'}, status_code=403)
+                return fail(403, 'cross_origin', 'Başka kaynaktan istek reddedildi')
             # ACİL DUR gövdesiz/içerik türsüz de çalışmalı (acilde "curl -X POST" yetmeli)
             if request.url.path != '/api/estop' and \
                     request.headers.get('content-type', '').split(';')[0].strip() != 'application/json':

@@ -23,7 +23,8 @@ from fastapi.responses import JSONResponse
 
 from control_hub.hub_core.joint_hold import JointHold
 from control_hub.hub_core.robot_api_backend import RobotApiError
-from control_hub.server.agent_routes import is_local_request
+from control_hub.server.errors import fail, read_json
+from control_hub.server.netcheck import is_local_request
 
 log = logging.getLogger('control_hub.jog')
 MAX_BODY = 16 * 1024
@@ -44,9 +45,6 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
     def supported(name: str) -> bool:
         return callable(getattr(hub.backend, name, None))
 
-    def fail(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
-        return JSONResponse({'ok': False, 'error': code, 'message': message, **extra}, status_code=status)
-
     async def call(name: str, *args: Any, **kw: Any):
         if not supported(name):
             return fail(501, 'jog_unsupported', 'Bu robot arka ucu jog/çerçeve ucunu desteklemiyor')
@@ -60,14 +58,7 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
         return JSONResponse(doc, status_code=status)
 
     async def body_of(request: Request) -> Tuple[Any, JSONResponse | None]:
-        raw = await request.body()
-        if len(raw) > MAX_BODY:
-            return None, fail(413, 'too_large', 'Gövde çok büyük')
-        try:
-            import json
-            return json.loads(raw or b'null'), None
-        except ValueError:
-            return None, fail(400, 'bad_request', 'Geçersiz JSON')
+        return await read_json(request, MAX_BODY)
 
     @app.post('/api/jog')
     async def jog(request: Request):
