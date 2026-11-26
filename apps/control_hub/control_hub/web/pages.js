@@ -171,11 +171,16 @@ window.HubPages = (() => {
   /* Ortak mesaj satırı (R8): sayfa betikleri `HubPages.say(düğüm, metin, bad)` ile yazar; kendi kopyasını TUTMAZ.
    * Düğüm yoksa (sayfa çizilmemiş/kapanmış) sessizce döner. Metin textContent ile yazılır (innerHTML yok); boş/undefined → ''.
    * `bad` yalnız 'bad' sınıfını açar/kapar: düğümün öteki sınıfları (say, jg-msg, jp-msg …) korunur.
-   * Seçenek { list: true }: `metin` bir SATIR DİZİSİdir (düğüm <ul>); her satır bir <li>, bad ise class="bad" (Tezgâh iletileri). */
+   * `bad` METİN gelirse durum sınıfıdır ('bad' | 'warn' | 'ok' | '': Parçalar): üçü birbirini dışlar, '' hepsini kapatır; yine
+   * düğümün öteki sınıfları korunur. Seçenek { list: true }: `metin` bir SATIR DİZİSİdir (düğüm <ul>); her satır bir <li>,
+   * bad ise class="bad" (Tezgâh iletileri). */
+  const STATUS = ['bad', 'warn', 'ok'];
   function say(node, text, bad, opts) {
     if (!node) return;
     if (opts && opts.list) { node.replaceChildren(...(text || []).map((t) => el('li', { class: bad ? 'bad' : '', text: t }))); return; }
-    node.textContent = text || ''; node.classList.toggle('bad', !!bad);
+    node.textContent = text || '';
+    if (typeof bad === 'string') for (const c of STATUS) node.classList.toggle(c, c === bad);
+    else node.classList.toggle('bad', !!bad);
   }
 
   return { register, build, onState, onEvents, show, loadScript, mountView, scene, say, current: () => P.current, _P: P };

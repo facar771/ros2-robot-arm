@@ -28,6 +28,9 @@ const all = (n, f, out = []) => { if (f(n)) out.push(n); n.children.forEach((c) 
 const act = (root, a) => { const r = all(root, (n) => n.attrs['data-act'] === a); assert.ok(r.length, `düğme yok: ${a}`); return r[0]; };
 const fld = (root, f) => { const r = all(root, (n) => n.attrs['data-f'] === f); assert.ok(r.length, `alan yok: ${f}`); return r[0]; };
 const text = (n) => n.textContent;
+/* R8b: mesaj satırının sınıfları (sıralı): metni eşleşen `say` düğümleri. Durum sınıfları (bad/warn/ok) birbirini dışlar. */
+const sayCls = (root, re) => all(root, (n) => re.test(n.textContent) && n.children.length === 0 && /(^| )say( |$)/.test(n.className))
+  .map((n) => n.className.split(' ').filter(Boolean).sort());
 
 global.window = global;
 const head = new N('head');
@@ -46,6 +49,8 @@ class ApiError extends Error { constructor(status, body) { super((body && body.m
 global.S = { snap: { estop: { latched: false }, me: { can_control: true },
   robot: { mode: 'real', stale: false, tcp: { pos_m: [0.3, 0.0, 0.2], rpy_deg: [180, 0, 0] } } } };
 require(path.join(WEB, 'shell.js'));                                           // modeInfo: yönelim varsayılanı moda göre
+require(path.join(WEB, 'pages.js'));                                           // gerçek HubPages.say (R8): bad/warn/ok mesaj sınıfları ortak yazıcıdan
+const realSay = global.HubPages.say;
 require(path.join(WEB, 'scene_logic.js'));
 require(path.join(WEB, 'parts_logic.js'));                                    // R12: sayfa kararlarını buradan alır (`scripts` mount'tan önce yükler)
 require(path.join(WEB, 'approach.js'));
@@ -105,7 +110,7 @@ const scene = { implemented: true, objs: new Map(), log: [], pickCbs: new Set(),
   onGizmoChange(cb) { scene.gizmoCbs.add(cb); return () => scene.gizmoCbs.delete(cb); } };
 let def = null;
 let mounts = 0;
-global.HubPages = { register(d) { def = d; }, async mountView() { mounts += 1; }, async scene() { return scene; } };
+global.HubPages = { register(d) { def = d; }, async mountView() { mounts += 1; }, async scene() { return scene; }, say: realSay };
 require(path.join(WEB, 'pages', 'parts.js'));
 
 const idOf = (i) => srv.parts[i].id;
@@ -178,6 +183,7 @@ const tick = () => new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(scene.objs.get(sid).spec.pose, put[0].body.pose);
   fld(root, 'y').value = 'abc'; await fld(root, 'y').fire('change');
   assert.strictEqual(callsTo(`/api/parts/${pid}`, 'PUT').length, 1, 'geçersiz alan sunucuya gitmemeli'); assert.match(text(root), /sayı olmalı/);
+  assert.deepStrictEqual(sayCls(root, /sayı olmalı/), [['bad', 'say']], 'geçersiz alan mesajı bad');
   fld(root, 'y').value = '0'; fld(root, 'scale').value = '5000'; await fld(root, 'scale').fire('change');
   assert.strictEqual(callsTo(`/api/parts/${pid}`, 'PUT').length, 1); assert.match(text(root), /Ölçek/);
   fld(root, 'scale').value = '2'; await fld(root, 'scale').fire('change');
@@ -252,7 +258,7 @@ const tick = () => new Promise((r) => setImmediate(r));
   assert.strictEqual(fld(root, 'orientmode').value, 'fixed', 'mode=real: varsayılan yönelim Sabit'); assert.strictEqual(b.orientation, 'fixed');
   b.pos_m.forEach((v, i) => assert.ok(Math.abs(v - [0.3, 0, 0.15][i]) < 1e-12, `hedef konumu: ${b.pos_m}`));
   const Rm = SL.rpyToMatrix(b.rpy_deg); [Rm[2], Rm[5], Rm[8]].forEach((v, i) => assert.ok(Math.abs(v - [0, 0, -1][i]) < 1e-9, 'takım z ekseni −normal olmalı'));
-  assert.ok(!confirm.hidden, 'kontrol geçti: onay düğmesi görünmeli'); assert.strictEqual(callsTo('/api/move').length, 0, 'onaydan önce hareket yok');
+  assert.ok(!confirm.hidden, 'kontrol geçti: onay düğmesi görünmeli'); assert.deepStrictEqual(sayCls(root, /^Kontrol geçti/), [['ok', 'say']], 'kontrol geçti: ok'); assert.strictEqual(callsTo('/api/move').length, 0, 'onaydan önce hareket yok');
   assert.ok(scene.objs.has('parts:ap-frame') && scene.objs.has('parts:ap-line'));
   assert.ok(scene.objs.has('parts:ap-ghost'), 'görünür takım varken gölge takım çizilmeli');
   await confirm.click();
@@ -267,6 +273,7 @@ const tick = () => new Promise((r) => setImmediate(r));
   const moves0 = callsTo('/api/move').length;
   await near.click();
   assert.ok(confirm.hidden); assert.match(text(root), /güvenli kutunun dışında/); assert.match(text(root), /GÖNDERİLMEDİ/);
+  assert.deepStrictEqual(sayCls(root, /GÖNDERİLMEDİ/), [['bad', 'say']], 'ok → bad: durum sınıfları birbirini dışlar (ok kalmaz)');
   assert.ok(scene.log.some((l) => l[1] === 'parts:ap-line' && l[2].color === 0xda3633), 'çizgi kırmızıya dönmeli');
   await confirm.click(); assert.strictEqual(callsTo('/api/move').length, moves0, 'kontrolden geçmeyen hedefe hareket gitmemeli');
   srv.checkReply = () => { throw new ApiError(404, { error: 'not_found' }); };

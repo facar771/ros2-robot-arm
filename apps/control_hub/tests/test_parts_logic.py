@@ -61,11 +61,12 @@ def test_page_holds_no_decision_logic_and_files_have_no_unsafe_dom():
         assert 'http://' not in text and 'https://' not in text, name
 
 
-def test_say_helper_is_untouched():
-    """Ferhat'ın R12 kararı: say() ayrı iştir (T7: 8 kopya); bu PR'da bayt-bayt aynı kalır."""
+def test_say_goes_through_the_shared_writer():
+    """R12'de say() ayrı iş olarak bayt-bayt korunmuştu (T7: 8 kopya); R8b onu ortak HubPages.say'e geçirdi:
+    yerel sınıf/metin yazıcı kalmaz, yalnız ince sarmalayıcı (cls: bad | warn | ok | '')."""
     page = (WEB / 'pages' / 'parts.js').read_text(encoding='utf-8')
-    say = "  const say = (n, text, cls = '') => { n.textContent = text; n.className = 'say ' + cls; };\n"
-    assert say in page
+    assert "const say = (n, text, cls = '') => HubPages.say(n, text, cls);" in page
+    assert "n.className = 'say '" not in page and 'n.textContent = text' not in page
 
 
 def test_parts_page_is_under_350_lines_and_every_file_under_400():
