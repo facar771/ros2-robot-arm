@@ -39,6 +39,7 @@ from control_hub.hub_core.program_store import (
 from control_hub.hub_core.runner import BusyError, EstopLatchedError
 from control_hub.paths import user_dir
 from control_hub.server.errors import fail
+from control_hub.server.guards import estop_latched_response, guard_motion
 
 DEFAULT_SPEED_PCT = 25.0
 
@@ -100,10 +101,8 @@ def install(app: FastAPI, ctx: Any) -> None:
         except ProgramError as exc:
             return fail(exc.status, exc.code, exc.message, **exc.extra)
 
-    def locked() -> Optional[JSONResponse]:
-        if hub.estopped:
-            return fail(423, 'estop_latched', 'ACİL DUR aktif: önce kilidi aç', state='estopped')
-        return None
+    def locked(request: Request) -> Optional[JSONResponse]:
+        return guard_motion(hub, request)
 
     @app.get('/api/program/state')
     async def state(request: Request):
@@ -184,7 +183,7 @@ def install(app: FastAPI, ctx: Any) -> None:
         ctx.need_control(request)
         body, bad = await body_of(request)
         mv, bad = (None, bad) if bad else single(body)
-        bad = bad or locked() or (fail(409, 'busy', 'Program çalışıyor') if runner.running else None)
+        bad = bad or locked(request) or (fail(409, 'busy', 'Program çalışıyor') if runner.running else None)
         if bad is not None:
             return bad
         try:
@@ -197,7 +196,7 @@ def install(app: FastAPI, ctx: Any) -> None:
     async def run(request: Request):
         ctx.need_control(request)
         body, bad = await body_of(request)
-        bad = bad or locked() or (fail(409, 'busy', 'Program çalışıyor') if runner.running else None)
+        bad = bad or locked(request) or (fail(409, 'busy', 'Program çalışıyor') if runner.running else None)
         sp, bad = (0.0, bad) if bad else speed_of(body)
         prog, bad = (None, bad) if bad else program_of(body)
         mode = None if bad else body.get('mode', 'run')
@@ -218,7 +217,7 @@ def install(app: FastAPI, ctx: Any) -> None:
         try:
             run_id = runner.start(prog, sp, step_mode=mode == 'step')
         except EstopLatchedError:
-            return locked() or fail(423, 'estop_latched', 'ACİL DUR aktif')
+            return locked(request) or fail(423, 'estop_latched', 'ACİL DUR aktif')
         except BusyError:
             return fail(409, 'busy', 'Başka bir program çalışıyor')
         return {'ok': True, 'run_id': run_id, 'runner': runner.status()}
@@ -227,7 +226,7 @@ def install(app: FastAPI, ctx: Any) -> None:
         try:
             op()
         except EstopLatchedError:
-            return fail(423, 'estop_latched', 'ACİL DUR aktif: önce kilidi aç', state='estopped')
+            return estop_latched_response()
         except BusyError:
             return fail(409, 'not_paused', 'Program duraklatılmış olmalı')
         return {'ok': True, 'runner': runner.status()}
