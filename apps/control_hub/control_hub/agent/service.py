@@ -10,24 +10,29 @@ araçlarla okunur, enjekte edilmiş bir metin sonraki turlara geçmez). Güvenli
 3. Tur başına hareket tavanı (``max_motions``) ve günlük LLM istek sınırı (``daily_limit``); ikisi de
    güvenlik araçlarına (acil dur, iptal) UYGULANMAZ.
 4. ``robot_agent`` içindeki beyaz liste, şema, güvenli kutu, kuru çalıştırma ve anahtar sızıntı koruması.
+
+Yapı (R10): hata sınıfları ``errors``, ayarlar ``config``, sayaç/korumalı LLM/korumalı port ``guards``
+modüllerindedir; ``AgentError``, ``AgentConfig``, ``UsageCounter``, ``ALL_PROVIDERS`` burada da içe
+aktarılıdır, yani ``from control_hub.agent.service import ...`` eskisi gibi çalışır.
 """
 from __future__ import annotations
 
 import logging
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from typing import Any, Callable, Dict, List, Optional
-from urllib.parse import urlsplit
 
 from control_hub.agent.approvals import ApprovalQueue
+from control_hub.agent.config import ALL_PROVIDERS, AgentConfig
+from control_hub.agent.errors import AgentError, Cancelled, LimitReached
 from control_hub.agent.fakeport import HubFakeRobotPort
-from control_hub.agent.keystore import PROVIDERS, KeyStore
+from control_hub.agent.guards import GuardedLLM, GuardedPort, UsageCounter
+from control_hub.agent.keystore import KeyStore
 from control_hub.hub_core import Hub, RobotApiBackend
 
 log = logging.getLogger('control_hub.agent')
 
-ALL_PROVIDERS = PROVIDERS + ('offline',)
 MAX_MESSAGE = 2000
 TRANSCRIPT_MAX = 200
 
@@ -45,112 +50,6 @@ def _ensure_repo_paths() -> None:
         path = root / name
         if path.is_dir() and str(path) not in sys.path:
             sys.path.append(str(path))
-
-
-class AgentError(Exception):
-    """Kullanıcıya gösterilebilir ajan hatası; ``code`` HTTP katmanı için."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(message)
-        self.code, self.message = code, message
-
-
-class _Cancelled(Exception):
-    pass
-
-
-class _LimitReached(Exception):
-    pass
-
-
-@dataclass
-class AgentConfig:
-    provider: str = 'anthropic'
-    model: str = ''                  # anthropic: boş = robot_agent varsayılanı; openai: zorunlu
-    base_url: str = ''               # yalnızca openai: https (http yalnızca yerel makinede)
-    daily_limit: int = 200           # günlük LLM isteği (yerel takvim günü); offline sayılmaz
-    max_motions: int = 3             # tur başına hareket çağrısı
-    approval_timeout_s: float = 60.0
-    dry_run: bool = False            # True: hareket araçları robota GİTMEZ, ne olacağını söyler
-    max_steps: int = 6
-
-    def problems(self) -> List[str]:
-        out: List[str] = []
-        if self.provider not in ALL_PROVIDERS:
-            out.append(f'sağlayıcı {ALL_PROVIDERS} içinden olmalı')
-        if not 1 <= self.daily_limit <= 100_000:
-            out.append('günlük istek sınırı 1-100000 olmalı')
-        if not 0 <= self.max_motions <= 20:
-            out.append('tur başına hareket tavanı 0-20 olmalı')
-        if not 5 <= self.approval_timeout_s <= 600:
-            out.append('onay zaman aşımı 5-600 sn olmalı')
-        if not 1 <= self.max_steps <= 20:
-            out.append('adım sınırı 1-20 olmalı')
-        if len(self.model) > 100 or any(c.isspace() for c in self.model):
-            out.append('model adı boşluksuz ve en çok 100 karakter olmalı')
-        if self.base_url:
-            parts = urlsplit(self.base_url)
-            loop = parts.hostname in ('127.0.0.1', 'localhost', '::1')
-            if parts.scheme not in ('https', 'http') or not parts.hostname or parts.username \
-                    or parts.password or (parts.scheme == 'http' and not loop):
-                out.append('uç adresi https olmalı (http yalnızca yerel makinede), '
-                           'kullanıcı/parola içermemeli')
-        return out
-
-
-class UsageCounter:
-    """Günlük LLM isteği sayacı (bellekte; süreç yeniden başlayınca sıfırlanır — bir maliyet freni,
-    güvenlik sınırı değil)."""
-
-    def __init__(self, limit: int, today: Callable[[], str] = lambda: time.strftime('%Y-%m-%d')):
-        self.limit, self._today = limit, today
-        self._day, self.used = today(), 0
-        self._lock = threading.Lock()
-
-    def take(self) -> None:
-        with self._lock:
-            day = self._today()
-            if day != self._day:
-                self._day, self.used = day, 0
-            if self.used >= self.limit:
-                raise _LimitReached
-            self.used += 1
-
-    def snapshot(self) -> Dict[str, int]:
-        with self._lock:
-            if self._today() != self._day:
-                self._day, self.used = self._today(), 0
-            return {'daily_limit': self.limit, 'used_today': self.used}
-
-
-class _GuardedLLM:
-    """Her LLM isteği: önce iptal bayrağı, sonra günlük sayaç."""
-
-    def __init__(self, inner: Any, cancelled: threading.Event, counter: Optional[UsageCounter]):
-        self._inner, self._cancelled, self._counter = inner, cancelled, counter
-
-    def complete(self, system, messages, tools):
-        if self._cancelled.is_set():
-            raise _Cancelled
-        if self._counter is not None:
-            self._counter.take()
-        return self._inner.complete(system, messages, tools)
-
-
-class _GuardedPort:
-    """Ajanın robota giden portu: ACİL DUR çağrısı önce Hub kilidini de koyar (tek gerçek, tek kilit)."""
-
-    def __init__(self, inner: Any, hub: Hub):
-        self._inner, self._hub = inner, hub
-        self.base_url = getattr(inner, 'base_url', None)
-
-    def get(self, path: str):
-        return self._inner.get(path)
-
-    def post(self, path: str, payload: Optional[Dict[str, Any]] = None):
-        if path == '/api/stop':
-            self._hub.estop(source='agent')
-        return self._inner.post(path, payload)
 
 
 class _Sink:
@@ -329,7 +228,7 @@ class AgentService:
             except ValueError as exc:
                 raise AgentError('bad_config', str(self._scrub(str(exc)))) from None
         counted = None if cfg.provider == 'offline' and self._llm_factory is None else self.counter
-        return _GuardedLLM(inner, self._cancelled, counted)
+        return GuardedLLM(inner, self._cancelled, counted)
 
     def _confirm(self, request: Any) -> bool:
         if self._cancelled.is_set() or self.hub.estopped:
@@ -348,7 +247,7 @@ class AgentService:
             if self.active:
                 raise AgentError('busy', 'önceki tur sürüyor')
             try:
-                port = _GuardedPort(self._port_factory(self.hub), self.hub)
+                port = GuardedPort(self._port_factory(self.hub), self.hub)
             except AgentError:
                 raise
             except Exception as exc:    # noqa: BLE001
@@ -375,9 +274,9 @@ class AgentService:
                 self._add('assistant', run.text, halted=run.halted)
             if run.halted:
                 self._add('system', f'Tur durdu: {run.halted}')
-        except _Cancelled:
+        except Cancelled:
             self._add('system', 'Ajan durduruldu.')
-        except _LimitReached:
+        except LimitReached:
             self._add('system', 'Günlük LLM istek sınırı doldu; yarın ya da sınırı yükselterek devam et.')
         except ra['llm'].LLMError as exc:
             self._add('system', f'LLM hatası: {exc}')
