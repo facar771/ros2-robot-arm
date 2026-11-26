@@ -27,6 +27,8 @@ class N {
   set(v, ev = 'change') { this.value = v; this.fire(ev); }
 }
 global.window = global;
+require(require('path').resolve(require('path').dirname(process.argv[2]), '..', 'pages.js'));   // gerçek HubPages.say (R8)
+const realSay = global.HubPages.say;
 global.el = (tag, props = {}, children = []) => {
   const e = new N(tag);
   for (const [k, v] of Object.entries(props)) { if (k === 'text') e.textContent = v; else if (k === 'class') e.className = v; else if (k.startsWith('data-')) e.dataset[k.slice(5)] = v; else e[k] = v; }
@@ -89,7 +91,7 @@ function load({ gen, kinds = KINDS, kindsFail = false, scene = false, program = 
   else if (program === 'refuse') global.HubProgram = { addSteps: () => ({ ok: false, message: 'Program çalışıyor: bitince ekle' }) };
   else delete global.HubProgram;
   let def = null;
-  global.HubPages = { register(d) { def = d; }, mountView: async () => {} };
+  global.HubPages = { register(d) { def = d; }, mountView: async () => {}, say: realSay };
   new Function(fs.readFileSync(process.argv[2], 'utf8'))();
   return { def, calls, toasts, added, names, H: global.HubScene };
 }

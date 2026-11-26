@@ -34,6 +34,7 @@ let calls = [], reply = null;
 global.api = async (p, m = 'GET', b) => { calls.push({ p, m, b }); return reply(p, m, b); };
 global.S = { snap: { bench: { enabled: true, open: false } } };
 
+require(path.join(WEB, 'pages.js'));                     // gerçek HubPages.say (R8): mesaj satırı ortak yazıcıdan gelir
 require(path.join(WEB, 'bench.js'));
 const L = BenchLogic;
 const ax = (o = {}) => ({ name: 'j1', idx: 0, pos: 10, moving: false, homed: true, enabled: true, lo: -256, hi: 256, ...o });

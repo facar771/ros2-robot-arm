@@ -78,12 +78,12 @@
     if (r.ok) P.dirty.clear();
     apply();
   }
-  function say(text, bad) { const n = q('jp-gmsg'); if (n) { n.textContent = text || ''; n.classList.toggle('bad', !!bad); } }
+  function say(text, bad) { HubPages.say(q('jp-gmsg'), text, bad); }
 
   /* ---- 3B tıkla-git (P1b): "Hedef seç" kipinde zemin düzlemine dokun → hedef işareti → kuru kontrol → "Git". Dokunma yalnız bu kipte
    * seçer; kip kapalıyken seçim düzlemi sahnede YOK, bu yüzden telefonda sürükle/döndür karışmaz. Kimlikler "jog:". ---- */
   const zone = () => L.zoneOf(P.snap && P.snap.robot);
-  const tmsg = (text, bad) => { const n = q('jp-tmsg'); n.textContent = text || ''; n.classList.toggle('bad', !!bad); };
+  const tmsg = (text, bad) => HubPages.say(q('jp-tmsg'), text, bad);
   const sceneOk = (r) => { if (!r || r.ok === false) { tmsg(`3B sahne: ${(r && (r.message || r.error)) || 'yok'}`, true); return false; } return true; };
   function zValue() { const z = zone(); if (!z) return null; const v = q('jp-tz').value; return L.clampZ(z, v === '' ? NaN : Number(v) / 1000); }
   function putMarker() {

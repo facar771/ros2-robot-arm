@@ -33,6 +33,7 @@ const timers = [];
 global.setInterval = (f, ms) => { timers.push({ f, ms }); return timers.length; };
 global.clearInterval = (id) => { timers[id - 1] = null; };
 
+require(path.join(WEB, 'pages.js'));                     // gerçek HubPages.say (R8)
 require(path.join(WEB, 'pot_logic.js'));
 require(path.join(WEB, 'bench.js'));
 const Z = PotLogic;

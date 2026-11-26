@@ -45,10 +45,7 @@ window.FrameWizard = (() => {
     load();
   }
 
-  function say(text, bad = false) {
-    const n = q('fw-msg'); if (!n) return;
-    n.textContent = text || ''; n.classList.toggle('bad', !!bad);
-  }
+  function say(text, bad = false) { HubPages.say(q('fw-msg'), text, bad); }
 
   async function load() {
     try {
