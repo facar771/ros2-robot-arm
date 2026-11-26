@@ -1,79 +1,30 @@
 /* Sayfa: Program (P2). AR4 program ekranı: waypoint tablosu, Move J/L adımları, ZORUNLU kuru çalıştırma ("Önizle"),
  * sunucu tarafı koşucu (Çalıştır/Adım/Duraklat/Devam/Durdur). Veri yalnız textContent ile yazılır.
  * Güvenlik: Çalıştır yalnız geçerli önizleme varken açılır, ama asıl denetim SUNUCUDADIR (arayüze güvenilmez). ACİL DUR üst
- * çubuktadır, burada kopyası yok. 3B (HubScene, S2): numaralı işaret, yol çizgisi, gizmo ile hedef, parçaya dokun. */
+ * çubuktadır, burada kopyası yok. 3B (HubScene, S2): numaralı işaret, yol çizgisi, gizmo ile hedef, parçaya dokun.
+ * R12: kararlar (metinler, düğme kapalılıkları, model düzenleme, sahne nesneleri) DOM'suz program_logic.js'tedir (window.ProgramLogic);
+ * burası yalnız DOM çizer ve ağa konuşur. */
 'use strict';
 
 (() => {
-  const POLL_MS = 500, CHECK_WAIT_MS = 350, ARM_MS = 3000, DEFAULT_SPEED = 25, MAX_FILE = 1_000_000, MARK_R_M = 0.012, TGT_SIZE_M = 0.08, MAX_STEPS = 500;
-  const ZERO6 = [0, 0, 0, 0, 0, 0], NAME_RE = /^[0-9A-Za-zÇĞİÖŞÜçğıöşü][0-9A-Za-zÇĞİÖŞÜçğıöşü _.-]{0,39}$/;
-  const KIND = { move_j: 'Eklem hareketi (J)', move_l: 'Doğrusal hareket (L)', wait: 'Bekle', tool: 'Alet', comment: 'Not', loop: 'Döngü' };
-
-  /* ---- saf mantık (DOM yok; node testi doğrudan çağırır) ---- */
-  const L = {
-    blank: () => ({ version: 1, name: '', waypoints: [], steps: [] }),
-    nums(text, min, max) {                     // "1, 2 3" -> [1,2,3]; NaN/∞/yanlış adet -> null
-      const t = String(text).trim(), a = t ? t.split(/[\s,;]+/).map(Number) : [];
-      return a.length >= min && a.length <= max && a.every(Number.isFinite) ? a : null;
-    },
-    fmt: (a, d = 3) => (a || []).map((v) => String(+Number(v).toFixed(d))).join(', '),
-    unique(base, names) { const b = base.replace(/ \d+$/, ''); let n = 1; while (names.includes(`${b} ${n}`)) n++; return `${b} ${n}`; },
-    key: (line, sub) => (sub == null ? `${line}` : `${line}.${sub}`),
-    walk(prog, fn) { prog.steps.forEach((s, i) => { fn(s, `${i}`); if (s.kind === 'loop') s.steps.forEach((b, j) => fn(b, `${i}.${j}`)); }); },
-    dangling(prog) {                           // satır anahtarı -> neden: silinmiş/yanlış waypoint'e bağlı adımlar
-      const names = new Set(prog.waypoints.map((w) => w.name)), out = new Map();
-      L.walk(prog, (s, k) => { if ('waypoint' in s && !names.has(s.waypoint)) out.set(k, `waypoint yok: '${s.waypoint}'`); });
-      return out;
-    },
-    empty: (prog) => !prog.steps.some((s) => (s.kind === 'loop' ? s.steps.some((b) => b.kind !== 'comment') : s.kind !== 'comment')),
-    sig: (prog, speed) => JSON.stringify([prog, speed]),
-    total: (steps) => steps.reduce((n, s) => n + 1 + (s.steps ? s.steps.length : 0), 0),   // döngü gövdesi dahil
-    rename(prog, from, to) { L.walk(prog, (s) => { if (s.waypoint === from) s.waypoint = to; }); },
-    swap(arr, i, d) { const j = i + d; if (j < 0 || j >= arr.length) return false; [arr[i], arr[j]] = [arr[j], arr[i]]; return true; },
-    path: (wps) => wps.map((w, i) => ({ n: i + 1, p: w.pos_m })).filter((o) => o.p),
-    gate({ prog, check, sig, running, estop, canControl }) {   // Çalıştır kapısı: neden metni düğmenin yanında görünür
-      const no = (why) => ({ ok: false, why }), d = L.dangling(prog);
-      if (!canControl) return no('Kontroller kilitli');
-      if (estop) return no('ACİL DUR aktif');
-      if (running) return no('Program çalışıyor');
-      if (L.empty(prog)) return no('Program boş');
-      if (d.size) return no(`Silinmiş waypoint'e bağlı ${d.size} adım var`);
-      if (!check || check.sig !== sig) return no('Önce "Önizle" ile kuru çalıştır');
-      return check.res.ok ? { ok: true, why: '' } : no(`Önizlemede ${check.res.violations} ihlal var`);
-    },
-    status(run) {                              // koşucu durumundan tek satır metin
-      if (!run || !run.state || run.state === 'idle') return '';
-      const er = run.error, at = er ? `satır ${er.line + 1}${er.sub != null ? `.${er.sub + 1}` : ''}` : '';
-      const main = run.state === 'failed' ? `HATA (${at}): ${er ? er.message : run.say}` : run.say || '';
-      return main + (run.running ? ` · ${run.done}/${run.total}${run.iteration ? ` · tur ${run.iteration}` : ''}` : '') + (run.pause_reason ? ` · ${run.pause_reason}` : '');
-    },
-    prevText(valid, note) {
-      if (note || !valid) return note || 'Önizleme yok / program değişti';
-      return valid.res.ok ? `✓ Önizleme geçti (${valid.res.rows.length} hareket denetlendi)` : `✗ ${valid.res.violations} ihlal: kırmızı satırlara bak`;
-    },
-    rowInfo({ dangling, check, run }, key) {   // satır rengi + nedenler (kuru çalıştırma, silinmiş waypoint, çalışma hatası)
-      const msgs = [], row = check && check.res.rows.find((r) => L.key(r.line, r.sub) === key), er = run && run.error; let cls = '';
-      if (dangling.has(key)) { cls = 'bad'; msgs.push(dangling.get(key)); }
-      if (row && row.ok) cls = cls || 'ok';
-      if (row && !row.ok) { cls = 'bad'; msgs.push(...row.violations.map((v) => v.message)); }
-      if (er && L.key(er.line, er.sub) === key) { cls = 'bad'; msgs.push(`Çalışma hatası: ${er.message}`); }
-      if (run && run.running && run.line != null && L.key(run.line, run.sub) === key) cls = 'run';
-      return { cls, msgs };
-    },
-  };
+  const POLL_MS = 500, CHECK_WAIT_MS = 350, ARM_MS = 3000, DEFAULT_SPEED = 25;
+  let L = null;                                // window.ProgramLogic: aşağıdaki `ready` yükler
 
   /* ---- durum ve G/Ç ---- */
-  const Q = {}, P = { prog: L.blank(), slug: null, dirty: false, speed: DEFAULT_SPEED, check: null, note: '', run: null, pose: null,
+  const Q = {}, P = { prog: null, slug: null, dirty: false, speed: DEFAULT_SPEED, check: null, note: '', run: null, pose: null,
     backend: null, estop: false, real: false, control: true, confirm: null, armed: null, shown: false, bound: false, tgtOn: false, seq: 0, ids: [],
     rows: new Map(), timer: null, tgt: { pos: [0, 0, 0], rpy: [0, 0, 0], ok: null, why: 'Henüz denetlenmedi' } };
+  /* Mantık betiği, sayfa açılmadan burada yüklenir: Algoritmalar sayfası Program sayfası HİÇ açılmamışken HubProgram.addSteps çağırabilir
+   * (P.prog hazır olmalı). mount da bunu bekler; yüklenemezse hata yalnız bu sayfanın kutusunda görünür. */
+  const ready = HubPages.loadScript('/program_logic.js').then(() => { L = window.ProgramLogic; P.prog = L.blank(); });
+  ready.catch(() => {});
   const E = el, on = (e, ev, fn) => { e.addEventListener(ev, fn); return e; };
   const btn = (text, fn, cls = 'small', title = '') => on(E('button', { type: 'button', class: cls, text, title }), 'click', fn);
   const inp = (value, fn, props = {}) => on(E('input', { type: 'text', value: String(value ?? ''), autocomplete: 'off', ...props }), 'change', (ev) => fn(ev.target));
   const sig = () => L.sig(P.prog, P.speed);
-  const whyOf = (r) => { const e = r.body && r.body.errors && r.body.errors[0]; return e ? `${r.message}: ${e.path}: ${e.message}` : r.message; };
   const numField = (v, min, max, apply, props, lo, hi) => inp(v, (i) => {   // geçersiz değer modele YAZILMAZ, alan kırmızı olur
-    const a = L.nums(i.value, min, max), ok = !!a && (lo == null || (a[0] >= lo && a[0] <= hi));
-    i.classList.toggle('bad', !ok); if (ok) apply(a);
+    const a = L.numCheck(i.value, min, max, lo, hi);
+    i.classList.toggle('bad', !a); if (a) apply(a);
   }, props);
   const scalar = (v, lo, hi, apply, props) => numField(v, 1, 1, ([x]) => apply(x), { inputMode: 'decimal', ...props }, lo, hi);
 
@@ -96,7 +47,7 @@
   /* ---- waypoint tablosu ---- */
   function vecInp(w, key, lo, hi, title, digits) {   // boş bırakmak alanı siler (waypoint başka veri taşımalı; sunucu denetler)
     return inp(w[key] ? L.fmt(w[key], digits) : '', (i) => {
-      const a = i.value.trim() === '' ? [] : L.nums(i.value, lo, hi);
+      const a = L.vec(i.value, lo, hi);
       i.classList.toggle('bad', !a); if (!a) return;
       if (a.length) w[key] = a; else delete w[key];
       changed(false, false);
@@ -111,7 +62,7 @@
   function wpRow(w, i) {
     const wps = P.prog.waypoints, go = [];
     const name = inp(w.name, (e) => {
-      const v = e.value.trim(), bad = !NAME_RE.test(v) || wps.some((x, k) => k !== i && x.name === v);
+      const v = e.value.trim(), bad = L.nameBad(v, wps.map((x) => x.name), i);
       e.classList.toggle('bad', bad); if (bad) { toast('Ad geçersiz ya da kullanımda', true); return; }
       L.rename(P.prog, w.name, v); w.name = v; changed(false, true);   // adımlar yeni ada taşınır
     }, { title: 'Waypoint adı' });
@@ -131,26 +82,13 @@
   }
   async function savePose() {
     await refresh();
-    const p = P.pose || {}, w = { name: L.unique('Nokta', P.prog.waypoints.map((x) => x.name)) };
-    if (p.joints_deg) w.joints_deg = p.joints_deg.map((v) => +v.toFixed(3));
-    if (p.pos_m && p.rpy_deg) { w.pos_m = p.pos_m.map((v) => +v.toFixed(5)); w.rpy_deg = p.rpy_deg.map((v) => +v.toFixed(3)); }
-    if (!w.joints_deg && !w.pos_m) toast('Robot pozu okunamadı', true); else { P.prog.waypoints.push(w); changed(true, true); }
+    const w = L.poseWaypoint(P.pose, P.prog.waypoints.map((x) => x.name));
+    if (!w) toast('Robot pozu okunamadı', true); else { P.prog.waypoints.push(w); changed(true, true); }
   }
 
   /* ---- adımlar ---- */
-  function newStep(kind) {
-    const last = P.prog.waypoints[P.prog.waypoints.length - 1], pose = P.pose || {};
-    if (kind === 'move_j') return last && last.joints_deg ? { kind, waypoint: last.name } : { kind, joints_deg: (pose.joints_deg || ZERO6).slice() };
-    if (kind === 'move_l') return last && last.pos_m ? { kind, waypoint: last.name, offset_m: [0, 0, 0] }
-      : { kind, pos_m: (pose.pos_m || [0, 0, 0]).slice(), rpy_deg: (pose.rpy_deg || [0, 0, 0]).slice() };   // poz yoksa 0: denetim kırmızı verir
-    if (kind === 'wait') return { kind, s: 1 };
-    if (kind === 'tool') return { kind, open_pct: typeof pose.open_pct === 'number' ? pose.open_pct : 50 };
-    return kind === 'comment' ? { kind, text: '' } : { kind: 'loop', count: 2, steps: [] };
-  }
-
   function wpSelect(cur, apply) {
-    const names = P.prog.waypoints.map((w) => w.name), opts = [E('option', { value: '', text: '— seç —' }), ...names.map((n) => E('option', { value: n, text: n }))];
-    if (cur && !names.includes(cur)) opts.push(E('option', { value: cur, text: `${cur} (YOK)` }));   // silinmiş waypoint görünür kalır
+    const opts = L.wpOptions(P.prog.waypoints.map((w) => w.name), cur).map((o) => E('option', o));
     const sel = on(E('select', { title: 'Waypoint' }, opts), 'change', () => apply(sel.value));
     sel.value = cur; return sel;
   }
@@ -158,14 +96,7 @@
   function moveEditor(s) {                     // move_j / move_l: waypoint'e bağlı ya da doğrudan değer
     const j = s.kind === 'move_j', byWp = 'waypoint' in s, put = (k) => (a) => { s[k] = a; changed(false, false); };
     const free = s.orientation === 'free' ? [E('span', { class: 'pg-free', text: 'yönelim: serbest', title: "orientation:'free': yönelimi çözücü belirler" })] : [];
-    const src = on(E('select', { title: 'Hedef kaynağı' }, [E('option', { value: 'wp', text: 'Waypoint' }), E('option', { value: 'val', text: 'Değer' })]), 'change', () => {
-      const from = P.prog.waypoints.find((x) => x.name === s.waypoint) || P.pose || {};
-      for (const k of ['waypoint', 'offset_m', 'joints_deg', 'pos_m', 'rpy_deg', 'orientation']) delete s[k];
-      if (src.value === 'wp') { s.waypoint = (P.prog.waypoints[0] || {}).name || ''; if (!j) s.offset_m = [0, 0, 0]; }
-      else if (j) s.joints_deg = (from.joints_deg || ZERO6).slice();
-      else { s.pos_m = (from.pos_m || [0, 0, 0]).slice(); s.rpy_deg = (from.rpy_deg || [0, 0, 0]).slice(); }
-      changed(false, true);
-    });
+    const src = on(E('select', { title: 'Hedef kaynağı' }, [E('option', { value: 'wp', text: 'Waypoint' }), E('option', { value: 'val', text: 'Değer' })]), 'change', () => { L.retarget(s, src.value, P.prog, P.pose); changed(false, true); });
     src.value = byWp ? 'wp' : 'val';
     if (byWp) return [src, wpSelect(s.waypoint, (v) => { s.waypoint = v; changed(false, true); }),
       ...(j ? [] : [numField(L.fmt(s.offset_m), 3, 3, put('offset_m'), { title: 'Ofset x,y,z (m)' }), ...free])];
@@ -186,7 +117,7 @@
   function stepList(list, parent) {
     return list.map((s, i) => {
       const key = parent == null ? `${i}` : `${parent}.${i}`, why = E('div', { class: 'pg-why' });
-      const head = E('div', { class: 'pg-h' }, [E('span', { class: 'pg-n', text: String(i + 1) }), E('b', { text: KIND[s.kind] }), E('span', { class: 'pg-sp' }),
+      const head = E('div', { class: 'pg-h' }, [E('span', { class: 'pg-n', text: String(i + 1) }), E('b', { text: L.KIND[s.kind] }), E('span', { class: 'pg-sp' }),
         btn('↑', () => { if (L.swap(list, i, -1)) changed(false, true); }, 'small ic', 'Yukarı'),
         btn('↓', () => { if (L.swap(list, i, 1)) changed(false, true); }, 'small ic', 'Aşağı'),
         btn('✕', () => { list.splice(i, 1); changed(false, true); }, 'small ic', 'Sil')]);
@@ -195,9 +126,9 @@
     });
   }
 
-  function adder(list, inLoop) {               // döngü içinde döngü YOK (tek seviye)
-    const sel = E('select', { title: 'Adım türü' }, Object.keys(KIND).filter((k) => !(inLoop && k === 'loop')).map((k) => E('option', { value: k, text: KIND[k] })));
-    return E('div', { class: 'pg-add' }, [sel, btn('+ Adım ekle', () => { list.push(newStep(sel.value)); changed(false, true); })]);   // 500 sınırı: sunucu reddeder
+  function adder(list, inLoop) {
+    const sel = E('select', { title: 'Adım türü' }, L.kinds(inLoop).map((k) => E('option', { value: k, text: L.KIND[k] })));
+    return E('div', { class: 'pg-add' }, [sel, btn('+ Adım ekle', () => { list.push(L.newStep(sel.value, P.prog, P.pose)); changed(false, true); })]);   // 500 sınırı: sunucu reddeder
   }
   function renderSteps() {
     P.rows.clear();
@@ -206,8 +137,8 @@
 
   /* ---- hedef öğretme: sayısal alan + (varsa) 3B gizmo / onPick; hedef önce ulaşılabilirlik denetiminden geçer ---- */
   function setTarget(pos, rpy, fromScene) {
-    if (pos) P.tgt.pos = pos.slice(0, 3).map((v) => +v.toFixed(4));
-    if (rpy) P.tgt.rpy = rpy.slice(0, 3).map((v) => +v.toFixed(2));
+    if (pos) P.tgt.pos = L.roundPos(pos);
+    if (rpy) P.tgt.rpy = L.roundRpy(rpy);
     Q.tp.value = L.fmt(P.tgt.pos, 4); Q.tr.value = L.fmt(P.tgt.rpy, 2);
     P.tgt.ok = null; P.tgt.why = 'Denetleniyor…'; paintTarget();
     if (!fromScene) syncScene();               // sürükleme sırasında sahneyi yeniden kurma (gizmo kopar)
@@ -217,34 +148,29 @@
   async function checkTarget() {
     const my = ++P.seq, r = await call('/api/program/check_move', 'POST', { step: { kind: 'move_l', pos_m: P.tgt.pos, rpy_deg: P.tgt.rpy }, speed_pct: P.speed });
     if (my !== P.seq) return;                  // eski yanıt yenisini ezmesin
-    P.tgt.ok = !r.failed && r.ok === true;
-    P.tgt.why = r.failed ? r.message : P.tgt.ok ? 'Ulaşılabilir' : ((r.violations || [])[0] || {}).message || 'Reddedildi';
+    const v = L.targetVerdict(r); P.tgt.ok = v.ok; P.tgt.why = v.why;
     paintTarget();
   }
 
-  const paintTarget = () => {
-    Q.dot.className = `pg-dot ${P.tgt.ok === true ? 'ok' : P.tgt.ok === false ? 'bad' : ''}`; Q.tw.textContent = P.tgt.why; Q.tadd.disabled = P.tgt.ok !== true || !P.control;
-  };
+  const paintTarget = () => { const u = L.targetUi(P.tgt, P.control); Q.dot.className = u.cls; Q.tw.textContent = u.why; Q.tadd.disabled = u.addDisabled; };
   function addTarget() {                       // kırmızı/denetlenmemiş hedef waypoint OLAMAZ
-    if (P.tgt.ok === true) { P.prog.waypoints.push({ name: L.unique('Nokta', P.prog.waypoints.map((x) => x.name)), pos_m: P.tgt.pos.slice(), rpy_deg: P.tgt.rpy.slice() }); changed(true, true); }
+    if (P.tgt.ok === true) { P.prog.waypoints.push(L.targetWaypoint(P.tgt, P.prog.waypoints.map((x) => x.name))); changed(true, true); }
   }
 
   /* ---- 3B sahne (HubScene, UI_CONTRACT §9-C): numaralı işaret, yol çizgisi, hedef çerçevesi + gizmo, parçaya dokun ----
-   * İşlevler fırlatmaz, {ok:false} döner: her çağrının sonucu denetlenir. Kimlikler `program:` önekli (başkasınınkine dokunma). */
-  const SC = { wp: 'program:wp', path: 'program:path', tgt: 'program:target' };
-  const PICK = ['workpiece', 'environment'], PICK_ALL = ['workpiece', 'tool', 'environment', 'markers'];   // işaretler/hedef seçilmesin
+   * İşlevler fırlatmaz, {ok:false} döner: her çağrının sonucu denetlenir. Kimlikler/katmanlar/nesne tanımları: program_logic.js. */
   const sceneOf = () => { const H = window.HubScene; return H && H.implemented !== false ? H : null; };
 
   function bindScene() {                       // bir kez abone ol; 3B yoksa atla (tablo ve sayısal hedef yine çalışır)
     const H = sceneOf(); if (!H || P.bound) return; P.bound = true;
     H.onPick((e) => { if (P.shown && e && Array.isArray(e.point_m)) setTarget(e.point_m, null, false); });
-    H.onGizmoChange((e) => { if (P.shown && e && e.id === SC.tgt && e.pose && e.pose.pos_m) setTarget(e.pose.pos_m, e.pose.rpy_deg, true); });
+    H.onGizmoChange((e) => { if (P.shown && e && e.id === L.SC.tgt && e.pose && e.pose.pos_m) setTarget(e.pose.pos_m, e.pose.rpy_deg, true); });
   }
 
   function clearScene() {                      // sayfa gizlenince: işaretler, hedef ve gizmo kalkar; seçim katmanları varsayılana döner
     const H = sceneOf(); if (!H) return;
-    [...P.ids, SC.tgt].forEach((id) => H.removeObject(id));
-    H.disableGizmo(); H.setPickLayers(PICK_ALL); P.ids = []; P.tgtOn = false;
+    [...P.ids, L.SC.tgt].forEach((id) => H.removeObject(id));
+    H.disableGizmo(); H.setPickLayers(L.PICK_ALL); P.ids = []; P.tgtOn = false;
   }
 
   function syncScene() {                       // işaret + yol her waypoint değişiminde yenilenir; hedef çerçevesi kalır (gizmo kopmasın)
@@ -252,11 +178,11 @@
     P.ids.forEach((id) => H.removeObject(id)); P.ids = [];
     const errs = [], put = (o, keep) => { const r = H.addObject(o); if (r.ok) { if (keep) P.ids.push(o.id); } else errs.push(r.message || r.error); };
     const pts = L.path(P.prog.waypoints), pose = { pos_m: P.tgt.pos, rpy_deg: P.tgt.rpy };
-    pts.forEach(({ n, p }) => put({ id: `${SC.wp}${n}`, kind: 'marker', layer: 'markers', pose: { pos_m: p }, geometry: { radius_m: MARK_R_M, number: n }, color: '#4f8cff' }, true));
-    if (pts.length > 1) put({ id: SC.path, kind: 'polyline', layer: 'path', geometry: { points_m: pts.map((o) => o.p) }, color: '#e3b341' }, true);
-    if (P.tgtOn) H.setPose(SC.tgt, pose);
-    else { put({ id: SC.tgt, kind: 'frame', layer: 'markers', pose, geometry: { size_m: TGT_SIZE_M }, label: 'Hedef' }, false); P.tgtOn = errs.length === 0; if (P.tgtOn) H.enableGizmo(SC.tgt, { mode: 'translate', space: 'world' }); }
-    H.setPickLayers(PICK); Q.scene.textContent = errs.length ? `3B sahne: ${errs[0]}` : '';
+    pts.forEach((o) => put(L.markerSpec(o), true));
+    if (pts.length > 1) put(L.pathSpec(pts), true);
+    if (P.tgtOn) H.setPose(L.SC.tgt, pose);
+    else { put(L.targetSpec(pose), false); P.tgtOn = errs.length === 0; if (P.tgtOn) H.enableGizmo(L.SC.tgt, { mode: 'translate', space: 'world' }); }
+    H.setPickLayers(L.PICK); Q.scene.textContent = errs.length ? `3B sahne: ${errs[0]}` : '';
   }
 
   /* ---- çalıştırma ---- */
@@ -269,7 +195,7 @@
   async function preview() {
     P.note = 'Denetleniyor…'; paint();
     const s0 = sig(), r = await call('/api/program/check', 'POST', { program: P.prog, speed_pct: P.speed }), failed = !!r.failed;
-    P.check = failed ? null : { sig: s0, res: r }; P.note = failed ? whyOf(r) : ''; paint();   // imza İSTEK anındaki programa bağlı: yanıt beklenirken düzenlendiyse geçersiz
+    P.check = failed ? null : { sig: s0, res: r }; P.note = failed ? L.whyOf(r) : ''; paint();   // imza İSTEK anındaki programa bağlı: yanıt beklenirken düzenlendiyse geçersiz
   }
 
   async function start(mode, confirmed) {
@@ -291,33 +217,32 @@
 
   function paint() {
     if (!Q.run) return;
-    const run = P.run || {}, running = !!run.running, ro = running || !P.control, g = L.gate(gateCtx());
+    const run = P.run || {}, g = L.gate(gateCtx()), b = L.buttons({ run, control: P.control, gate: g, empty: L.empty(P.prog) });
     const valid = P.check && P.check.sig === sig() ? P.check : null, ctx = { dangling: L.dangling(P.prog), check: valid, run };
     for (const [k, r] of P.rows) { const { cls, msgs } = L.rowInfo(ctx, k); r.row.className = `pg-step ${cls}`; r.why.textContent = msgs.join(' · '); }
-    Q.run.disabled = !g.ok; Q.step.disabled = running ? run.state !== 'paused' || !P.control : !g.ok; Q.prev.disabled = ro || L.empty(P.prog);
-    Q.pause.disabled = !(run.state === 'running' && P.control); Q.resume.disabled = !(run.state === 'paused' && P.control); Q.stop.disabled = !(running && P.control);
-    Q.gate.textContent = running ? '' : g.ok ? 'Önizleme geçti: çalıştırılabilir.' : g.why;
-    Q.prevmsg.textContent = L.prevText(valid, P.note); Q.prevmsg.className = `pg-prev ${valid ? (valid.res.ok ? 'ok' : 'bad') : ''}`;
+    Q.run.disabled = b.run; Q.step.disabled = b.step; Q.prev.disabled = b.prev; Q.pause.disabled = b.pause; Q.resume.disabled = b.resume; Q.stop.disabled = b.stop;
+    Q.gate.textContent = b.gate;
+    Q.prevmsg.textContent = L.prevText(valid, P.note); Q.prevmsg.className = L.prevClass(valid);
     Q.status.textContent = L.status(run); Q.status.className = `say pg-status ${run.state || ''}`;
-    for (const fs of [Q.fsFile, Q.fsWp, Q.fsSteps, Q.fsSpeed]) fs.disabled = ro;   // çalışırken düzenleme KAPALI
-    Q.exp.hidden = !P.slug || P.dirty; Q.exp.href = P.slug ? `/api/program/${P.slug}/export` : '';
-    Q.mock.hidden = !(P.backend && P.backend.mock); Q.mock.textContent = `${P.backend ? P.backend.label : ''} hareket servisi: ölçüm değildir, gerçek robot hareket etmez.`;
+    for (const fs of [Q.fsFile, Q.fsWp, Q.fsSteps, Q.fsSpeed]) fs.disabled = b.ro;   // çalışırken düzenleme KAPALI
+    const ex = L.exportLink(P.slug, P.dirty), mock = L.mockBanner(P.backend);
+    Q.exp.hidden = ex.hidden; Q.exp.href = ex.href; Q.mock.hidden = mock.hidden; Q.mock.textContent = mock.text;
     Q.confirm.hidden = !P.confirm;
-    Q.dirty.textContent = P.dirty ? '● kaydedilmemiş' : P.slug ? `kayıtlı: ${P.slug}` : '';
+    Q.dirty.textContent = L.dirtyText(P.dirty, P.slug);
     paintTarget();
   }
 
   /* ---- kaydet / aç / sil / içe-dışa aktar ---- */
   async function loadList() {
     const r = await call('/api/program'); if (r.failed) return;
-    Q.open.replaceChildren(E('option', { value: '', text: 'Kayıtlı programlar…' }), ...r.programs.map((p) => E('option', { value: p.slug, text: `${p.name} (${p.steps ?? '?'} adım)` })));
+    Q.open.replaceChildren(E('option', { value: '', text: 'Kayıtlı programlar…' }), ...r.programs.map((p) => E('option', { value: p.slug, text: L.listLabel(p) })));
   }
 
   function adopt(prog, slug, dirty) { P.prog = prog; P.slug = slug; P.dirty = dirty; P.check = null; P.note = ''; render(); }
   async function save() {
     P.prog.name = Q.name.value.trim();
     const r = await call('/api/program/save', 'POST', { program: P.prog });
-    if (r.failed) { toast(`Kaydedilemedi: ${whyOf(r)}`, true); return; }
+    if (r.failed) { toast(`Kaydedilemedi: ${L.whyOf(r)}`, true); return; }
     P.slug = r.slug; P.dirty = false; toast(`Kaydedildi: ${r.slug}`); await loadList(); paint();
   }
 
@@ -332,8 +257,8 @@
 
   async function importFile(f) {
     if (!f) return;
-    const r = f.size > MAX_FILE ? { failed: true, message: 'Dosya çok büyük (1 MB üstü)' } : await call('/api/program/import', 'POST', { text: await f.text() });
-    if (r.failed) { toast(`İçe aktarılamadı: ${whyOf(r)}`, true); return; }
+    const r = L.fileTooBig(f.size) ? { failed: true, message: 'Dosya çok büyük (1 MB üstü)' } : await call('/api/program/import', 'POST', { text: await f.text() });
+    if (r.failed) { toast(`İçe aktarılamadı: ${L.whyOf(r)}`, true); return; }
     adopt(r.program, null, true); toast('İçe aktarıldı: önce Önizle');
   }
   function render() { Q.name.value = P.prog.name; renderWps(); renderSteps(); paint(); syncScene(); }
@@ -372,18 +297,18 @@
   /* Algoritmalar sayfası adımları buradan aktarır: sona eklenir, önizleme geçersiz olur. Sayfa henüz açılmamış olabilir
    * (Q boş): adımlar modele yazılır, mount render() ile gösterir. Sınırlar sunucuda da denetlenir (Önizle/Kaydet). */
   window.HubProgram = { addSteps(steps, name) {
-    if (!Array.isArray(steps) || !steps.length) return { ok: false, message: 'Eklenecek adım yok' };
-    if (P.run && P.run.running) return { ok: false, message: 'Program çalışıyor: bitince ekle' };
-    if (L.total(P.prog.steps) + L.total(steps) > MAX_STEPS) return { ok: false, message: `En çok ${MAX_STEPS} adım (şu an ${L.total(P.prog.steps)})` };
-    P.prog.steps.push(...JSON.parse(JSON.stringify(steps))); P.dirty = true; P.check = null; P.note = '';
-    if (!P.prog.name && typeof name === 'string') P.prog.name = name.trim().slice(0, 40);   // adsız programa ad: Önizle/Kaydet ad ister
+    if (!L) return { ok: false, message: 'Program mantığı yükleniyor: birkaç saniye sonra tekrar dene' };
+    const r = L.addSteps(P.prog, steps, name, !!(P.run && P.run.running));
+    if (!r.ok) return r;
+    P.dirty = true; P.check = null; P.note = '';
     if (Q.steps) { Q.name.value = P.prog.name; renderSteps(); paint(); }
-    return { ok: true, total: L.total(P.prog.steps) };
+    return r;
   } };
 
   HubPages.register({
-    id: 'program', title: 'Program', icon: '▶', order: 30, styles: ['/pages/program.css'], logic: L,
+    id: 'program', title: 'Program', icon: '▶', order: 30, styles: ['/pages/program.css'],
     async mount(root) {
+      await ready;                             // mantık betiği hazır olmadan kurulmaz (hata sayfa kutusunda görünür)
       build(root); P.shown = true; render(); loadList(); P.timer = setInterval(refresh, POLL_MS);
       refresh().then(() => { if (P.pose && P.pose.pos_m) setTarget(P.pose.pos_m, P.pose.rpy_deg, false); });
       await HubPages.mountView(Q.view); bindScene(); syncScene();             // HubScene tuval kurulunca vardır
@@ -393,6 +318,6 @@
       P.shown = false; clearInterval(P.timer); P.timer = null; clearScene();
       if (P.run && P.run.state === 'running') call('/api/program/pause', 'POST');
     },
-    onState(s) { P.estop = !!(s.estop && s.estop.latched); P.real = !!(s.robot && s.robot.mode === 'real'); P.control = !!(s.me && s.me.can_control); paint(); },
+    onState(s) { const st = L.fromState(s); P.estop = st.estop; P.real = st.real; P.control = st.control; paint(); },
   });
 })();
