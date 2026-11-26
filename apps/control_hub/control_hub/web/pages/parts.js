@@ -19,7 +19,7 @@
     saving: Promise.resolve(), editSeq: 0, modeKey: null };                                // kayıt zinciri + kullanıcı yazım sayacı
 
   /* ---------- küçük yardımcılar ---------- */
-  const say = (n, text, cls = '') => { n.textContent = text; n.className = 'say ' + cls; };
+  const say = (n, text, cls = '') => HubPages.say(n, text, cls);                        // ortak yazıcı (R8); cls: bad | warn | ok | ''
   const btn = (text, act, fn, cls = 'small') => { const b = el('button', { class: cls, type: 'button', text, 'data-act': act }); b.addEventListener('click', fn); return b; };
   const input = (name, extra = {}) => el('input', { type: 'text', inputMode: 'decimal', autocomplete: 'off', 'data-f': name, ...extra });
   const field = (label, ctl) => el('label', { class: 'pf' }, [el('span', { text: label }), ctl]);

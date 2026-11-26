@@ -2,7 +2,8 @@
  *   node hubpages_say_check.js <web dizini>
  * Sınananlar: metin textContent ile yazılır (HTML etiketi düz metin kalır, innerHTML kullanılmaz), boş/undefined/null → '',
  * bad yalnız 'bad' sınıfını açar/kapar ve öteki sınıfları KORUR, düğüm yoksa sessiz dönüş, list kipi (<ul><li>),
- * ve eski 6 kopyanın (frames/sphere/jog/pages-jog/algo/bench) ortak sözleşmesi: ardışık çağrılarda durum birebir. */
+ * ve eski 6 kopyanın (frames/sphere/jog/pages-jog/algo/bench) ortak sözleşmesi: ardışık çağrılarda durum birebir.
+ * R8b: `bad` metin gelirse durum sınıfı ('bad'|'warn'|'ok'|'') — Parçalar sayfası. */
 'use strict';
 const assert = require('assert');
 const path = require('path');
@@ -73,6 +74,27 @@ for (let i = 0; i < 2000; i++) {
   say(m, t, f);
   assert.strictEqual(m.textContent, t || ''); assert.strictEqual(m.classList.contains('bad'), !!f);
   assert.ok(m.classList.contains('say') && m.classList.contains('pg-x'), 'öteki sınıflar korunur');
+}
+
+/* 7) R8b: `bad` METİN gelince durum sınıfıdır (Parçalar: 'bad' | 'warn' | 'ok' | ''): üçü birbirini dışlar, '' hepsini kapatır,
+ *    öteki sınıflar (say, muted, …) korunur; bool çağrıları 'warn'/'ok'a DOKUNMAZ (öteki sayfaların davranışı aynı kalır). */
+const st = new N('div', 'say muted');
+const has = (x) => ['bad', 'warn', 'ok'].filter((c) => x.classList.contains(c));
+for (const c of ['bad', 'warn', 'ok']) { say(st, 'm', c); assert.deepStrictEqual(has(st), [c], `'${c}' tek başına`); }
+say(st, 'm', 'ok'); say(st, 'm', 'warn'); assert.deepStrictEqual(has(st), ['warn'], 'ok → warn: ok kalmaz');
+say(st, 'm', 'bad'); assert.deepStrictEqual(has(st), ['bad'], 'warn → bad: warn kalmaz');
+say(st, 'm', ''); assert.deepStrictEqual(has(st), [], "'' hepsini kapatır"); assert.strictEqual(st.className, 'say muted', 'öteki sınıflar korunur');
+say(st, '', 'warn'); assert.strictEqual(st.textContent, '', 'boş metin + durum sınıfı'); assert.deepStrictEqual(has(st), ['warn']);
+say(st, undefined, 'ok'); assert.strictEqual(st.textContent, ''); say(st, null, 'ok'); assert.strictEqual(st.textContent, '');
+say(st, 'x', 'ok'); say(st, 'x', true); assert.deepStrictEqual(has(st), ['bad', 'ok'], 'bool çağrısı yalnız bad açar; ok’a dokunmaz');
+say(st, 'x', false); assert.deepStrictEqual(has(st), ['ok'], 'bool false yalnız bad’i kapatır');
+say(st, 'x', 'bilinmeyen'); assert.deepStrictEqual(has(st), [], 'bilinmeyen metin durum sınıfı değildir: hepsi kapanır');
+/* rastgele ardışık çağrılar: durum yalnız SON çağrıya bağlı */
+const CLS = ['', 'bad', 'warn', 'ok'], w = new N('div', 'say warn');
+for (let i = 0; i < 2000; i++) {
+  const t = TEXTS[rnd(TEXTS.length)], c = CLS[rnd(CLS.length)];
+  say(w, t, c);
+  assert.strictEqual(w.textContent, t || ''); assert.deepStrictEqual(has(w), c ? [c] : [], `son çağrı '${c}'`); assert.ok(w.classList.contains('say'));
 }
 
 console.log('HUBPAGES_SAY_OK');
