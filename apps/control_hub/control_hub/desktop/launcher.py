@@ -135,7 +135,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if argv and argv[0] == '--bridge-selftest':
         return bridge_selftest()
     if argv and argv[0] == '--agent-selftest':
-        from control_hub.agent.selftest import agent_selftest
+        from control_hub.desktop.selftest import agent_selftest
         return agent_selftest()
     if argv and argv[0] == '--gui-selftest':
         return gui_selftest()

@@ -2,8 +2,7 @@
 import re
 from pathlib import Path
 
-from control_hub.agent import selftest
-from control_hub.desktop import launcher
+from control_hub.desktop import launcher, selftest
 
 ROOT = Path(__file__).resolve().parents[1]
 

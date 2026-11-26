@@ -211,7 +211,31 @@ def test_program_count_limit(store, monkeypatch):
 
 def test_data_dir_prefers_env(tmp_path):
     assert ps.data_dir({'HUB_DATA_DIR': str(tmp_path)}) == tmp_path
-    assert ps.data_dir({}).name == 'data'
+    assert ps.data_dir({}, user_dir=lambda: tmp_path).name == 'data'
+
+
+def test_data_dir_takes_the_user_dir_from_outside_and_only_when_needed(tmp_path):
+    """R7: hub_core ``paths``'i bilmez; kullanıcı klasörünü çağıran verir, ``HUB_DATA_DIR`` varsa sorulmaz."""
+    asked = []
+
+    def user_dir():
+        asked.append(1)
+        return tmp_path / 'kullanici'
+
+    assert ps.data_dir({}, user_dir=user_dir) == tmp_path / 'kullanici' / 'data'
+    assert asked == [1]
+    assert ps.data_dir({'HUB_DATA_DIR': str(tmp_path / 'v')}, user_dir=user_dir) == tmp_path / 'v'
+    assert asked == [1]                                         # env varken kullanıcı klasörü sorulmadı
+    with pytest.raises(ValueError):                             # ne env ne enjeksiyon: sessiz tahmin YOK
+        ps.data_dir({})
+
+
+def test_store_without_base_uses_env_then_the_injected_user_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv('HUB_DATA_DIR', str(tmp_path / 'env'))
+    assert ps.ProgramStore().root == tmp_path / 'env' / 'programs'
+    monkeypatch.delenv('HUB_DATA_DIR')
+    assert ps.ProgramStore(user_dir=lambda: tmp_path / 'u').root == tmp_path / 'u' / 'data' / 'programs'
+    assert ps.ProgramStore(tmp_path / 'acik').root == tmp_path / 'acik' / 'programs'   # base hepsinden önce
 
 
 # --- yürütme modeli --------------------------------------------------------------------------------

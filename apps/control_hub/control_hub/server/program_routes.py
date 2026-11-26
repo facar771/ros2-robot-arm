@@ -37,6 +37,7 @@ from control_hub.hub_core.program_store import (
     validate_program,
 )
 from control_hub.hub_core.runner import BusyError, EstopLatchedError
+from control_hub.paths import user_dir
 from control_hub.server.errors import fail
 
 DEFAULT_SPEED_PCT = 25.0
@@ -48,7 +49,7 @@ def _no_const(token: str) -> Any:
 
 def install(app: FastAPI, ctx: Any) -> None:
     hub = ctx.hub
-    store, mover = ProgramStore(), make_move_client(hub)
+    store, mover = ProgramStore(user_dir=user_dir), make_move_client(hub)   # paths bağı BURADAN (R7)
     runner = ProgramRunner(mover, hub.events, is_estopped=lambda: hub.estopped)
     hub.add_estop_listener(runner.on_estop)
     app.state.program_runner = runner
