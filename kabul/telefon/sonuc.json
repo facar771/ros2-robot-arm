@@ -1,0 +1,257 @@
+{
+ "meta": {
+  "Hub": "python -m control_hub --sim (temiz geçici veri klasörü)",
+  "Görünüm": "phone 390×844",
+  "Zaman": "2026-11-26 11:45:19",
+  "Not": "SİM ölçümleri gerçek robot ölçümü DEĞİLDİR (tahmini)."
+ },
+ "summary": "13 GEÇTİ · 0 KALDI · 0 ATLANDI",
+ "results": [
+  {
+   "id": "kontrol.eklem",
+   "title": "Kontrol: eklem Git (J1 +20°) ve Home",
+   "status": "GEÇTİ",
+   "measured": {
+    "J1 sonra (°)": "20.00 ° (beklenen 20.00 ± 0.5)",
+    "TCP Δy (mm)": "66.3",
+    "Home sonrası J1 (°)": "0.00 ° (beklenen 0.00 ± 0.5)",
+    "Home sonrası TCP x (mm)": "194.00 mm (beklenen 194.00 ± 1)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "kontrol_eklem__j1_20_telefon.png",
+    "kontrol_eklem__home_telefon.png"
+   ],
+   "note": "",
+   "seconds": 23.7
+  },
+  {
+   "id": "kontrol.jog",
+   "title": "Kontrol: jog adımı (X −10 mm, Z +10 mm)",
+   "status": "GEÇTİ",
+   "measured": {
+    "X Δ (mm)": "-9.90 mm (beklenen -10.00 ± 1)",
+    "Y Δ (mm)": "-0.00 mm (beklenen 0.00 ± 1)",
+    "Z Δ (mm)": "9.90 mm (beklenen 10.00 ± 1)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "kontrol_jog__jog_telefon.png"
+   ],
+   "note": "",
+   "seconds": 10.5
+  },
+  {
+   "id": "kontrol.3b",
+   "title": "Kontrol: 3B’de tıkla-git (zemin düzlemine fare ile)",
+   "status": "GEÇTİ",
+   "measured": {
+    "seçilen X (mm)": "141.30 mm (beklenen 140.00 ± 5)",
+    "seçilen Y (mm)": "38.70 mm (beklenen 40.00 ± 5)",
+    "seçilen Z (mm)": "120.00 mm (beklenen 120.00 ± 5)",
+    "bitiş TCP X (mm)": "141.30 mm (beklenen 141.30 ± 2)",
+    "bitiş TCP Y (mm)": "38.70 mm (beklenen 38.70 ± 2)",
+    "bitiş TCP Z (mm)": "120.00 mm (beklenen 120.00 ± 2)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "kontrol_3b__hedef_telefon.png",
+    "kontrol_3b__bitis_telefon.png"
+   ],
+   "note": "",
+   "seconds": 12.7
+  },
+  {
+   "id": "kontrol.klavye",
+   "title": "Kontrol: klavye jog (D basılı = hareket, bırak = DUR, Esc = ACİL DUR + 423)",
+   "status": "GEÇTİ",
+   "measured": {
+    "klavye kartı (tuş haritası)": "gizli (telefon düzeni)",
+    "D basılıyken Y Δ (mm)": "-3.20 (ilk 2 mm: 1.03 sn; +0,5 sn basılı)",
+    "bıraktıktan sonra Y kayması (mm)": "0.00 mm (beklenen 0.00 ± 0.05)",
+    "jog durumu (bırakınca)": "idle",
+    "Esc → ACİL DUR gecikmesi (sn)": "0.03",
+    "ACİL DUR sonrası Y kayması (mm)": "0.00 mm (beklenen 0.00 ± 0.05)",
+    "/api/jog · /api/move": "HTTP 423 · HTTP 423",
+    "kilit": "açıldı (düğmeyle)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "kontrol_klavye__basili_telefon.png",
+    "kontrol_klavye__acildur_telefon.png"
+   ],
+   "note": "",
+   "seconds": 9.0
+  },
+  {
+   "id": "parcalar.stl",
+   "title": "Parçalar: STL yükle (40 mm küp) ve yerleştir",
+   "status": "GEÇTİ",
+   "measured": {
+    "üçgen": "12",
+    "boyut X (mm)": "40.00 mm (beklenen 40.00 ± 0.5)",
+    "boyut Y (mm)": "40.00 mm (beklenen 40.00 ± 0.5)",
+    "boyut Z (mm)": "40.00 mm (beklenen 40.00 ± 0.5)",
+    "kayıtlı konum x (mm)": "140.00 mm (beklenen 140.00 ± 0.5)",
+    "kayıtlı konum y (mm)": "0.00 mm (beklenen 0.00 ± 0.5)",
+    "kayıtlı konum z (mm)": "60.00 mm (beklenen 60.00 ± 0.5)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "parcalar_stl__stl_telefon.png"
+   ],
+   "note": "",
+   "seconds": 1.6
+  },
+  {
+   "id": "parcalar.step",
+   "title": "Parçalar: STEP yükle (40 mm kutu → mm ağı)",
+   "status": "GEÇTİ",
+   "measured": {
+    "üçgen": "12",
+    "boyut X (mm)": "40.00 mm (beklenen 40.00 ± 0.5)",
+    "boyut Y (mm)": "40.00 mm (beklenen 40.00 ± 0.5)",
+    "boyut Z (mm)": "40.00 mm (beklenen 40.00 ± 0.5)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "parcalar_step__step_telefon.png"
+   ],
+   "note": "",
+   "seconds": 1.7
+  },
+  {
+   "id": "parcalar.dokun",
+   "title": "Parçalar: 3B’de parçaya dokun → Git (yüzeye değ)",
+   "status": "GEÇTİ",
+   "measured": {
+    "dokunulan X (mm)": "140.00 mm (beklenen 140.00 ± 4)",
+    "dokunulan Y (mm)": "0.00 mm (beklenen 0.00 ± 4)",
+    "dokunulan Z (mm)": "80.00 mm (beklenen 80.00 ± 4)",
+    "bitiş TCP X (mm)": "140.00 mm (beklenen 140.00 ± 2)",
+    "bitiş TCP Y (mm)": "-0.00 mm (beklenen 0.00 ± 2)",
+    "bitiş TCP Z (mm)": "80.00 mm (beklenen 80.00 ± 2)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "parcalar_dokun__kontrol_gecti_telefon.png",
+    "parcalar_dokun__bitis_telefon.png"
+   ],
+   "note": "",
+   "seconds": 18.1
+  },
+  {
+   "id": "algo.program",
+   "title": "Algoritmalar → Programa ekle → Çalıştır (bitiş TCP ölçülür)",
+   "status": "GEÇTİ",
+   "measured": {
+    "üretilen adım": "13",
+    "Program adım sayısı": "13",
+    "koşucu": "finished · 13/13 adım",
+    "bitiş TCP X (mm)": "100.00 mm (beklenen 100.00 ± 2)",
+    "bitiş TCP Y (mm)": "0.00 mm (beklenen 0.00 ± 2)",
+    "bitiş TCP Z (mm)": "100.00 mm (beklenen 100.00 ± 2)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "algo_program__yay_onizleme_telefon.png",
+    "algo_program__program_onizleme_telefon.png",
+    "algo_program__bitis_telefon.png"
+   ],
+   "note": "",
+   "seconds": 51.0
+  },
+  {
+   "id": "parametreler.taslak",
+   "title": "Parametreler: geçersiz değer reddedilir, taslak kaydedilir (robota UYGULANMAZ)",
+   "status": "GEÇTİ",
+   "measured": {
+    "geçersiz değer (z_max=10 < z_min=20)": "reddedildi, kaydet kapalı",
+    "kayıtlı taslak": "safety.z_max_mm = 210",
+    "YAML": "8904 bayt, 210 içeriyor",
+    "robotun güvenli kutusu (taslaktan sonra)": "değişmedi",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "parametreler_taslak__gecersiz_telefon.png",
+    "parametreler_taslak__kaydedildi_telefon.png"
+   ],
+   "note": "bilinen eksik uç: pot → 404",
+   "seconds": 2.6
+  },
+  {
+   "id": "parametreler.sim_uygula",
+   "title": "Parametreler: taslakta J1 üst limiti düşür → SİM'e uygula → limit dışı hedef reddedilir → Sıfırla",
+   "status": "GEÇTİ",
+   "measured": {
+    "J1 üst limit (başlangıç, °)": "170.00 ° (beklenen 170.00 ± 0.01)",
+    "kayıtlı taslak": "axes.joint_1.max_deg = 10",
+    "J1 üst limit (uygulanınca, °)": "10.00 ° (beklenen 10.00 ± 0.01)",
+    "üst çubuk rozeti": "TASLAK PROFİL (SİM)",
+    "limit dışı hedef J1=20°": "HTTP 409 joint_limit",
+    "limit içi hedefe varış J1 (°)": "8.00 ° (beklenen 8.00 ± 0.5)",
+    "J1 üst limit (sıfırlanınca, °)": "170.00 ° (beklenen 170.00 ± 0.01)",
+    "sıfırlanınca varış J1 (°)": "20.00 ° (beklenen 20.00 ± 0.5)",
+    "sıfırlanınca hedef": "J1=20° kabul edildi (HTTP 202)",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "parametreler_sim_uygula__uygulandi_telefon.png",
+    "parametreler_sim_uygula__sifirlandi_telefon.png"
+   ],
+   "note": "bilinen eksik uç: pot → 404",
+   "seconds": 10.9
+  },
+  {
+   "id": "gunluk.olaylar",
+   "title": "Günlük: ACİL DUR olayları görünür, süzgeç/arama/CSV doğru, sızıntı yok",
+   "status": "GEÇTİ",
+   "measured": {
+    "satır (arayüz / sunucu)": "15 / 15",
+    "en üstteki (en yeni) olay": "2026-11-26 11:45:08 Uyarı estop_reset ACİL DUR kilidi açıldı (127.0.0.1) source=127.0.0.1",
+    "kritik süzgeç (arayüz / sunucu)": "2 / 2",
+    "arama \"kilidi\"": "2 satır, hepsi eşleşiyor",
+    "CSV": "15 olay satırı",
+    "yol sızıntısı (ekranda)": "yok",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "gunluk_olaylar__suzgec_telefon.png"
+   ],
+   "note": "",
+   "seconds": 1.7
+  },
+  {
+   "id": "acil_dur.kilit",
+   "title": "ACİL DUR: hareketi keser, 423 kilidi, kendiliğinden devam yok, sıfırlayınca açılır",
+   "status": "GEÇTİ",
+   "measured": {
+    "kesme gecikmesi (sn)": "0.09",
+    "J1: ACİL DUR anı / durduğu yer (°)": "2.0 / 2.1 (hedef 25)",
+    "2 sn sonra J1 (kendiliğinden devam yok)": "2.10 ° (beklenen 2.10 ± 0.05)",
+    "/api/move": "HTTP 423 estop_latched",
+    "/api/sim/reset": "HTTP 423",
+    "arayüz": "\"ACİL DUR AKTİF\", Git düğmesi kapalı",
+    "kilit açıldıktan sonra /api/move": "HTTP 202",
+    "tarayıcı hataları": "0"
+   },
+   "shots": [
+    "acil_dur_kilit__kilitli_telefon.png",
+    "acil_dur_kilit__acildi_telefon.png"
+   ],
+   "note": "",
+   "seconds": 9.7
+  },
+  {
+   "id": "hub.log",
+   "title": "Hub günlüğünde sunucu hatası yok",
+   "status": "GEÇTİ",
+   "measured": {
+    "hatalı satır": "0"
+   },
+   "shots": [],
+   "note": "",
+   "seconds": 0.0
+  }
+ ]
+}
