@@ -11,7 +11,7 @@ import math
 import threading
 from typing import Any, Dict, List, Tuple
 
-from control_hub.hub_core.backend import BackendResult, ResetResult, StopReport
+from control_hub.hub_core.backend import BackendResult, NoMove, NoSim, ResetResult, StopReport
 from control_hub.hub_core.commands import CommandError, parse_robot_command
 from control_hub.hub_core.fake_jog import FakeJog
 from control_hub.hub_core.fake_model import FAKE_MODEL
@@ -36,7 +36,7 @@ def _fake_joints(tool: Vec) -> List[float]:
             0.0, 0.5 * r + 0.3 * (0.62 - z), 0.0]
 
 
-class FakeBackend:
+class FakeBackend(NoMove, NoSim):
     name = 'fake'
     can_interrupt = True
 

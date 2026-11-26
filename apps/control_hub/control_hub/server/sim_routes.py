@@ -1,4 +1,5 @@
-"""SİM'e özgü uçlar (UI_CONTRACT §9-B): yalnız SİM arka ucunda çalışır; başka modda 409 ``not_sim``.
+"""SİM'e özgü uçlar (UI_CONTRACT §9-B): yalnız SİM arka ucunda çalışır; başka modda 409 ``not_sim``
+(``--fake`` ve gerçek Robot API ``hub_core.backend.NoSim`` varsayılanını devralmıştır: rota doğrudan çağırır).
 
 * ``POST /api/sim/reset``: robotu home'a döndürür (simülasyon sıfırlama; ACİL DUR'da 423, hareket
   sürerken 409).
@@ -8,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -20,14 +21,7 @@ from control_hub.server.guards import guard_motion
 def install(app, ctx) -> None:
     hub = ctx.hub
 
-    def not_sim() -> JSONResponse:
-        return JSONResponse({'ok': False, 'error': 'not_sim', 'message': 'Bu uç yalnız SİM modunda çalışır'},
-                            status_code=409)
-
-    async def call(name: str, *args: Any):
-        fn = getattr(hub.backend, name, None)
-        if not callable(fn):
-            return not_sim()
+    async def call(fn: Callable[..., Any], *args: Any):
         status, doc = await asyncio.to_thread(fn, *args)
         return JSONResponse(doc, status_code=status)
 
@@ -37,7 +31,7 @@ def install(app, ctx) -> None:
         locked = guard_motion(hub, request)
         if locked is not None:
             return locked
-        return await call('sim_reset')
+        return await call(hub.backend.sim_reset)
 
     @app.post('/api/sim/speed')
     async def sim_speed(request: Request):
@@ -46,4 +40,4 @@ def install(app, ctx) -> None:
         if bad:
             return bad
         value = body.get('speed_pct') if isinstance(body, dict) else None
-        return await call('set_speed', value)
+        return await call(hub.backend.set_speed, value)

@@ -7,27 +7,26 @@ bunlarla ister; arka uca doğrudan gitmez.
 * ``POST /api/move/stop | pause | resume``, ``GET /api/move/{job_id}``.
 
 Kurallar robot/arka uçtadır; Hub yalnız ACİL DUR kilidinde ``423`` ekler (robota sormadan) ve JSON gövdeyi
-sınırlar. Arka uç bu uçları bilmiyorsa (``--fake``, gerçek Robot API) 501 ``move_unsupported``.
+sınırlar. Arka uç ``hub.backend.move_*`` yöntemlerini DOĞRUDAN çağırır; bu uçları bilmeyen arka uç
+(``--fake``, gerçek Robot API) ``NoMove`` varsayılanını devralmıştır ve 501 ``move_unsupported`` döner
+(``hub_core.backend``).
 """
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from control_hub.server.errors import fail, read_json
+from control_hub.server.errors import read_json
 from control_hub.server.guards import guard_motion
 
 
 def install(app, ctx) -> None:
     hub = ctx.hub
 
-    async def call(name: str, *args: Any):
-        fn = getattr(hub.backend, name, None)
-        if not callable(fn):
-            return fail(501, 'move_unsupported', 'Bu robot arka ucu hareket uçlarını desteklemiyor')
+    async def call(fn: Callable[..., Any], *args: Any):
         status, doc = await asyncio.to_thread(fn, *args)
         return JSONResponse(doc, status_code=status)
 
@@ -38,23 +37,23 @@ def install(app, ctx) -> None:
         if locked is not None:
             return locked
         body, bad = await read_json(request)
-        return bad or await call('move_submit', body)
+        return bad or await call(hub.backend.move_submit, body)
 
     @app.post('/api/move/check')
     async def move_check(request: Request):
         ctx.need_control(request)
         body, bad = await read_json(request)
-        return bad or await call('move_check', body)
+        return bad or await call(hub.backend.move_check, body)
 
     @app.post('/api/move/stop')
     async def move_stop(request: Request):
         ctx.need_control(request)                  # durdurmak her zaman serbest (ACİL DUR'da da): güvenli yön
-        return await call('move_stop')
+        return await call(hub.backend.move_stop)
 
     @app.post('/api/move/pause')
     async def move_pause(request: Request):
         ctx.need_control(request)
-        return await call('move_pause')
+        return await call(hub.backend.move_pause)
 
     @app.post('/api/move/resume')
     async def move_resume(request: Request):
@@ -62,9 +61,9 @@ def install(app, ctx) -> None:
         locked = guard_motion(hub, request)
         if locked is not None:
             return locked
-        return await call('move_resume')
+        return await call(hub.backend.move_resume)
 
     @app.get('/api/move/{job_id}')
     async def move_job(request: Request, job_id: str):
         ctx.need_view(request)
-        return await call('move_get', job_id)
+        return await call(hub.backend.move_get, job_id)
