@@ -23,6 +23,11 @@ class Fail(AssertionError):
     """Adımın beklentisi tutmadı (ölçülen değer eşiğin dışında)."""
 
 
+class Skip(Exception):
+    """Adım bu ortamda SINANAMAZ (ör. donanım/görünüm gereği): ATLANDI + SEBEBİ raporlanır, KALDI sayılmaz.
+    Yalnız gerçekten sınanamayan durumda kullanılır; sınanabilen ama kırılan şey Fail'dir."""
+
+
 @dataclass
 class Result:
     id: str
@@ -57,8 +62,14 @@ def step(step_id: str, title: str, section: str = '', last: bool = False) -> Cal
 
 
 def ordered(steps: Sequence[Step]) -> List[Step]:
-    """Kayıt sırası korunur; `last=True` adımlar (ACİL DUR) sona alınır: sonradan eklenenler onu bozmaz."""
-    return [s for s in steps if not s.last] + [s for s in steps if s.last]
+    """Bölümler ilk göründükleri sırayla gruplanır (ayrı dosyadan eklenen adım kendi bölümüne oturur; bölüm
+    içinde kayıt sırası korunur). `last=True` adımlar (ACİL DUR) hep sona alınır: sonradan eklenenler
+    onu bozmaz."""
+    first: Dict[str, int] = {}
+    for s in steps:
+        first.setdefault(s.section, len(first))
+    body = sorted((s for s in steps if not s.last), key=lambda s: first[s.section])   # sorted kararlı
+    return body + [s for s in steps if s.last]
 
 
 class Ctx:
@@ -71,6 +82,7 @@ class Ctx:
         self.step_id = ''
         self.notes: List[str] = []
         self.errors: List[str] = []                      # tarayıcı: yakalanmamış hata + console.error (CSP)
+        self.allowed: List[str] = []                     # BEKLENEN konsol hataları (düzenli ifade)
 
     def close(self) -> None:
         if self._closer:
@@ -83,6 +95,22 @@ class Ctx:
     def expect(self, ok: bool, message: str) -> None:
         if not ok:
             raise Fail(message)
+
+    def allow_error(self, pattern: str) -> None:
+        """Bu adımda BEKLENEN tarayıcı konsol hatası (düzenli ifade). Ör. ACİL DUR'da sayfanın kendi isteğine
+        dönen 423: tarayıcı her 4xx'i `console.error` yazar. Eşleşmeyen her hata yine KALDI yapar."""
+        self.allowed.append(pattern)
+
+    def unexpected_errors(self) -> List[str]:
+        """Beklenenler süzülür; süzülenlerin sayısı adımın notuna yazılır (gizli kalmaz)."""
+        bad = [e for e in self.errors if not any(re.search(p, e) for p in self.allowed)]
+        if len(bad) < len(self.errors):
+            self.notes.append(f'{len(self.errors) - len(bad)} beklenen tarayıcı hatası süzüldü')
+        return bad
+
+    def skip(self, reason: str) -> None:
+        """Adımı ATLANDI yap; `reason` raporda yazar (sebepsiz atlama olmaz)."""
+        raise Skip(reason)
 
     def near(self, key: str, got: float, want: float, tol: float, unit: str = '') -> None:
         """Ölçülen `got`, beklenen `want` ± `tol` içinde olmalı; ölçüm raporda HER ZAMAN görünür."""
@@ -108,15 +136,24 @@ def run_steps(make_ctx: Callable[[str], Ctx], steps: Sequence[Step], skip: Seque
         if s.id in skip or s.section in skip:
             results.append(Result(s.id, s.title, SKIP, note='--skip ile atlandı'))
             continue
-        ctx = make_ctx(s.id)
-        ctx.step_id = s.id
         t0 = time.monotonic()
+        try:
+            ctx = make_ctx(s.id)                         # hazırlık hatası KALDI olur, koşum çökmez
+        except Exception as exc:                         # noqa: BLE001
+            first = str(exc).splitlines()[0] if str(exc) else ''
+            note = f'adım başlatılamadı: {type(exc).__name__}: {first}'
+            results.append(Result(s.id, s.title, FAIL, note=note, seconds=round(time.monotonic() - t0, 1)))
+            continue
+        ctx.step_id = s.id
         status, note = PASS, ''
         try:
             s.fn(ctx)
-            ctx.measure('tarayıcı hataları', len(ctx.errors))
-            if ctx.errors:
-                raise Fail(f'tarayıcıda {len(ctx.errors)} hata: {ctx.errors[0][:160]}')
+            bad = ctx.unexpected_errors()
+            ctx.measure('tarayıcı hataları', len(bad))
+            if bad:
+                raise Fail(f'tarayıcıda {len(bad)} hata: {bad[0][:160]}')
+        except Skip as exc:
+            status, note = SKIP, str(exc) or 'sebep belirtilmedi'
         except Fail as exc:
             status, note = FAIL, str(exc)
         except Exception as exc:                         # tarayıcı/Hub hatası da KALDI (sessizce geçmez)
@@ -197,6 +234,8 @@ def render_md(results: Sequence[Result], meta: Dict[str, str]) -> str:
     out += ['| Adım | Durum | Ölçülen | Ekran |', '|---|---|---|---|']
     for r in results:
         meas = '<br>'.join(f'{k}: {v}' for k, v in r.measured.items()) or (r.note if r.status != PASS else '')
+        if r.measured and r.note and r.status == SKIP:
+            meas += f'<br>**{r.note}**'
         shots = ' '.join(f'[{Path(s).stem.split("__")[-1]}](shots/{s})' for s in r.shots)
         out.append(f'| `{r.id}` {r.title} | {r.status} | {meas.replace("|", "/")} | {shots} |')
     return '\n'.join(out) + '\n'
@@ -226,7 +265,7 @@ def render_html(results: Sequence[Result], meta: Dict[str, str], shot_dir: Path)
     for r in results:
         meas = '<br>'.join(f'{esc(k)}: {esc(v)}' for k, v in r.measured.items())
         meas = meas or esc(r.note if r.status != PASS else '')
-        if r.status == FAIL and r.measured and r.note:
+        if r.status in (FAIL, SKIP) and r.measured and r.note:
             meas += f'<br><b class="bad">{esc(r.note)}</b>'
         imgs = []
         for s in r.shots:
