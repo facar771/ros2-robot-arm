@@ -18,20 +18,15 @@ import asyncio
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 
 from control_hub.hub_core.algo_gen import AlgoError, generate, kinds_doc
 from control_hub.hub_core.program_move import make_move_client
 from control_hub.hub_core.program_runner import dry_run
 from control_hub.hub_core.program_store import MAX_STEPS, validate_program
-from control_hub.server.move_routes import read_json
+from control_hub.server.errors import fail, read_json
 
 # Denetim hızı ulaşılabilirliği değil yalnız süreyi etkiler; Program kendi hızıyla yeniden önizler.
 DEFAULT_SPEED_PCT = 25.0
-
-
-def fail(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
-    return JSONResponse({'ok': False, 'error': code, 'message': message, **extra}, status_code=status)
 
 
 def install(app: FastAPI, ctx: Any) -> None:

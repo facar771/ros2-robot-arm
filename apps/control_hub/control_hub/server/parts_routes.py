@@ -17,14 +17,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
-import json
-from typing import Any, List
+from typing import List
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 
 from control_hub.hub_core import mesh_tools as mt
 from control_hub.hub_core import parts_store as ps
+from control_hub.server.errors import read_json_stream
 
 B64_OVERHEAD = 4 / 3
 MAX_BODY = int(mt.MAX_FILE_BYTES * B64_OVERHEAD) + 64 * 1024        # base64 + JSON zarfı
@@ -52,21 +52,6 @@ def install(app, ctx) -> None:
         if store is None:
             raise ctx.api_error(503, 'data_dir_invalid', f'Veri klasörü geçersiz: {data_error}')
         return store
-
-    async def read_json(request: Request, limit: int) -> Any:
-        """Gövdeyi parça parça okur; sınır aşılınca bellekte biriktirmeden keser (413)."""
-        declared = request.headers.get('content-length')
-        if declared and declared.isdigit() and int(declared) > limit:
-            raise ctx.api_error(413, 'too_large', 'Gövde çok büyük')
-        buf = bytearray()
-        async for chunk in request.stream():
-            buf += chunk
-            if len(buf) > limit:
-                raise ctx.api_error(413, 'too_large', 'Gövde çok büyük')
-        try:
-            return json.loads(bytes(buf) or b'null')
-        except ValueError:
-            raise ctx.api_error(400, 'bad_request', 'Geçersiz JSON') from None
 
     def part_error(exc: ps.PartError):
         return ctx.api_error(exc.status, exc.code, str(exc))
@@ -97,7 +82,7 @@ def install(app, ctx) -> None:
     @app.post('/api/parts', status_code=201)
     async def part_add(request: Request):
         ctx.need_control(request)
-        body = await read_json(request, MAX_BODY)
+        body = await read_json_stream(request, MAX_BODY)
         if not isinstance(body, dict):
             raise ctx.api_error(400, 'bad_request', 'Gövde bir nesne olmalı')
         filename, unit = body.get('filename'), body.get('unit', mt.DEFAULT_UNIT)
@@ -140,7 +125,7 @@ def install(app, ctx) -> None:
     @app.put('/api/parts/{part_id}')
     async def part_update(part_id: str, request: Request):
         ctx.need_control(request)
-        patch = await read_json(request, 64 * 1024)
+        patch = await read_json_stream(request, 64 * 1024)
         meta = await run(need_store().update, part_id, patch)
         return {'ok': True, 'part': ps.public_view(meta)}
 

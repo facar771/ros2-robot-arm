@@ -27,6 +27,7 @@ from fastapi.responses import JSONResponse, Response
 
 from control_hub.hub_core import profile_apply
 from control_hub.hub_core import profile_view as pv
+from control_hub.server.errors import fail
 
 MAX_BODY = 256 * 1024
 YAML_TYPE = 'text/yaml; charset=utf-8'
@@ -59,9 +60,6 @@ def sim_blocker(hub: Any) -> Optional[Tuple[int, str, str]]:
 
 def install_params_routes(app: FastAPI, *, need_view: Callable, need_control: Callable,
                           hub: Any = None) -> None:
-    def fail(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
-        return JSONResponse({'ok': False, 'error': code, 'message': message, **extra}, status_code=status)
-
     def view_fail(exc: pv.ViewError) -> JSONResponse:
         return fail(exc.status, exc.code, exc.message, **exc.extra)
 

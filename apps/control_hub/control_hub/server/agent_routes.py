@@ -22,11 +22,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from control_hub.agent.service import AgentError, AgentService
-from control_hub.server.app import ApiError
+from control_hub.server.errors import ApiError
+from control_hub.server.netcheck import is_local_request
 
-LOOPBACK_CLIENTS = ('127.0.0.1', '::1', '::ffff:127.0.0.1')
-LOOPBACK_HOSTS = ('localhost', '127.0.0.1', '::1')
-PROXY_HEADERS = ('x-forwarded-for', 'x-forwarded-host', 'forwarded', 'x-real-ip')
 STATUS_FOR = {'busy': 409, 'no_key': 409, 'unavailable': 503, 'bad_key': 400, 'bad_config': 400,
               'bad_request': 400}
 
@@ -68,16 +66,6 @@ class ConfigBody(BaseModel):
 class EmptyBody(BaseModel):
     pass
 
-
-def is_local_request(request: Request) -> bool:
-    client = request.client.host if request.client else ''
-    host = (request.headers.get('host') or '').strip().lower()
-    if host.startswith('['):
-        name = host[1:].split(']', 1)[0]
-    else:
-        name = host.rsplit(':', 1)[0] if host.count(':') == 1 else host
-    return (client in LOOPBACK_CLIENTS and name in LOOPBACK_HOSTS
-            and not any(h in request.headers for h in PROXY_HEADERS))
 
 
 def install_agent_routes(app: FastAPI, hub, *, token_of, need_view, need_control) -> None:

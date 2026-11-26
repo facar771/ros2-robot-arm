@@ -37,16 +37,13 @@ from control_hub.hub_core.program_store import (
     validate_program,
 )
 from control_hub.hub_core.runner import BusyError, EstopLatchedError
+from control_hub.server.errors import fail
 
 DEFAULT_SPEED_PCT = 25.0
 
 
 def _no_const(token: str) -> Any:
     raise ValueError(token)                                  # NaN / Infinity
-
-
-def fail(status: int, code: str, message: str, **extra: Any) -> JSONResponse:
-    return JSONResponse({'ok': False, 'error': code, 'message': message, **extra}, status_code=status)
 
 
 def install(app: FastAPI, ctx: Any) -> None:
