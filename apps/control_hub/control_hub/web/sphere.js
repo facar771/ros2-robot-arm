@@ -140,10 +140,7 @@
   const form = () => ({ name: q('sw-name').value, cx: q('sw-cx').value, cy: q('sw-cy').value,
                         cz: q('sw-cz').value, r: q('sw-r').value, axis: q('sw-axis').value });
 
-  function say(text, bad = false) {
-    const n = q('sw-msg'); if (!n) return;
-    n.textContent = text || ''; n.classList.toggle('bad', !!bad);
-  }
+  function say(text, bad = false) { HubPages.say(q('sw-msg'), text, bad); }
 
   function field(label, id, props = {}) {
     return el('label', { class: 'jg-f sw-f', text: `${label} ` }, [

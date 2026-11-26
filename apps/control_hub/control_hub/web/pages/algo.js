@@ -59,7 +59,7 @@
   async function call(path, method = 'GET', body) {   // hata fırlatmaz: {failed:true,status,message,body}
     try { return await api(path, method, body); } catch (e) { return { failed: true, status: e.status, message: e.message, body: e.body || {} }; }
   }
-  const say = (text, bad = false) => { Q.msg.textContent = text; Q.msg.className = `say ${bad ? 'bad' : ''}`; };
+  const say = (text, bad = false) => HubPages.say(Q.msg, text, bad);
 
   /* ---- form: alanlar sunucudaki üreteç tanımından kurulur (tek doğruluk kaynağı: hub_core/algo_gen.py) ---- */
   function edit(f, input) {

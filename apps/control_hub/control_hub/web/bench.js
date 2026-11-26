@@ -89,10 +89,7 @@ window.BenchPanel = (() => {
     poll();
   }
 
-  function say(lines, bad) {
-    const ul = q('bn-msg'); if (!ul) return;
-    ul.replaceChildren(...(lines || []).map((t) => el('li', { class: bad ? 'bad' : '', text: t })));
-  }
+  function say(lines, bad) { HubPages.say(q('bn-msg'), lines, bad, { list: true }); }
 
   function axisRow(ax) {
     const confirmed = !!(q('bn-confirm') && q('bn-confirm').checked);

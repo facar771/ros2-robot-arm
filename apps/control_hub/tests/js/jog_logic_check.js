@@ -158,6 +158,7 @@ let timers = []; let tid = 0;
 global.setInterval = (f, ms) => { timers.push({ f, ms, id: ++tid }); return tid; };
 global.clearInterval = (id) => { timers = timers.filter((t) => t.id !== id); };
 
+require(path.join(WEB, 'pages.js'));                     // gerçek HubPages.say (R8)
 require(path.join(WEB, 'jog.js'));
 const err = (status, message) => Object.assign(new Error(message), { status, body: { message } });
 const flush = () => new Promise((r) => setImmediate(r));

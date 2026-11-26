@@ -15,10 +15,7 @@ window.JogPanel = (() => {
     const b = new Uint8Array(12); crypto.getRandomValues(b);
     return 'hub-' + Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   }
-  function say(text, bad = false) {
-    const n = q('jp-msg'); if (!n) return;
-    n.textContent = text || ''; n.classList.toggle('bad', !!bad);
-  }
+  function say(text, bad = false) { HubPages.say(q('jp-msg'), text, bad); }
   const post = (body) => api('/api/jog', 'POST', { lease: J.lease, frame: J.frame, ...body });
 
   /* ---- ortak: eklem hedefine git (önce kuru kontrol, sonra hareket) ---- */

@@ -46,6 +46,7 @@ let tcpPos = [0.3, 0.1, 0.4];
 global.JogPanel = { tcp: () => ({ position: tcpPos.slice() }), explain: (e) => `HATA ${e.status}: ${e.message}`,
                     release: async () => {}, refreshFrames: async () => {}, frame: () => 'World', setFrame() {} };
 
+require(path.join(WEB, 'pages.js'));                     // gerçek HubPages.say (R8): sw-msg / fw-msg ortak yazıcıdan
 const FT = require(path.join(WEB, 'sphere.js'));
 require(path.join(WEB, 'frames.js'));
 
