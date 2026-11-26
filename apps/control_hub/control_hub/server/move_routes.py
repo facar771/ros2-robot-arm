@@ -18,6 +18,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from control_hub.server.errors import fail, read_json
+from control_hub.server.guards import guard_motion
 
 
 def install(app, ctx) -> None:
@@ -30,14 +31,12 @@ def install(app, ctx) -> None:
         status, doc = await asyncio.to_thread(fn, *args)
         return JSONResponse(doc, status_code=status)
 
-    def latched():
-        return fail(423, 'estop_latched', 'ACİL DUR aktif: önce kilidi aç', state='estopped')
-
     @app.post('/api/move', status_code=202)
     async def move(request: Request):
         ctx.need_control(request)
-        if hub.estopped:
-            return latched()
+        locked = guard_motion(hub, request)
+        if locked is not None:
+            return locked
         body, bad = await read_json(request)
         return bad or await call('move_submit', body)
 
@@ -60,8 +59,9 @@ def install(app, ctx) -> None:
     @app.post('/api/move/resume')
     async def move_resume(request: Request):
         ctx.need_control(request)
-        if hub.estopped:
-            return latched()
+        locked = guard_motion(hub, request)
+        if locked is not None:
+            return locked
         return await call('move_resume')
 
     @app.get('/api/move/{job_id}')

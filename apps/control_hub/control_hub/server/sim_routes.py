@@ -14,6 +14,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from control_hub.server.errors import read_json
+from control_hub.server.guards import guard_motion
 
 
 def install(app, ctx) -> None:
@@ -33,9 +34,9 @@ def install(app, ctx) -> None:
     @app.post('/api/sim/reset')
     async def sim_reset(request: Request):
         ctx.need_control(request)
-        if hub.estopped:
-            return JSONResponse({'ok': False, 'error': 'estop_latched', 'state': 'estopped',
-                                 'message': 'ACİL DUR aktif: önce kilidi aç'}, status_code=423)
+        locked = guard_motion(hub, request)
+        if locked is not None:
+            return locked
         return await call('sim_reset')
 
     @app.post('/api/sim/speed')

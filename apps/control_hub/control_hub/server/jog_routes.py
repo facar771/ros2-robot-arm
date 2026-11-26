@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 from control_hub.hub_core.joint_hold import JointHold
 from control_hub.hub_core.robot_api_backend import RobotApiError
 from control_hub.server.errors import fail, read_json
+from control_hub.server.guards import guard_motion, is_release
 from control_hub.server.netcheck import is_local_request
 
 log = logging.getLogger('control_hub.jog')
@@ -66,9 +67,9 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
         body, bad = await body_of(request)
         if bad is not None:
             return bad
-        is_release = isinstance(body, dict) and body.get('ttl_ms') == 0
-        if hub.estopped and not is_release:
-            return fail(423, 'estop_latched', 'ACİL DUR aktif: önce kilidi aç', state='estopped')
+        locked = guard_motion(hub, request, allow_release=True, body=body)
+        if locked is not None:
+            return locked
         local = is_local_request(request)
         if isinstance(body, dict) and 'twist' in body and not local:
             return fail(403, 'hold_local_only', 'Basılı-tut jog yalnızca bu bilgisayardan yapılır; '
@@ -83,11 +84,11 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
             return bad
         if not supported('move_submit'):
             return fail(501, 'jog_unsupported', 'Bu robot arka ucu eklem jog\'unu desteklemiyor')
-        is_release = isinstance(body, dict) and body.get('ttl_ms') == 0
-        if hub.estopped and not is_release:
+        locked = guard_motion(hub, request, allow_release=True, body=body)
+        if locked is not None:
             holder.release()
-            return fail(423, 'estop_latched', 'ACİL DUR aktif: önce kilidi aç', state='estopped')
-        if not is_release and not is_local_request(request):
+            return locked
+        if not is_release(body) and not is_local_request(request):
             return fail(403, 'hold_local_only', 'Basılı-tut jog yalnızca bu bilgisayardan yapılır; '
                         'telefondan adım kullan', state='hold_denied')
         status, doc = await asyncio.to_thread(holder.command, body)
