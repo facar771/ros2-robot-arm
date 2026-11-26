@@ -16,8 +16,8 @@ def read(p: Path) -> str:
 def test_notice_text_is_the_same_everywhere():
     assert sc.LICENSE_NOTICE == NOTICE
     assert NOTICE in read(ROOT / 'docs' / 'THIRD_PARTY.md')
-    parts_js = read(ROOT / 'control_hub' / 'web' / 'pages' / 'parts.js')
-    assert NOTICE in parts_js                                  # sunucu bildirmezse yedek metin
+    parts_logic = read(ROOT / 'control_hub' / 'web' / 'parts_logic.js')
+    assert NOTICE in parts_logic             # sunucu bildirmezse yedek metin (R12: mantık dosyasında)
 
 
 def test_third_party_doc_has_license_source_and_version():
@@ -70,6 +70,7 @@ def test_s2b_source_files_stay_under_400_lines():
     pkg = ROOT / 'control_hub'
     files = [pkg / 'hub_core' / n for n in ('step_child.py', 'step_convert.py', 'mesh_tools.py')]
     files += [pkg / 'server' / 'parts_routes.py', pkg / 'web' / 'pages' / 'parts.js']
+    files += [pkg / 'web' / 'parts_logic.js']
     files += [ROOT / 'tools' / 'step_exe_check.py', ROOT / 'tests' / 'test_step_convert.py']
     for f in files:
         assert len(f.read_text(encoding='utf-8').splitlines()) < 400, f.name

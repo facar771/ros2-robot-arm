@@ -47,6 +47,7 @@ global.S = { snap: { estop: { latched: false }, me: { can_control: true },
   robot: { mode: 'real', stale: false, tcp: { pos_m: [0.3, 0.0, 0.2], rpy_deg: [180, 0, 0] } } } };
 require(path.join(WEB, 'shell.js'));                                           // modeInfo: yönelim varsayılanı moda göre
 require(path.join(WEB, 'scene_logic.js'));
+require(path.join(WEB, 'parts_logic.js'));                                    // R12: sayfa kararlarını buradan alır (`scripts` mount'tan önce yükler)
 require(path.join(WEB, 'approach.js'));
 const SL = SceneLogic;
 
@@ -112,7 +113,7 @@ const pick = (objId, point, normal, layer = 'workpiece') => { for (const cb of [
 const tick = () => new Promise((r) => setImmediate(r));
 
 (async () => {
-  assert.ok(def && def.id === 'parts' && def.scripts.includes('/scene_logic.js') && def.scripts.includes('/approach.js') && typeof def.order === 'number');
+  assert.ok(def && def.id === 'parts' && def.scripts.includes('/scene_logic.js') && def.scripts.includes('/parts_logic.js') && def.scripts.includes('/approach.js') && typeof def.order === 'number');
   assert.deepStrictEqual(def.styles, ['/pages/parts.css']);                // §5: yalnız kendi CSS'i, HubPages yükler
   const root = new N('section');
   await def.mount(root);
@@ -287,6 +288,14 @@ const tick = () => new Promise((r) => setImmediate(r));
   srv.checkReply = () => { throw new ApiError(423, { error: 'estop_latched', message: 'ACİL DUR' }); };
   await near.click(); assert.match(text(root), /ACİL DUR aktif: önce kilidi aç/); assert.strictEqual(callsTo('/api/move').length, moves0);
   S.snap.me.can_control = false; def.onState(S.snap); assert.ok(near.disabled, 'salt-okunur oturumda hareket yok'); S.snap.me.can_control = true; def.onState(S.snap);
+
+  /* savunma katmanı: bayatlık onState gelmeden oluşursa (yayın gecikmesi) onay anında yine de komut GİTMEZ */
+  srv.checkReply = okReply; await near.click(); assert.ok(!confirm.hidden);
+  S.snap.robot.stale = true;                                               // onState ÇAĞRILMADI: plan hâlâ elde
+  const nLate = callsTo('/api/move').length; await confirm.click();
+  assert.strictEqual(callsTo('/api/move').length, nLate, 'bayat veride onay komut göndermemeli'); assert.match(text(root), /Robot verisi bayat: hareket GÖNDERİLMEDİ/);
+  assert.ok(confirm.hidden, 'bayat veride plan düşer');
+  S.snap.robot.stale = false; def.onState(S.snap);
 
   /* bayat robot verisi: düğmeler kapanır, plan düşer, komut GİTMEZ */
   srv.checkReply = okReply; await near.click(); assert.ok(!confirm.hidden);

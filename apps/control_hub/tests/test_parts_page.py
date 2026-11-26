@@ -13,7 +13,7 @@ WEB = Path(__file__).resolve().parents[1] / 'control_hub' / 'web'
 JS = Path(__file__).parent / 'js'
 needs_node = pytest.mark.skipif(shutil.which('node') is None, reason='node yok: JS testi atlandı')
 MAX_LINES = 400                                                       # K12: bir dosya 400 satırı aşmaz
-S2_FILES = ('scene3d.js', 'scene_hub.js', 'scene_logic.js', 'approach.js',
+S2_FILES = ('scene3d.js', 'scene_hub.js', 'scene_logic.js', 'approach.js', 'parts_logic.js',
             'pages/parts.js', 'pages/parts.css')
 
 
@@ -54,6 +54,7 @@ def test_s2_files_stay_under_the_line_limit():
 # --- sunulan varlıklar ----------------------------------------------------------------------------
 @pytest.mark.parametrize('path,ctype', [
     ('/scene_hub.js', 'javascript'), ('/approach.js', 'javascript'), ('/scene_logic.js', 'javascript'),
+    ('/parts_logic.js', 'javascript'),
     ('/pages/parts.js', 'javascript'), ('/pages/parts.css', 'css'),
     ('/vendor/three/TransformControls.js', 'javascript')])   # ES modülü olarak yüklenir: içerik türü şart
 def test_s2_assets_are_served_with_the_right_type(make_client, path, ctype):
