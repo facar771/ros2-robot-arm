@@ -2,12 +2,20 @@
 
 * ``FakeBackend``: ROS'suz, donanımsız simülasyon (geliştirme, testler, telefondan ilk deneme).
 * ``RobotApiBackend``: robotun HTTP API v1'i (``/api/jobs``, ``/api/stop``, ``/api/reset``).
+* ``SimBackend``: SİM (``--sim``); ``MotionBackend`` + ``MoveBackend`` yüzeyinin tamamını bilir.
+
+Hareket sözleşmesi (``MotionBackend``/``MoveBackend``), rotaların ``getattr(hub.backend, ad)`` ile
+çağırdığı yöntemlerin imzasını SABİTLER (MIMARI.md §7 R6, T6). Yöntem hiç yoksa rotalar 501/409 verir;
+imza kayarsa ise yalnız çalışma anında 500 olur. ``tests/test_backend_contract.py`` üç arka ucun
+imzasını bu Protocol'lerle karşılaştırır.
 """
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, Optional, Protocol, Tuple, runtime_checkable
+
+Reply = Tuple[int, Dict[str, Any]]      # (HTTP durum kodu, JSON gövdesi): rotalar gövdeyi aynen döndürür
 
 
 @dataclass(frozen=True)
@@ -54,3 +62,56 @@ class RobotBackend(Protocol):
         """Canlı durum: ``connected``, ``joints``, ``tool``, ``objects``... (JSON'a uygun)."""
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class MotionBackend(Protocol):
+    """Jog / çerçeve / model: ``--fake``, ``--sim`` ve gerçek Robot API bu 6 yöntemi AYNI imzayla bilir.
+
+    Hepsi eşzamanlıdır (rotalar ``asyncio.to_thread`` ile çağırır) ve ``(durum, gövde)`` döner; hatayı
+    4xx/5xx ile bildirir (``RobotApiBackend`` ağ hatasında ``RobotApiError`` fırlatır, rota 502'ye çevirir).
+    Kullanan rotalar: ``jog_routes`` (jog_command/jog_status/model/frames_*), ``mesh_routes`` (model)."""
+
+    def jog_command(self, body: Any, *, remote: bool = False) -> Reply:
+        """Jog komutu (başlat/devam/bırak). ``remote``: istek yerel değil (jog kilidi bunu görür)."""
+
+    def jog_status(self) -> Reply:
+        """Jog durumu + TCP."""
+
+    def model(self) -> Reply:
+        """Robot modeli: ``{'robot': ad, 'links': [{'name': ...}, ...]}`` (3B sahne ve parça listesi için)."""
+
+    def frames_get(self) -> Reply:
+        """Çerçeve ve küre listesi."""
+
+    def frames_put(self, body: Any) -> Reply:
+        """Çerçeve listesini değiştir."""
+
+    def frames_reach(self, body: Any) -> Reply:
+        """Küre (merkez, yarıçap) için erişim aralığı; robot oynamaz."""
+
+
+@runtime_checkable
+class MoveBackend(MotionBackend, Protocol):
+    """``/api/move*`` ailesi: YALNIZ SİM bilir (``--fake`` ve gerçek Robot API bilmez; ``supports_move``).
+
+    Ya TÜM 6 yöntem vardır ya hiçbiri: ``program_move.supports_move`` hepsini arar; eksik biri sessizce
+    "desteklenmiyor" olur."""
+
+    def move_submit(self, body: Any) -> Reply:
+        """Hareket işi başlat (202 + ``job_id``)."""
+
+    def move_check(self, body: Any) -> Reply:
+        """Kuru çalıştırma: aynı doğrulama, robot oynamaz."""
+
+    def move_get(self, job_id: str) -> Reply:
+        """İş durumu."""
+
+    def move_stop(self) -> Reply:
+        """İşi kontrollü durdur."""
+
+    def move_pause(self) -> Reply:
+        """İşi duraklat."""
+
+    def move_resume(self) -> Reply:
+        """Duraklatılmış işe devam et."""
