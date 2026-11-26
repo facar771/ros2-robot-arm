@@ -12,6 +12,9 @@ Gerçek Hub (sahte robot) + yerel sahte OpenAI-uyumlu LLM sunucusu; her şey ger
    ``KEYRING-REAL: SKIPPED <neden>`` der (sessiz atlama yok); veri uyuşmazlığı ise hatadır.
 
 Çıkış 0: hepsi geçti (gerçek depo SKIPPED olabilir, açıkça yazılır); 1: hata.
+
+Yeri (R7): ``HubService``/``Settings`` kullandığı için ``desktop`` altındadır; ``agent`` paketi ``desktop``'u
+bilmez (yukarı bağ yok, ``tests/test_package_deps.py`` kilitler). Tek çağıranı ``desktop/launcher.py``.
 """
 from __future__ import annotations
 

@@ -18,10 +18,9 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from control_hub.hub_core.atomic import write_bytes_atomic
-from control_hub.paths import user_dir
 
 SCHEMA_VERSION = 1
 MAX_STEPS = 500                 # tanımdaki adım sayısı (döngü ve gövdesi dahil)
@@ -255,15 +254,23 @@ def parse_text(text: str) -> Dict[str, Any]:
 
 
 # --- kayıt: HUB_DATA_DIR/programs/<slug>.json -------------------------------------------------------
-def data_dir(env: Optional[Dict[str, str]] = None) -> Path:
-    """Hub kullanıcı verisi (EK-1 D): ``HUB_DATA_DIR``; yoksa kullanıcı klasörü altında ``data``."""
+def data_dir(env: Optional[Dict[str, str]] = None, *, user_dir: Optional[Callable[[], Path]] = None) -> Path:
+    """Hub kullanıcı verisi (EK-1 D): ``HUB_DATA_DIR``; yoksa ``user_dir() / 'data'``.
+
+    ``user_dir`` (kullanıcı klasörünü veren işlev) DIŞARIDAN verilir (R7): ``hub_core`` üst katmandaki
+    ``paths`` modülünü içe aktarmaz. ``HUB_DATA_DIR`` yokken çağrılır (eski davranışla aynı, tembel)."""
     explicit = (os.environ if env is None else env).get('HUB_DATA_DIR')
-    return Path(explicit) if explicit else user_dir() / 'data'
+    if explicit:
+        return Path(explicit)
+    if user_dir is None:
+        raise ValueError('HUB_DATA_DIR yok ve kullanıcı klasörü (user_dir) verilmedi')
+    return user_dir() / 'data'
 
 
 class ProgramStore:
-    def __init__(self, base: Optional[Path] = None):
-        self._base = Path(base) if base else data_dir()
+    def __init__(self, base: Optional[Path] = None, *, user_dir: Optional[Callable[[], Path]] = None):
+        """``base`` verilirse o; yoksa ``data_dir(user_dir=...)`` (kuran katman ``paths.user_dir`` verir)."""
+        self._base = Path(base) if base else data_dir(user_dir=user_dir)
 
     @property
     def root(self) -> Path:
