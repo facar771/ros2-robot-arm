@@ -17,10 +17,10 @@ import json
 import math
 import os
 import re
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from control_hub.hub_core.atomic import write_bytes_atomic
 from control_hub.paths import user_dir
 
 SCHEMA_VERSION = 1
@@ -261,23 +261,6 @@ def data_dir(env: Optional[Dict[str, str]] = None) -> Path:
     return Path(explicit) if explicit else user_dir() / 'data'
 
 
-def _atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix='.tmp-', suffix='.part')
-    try:
-        with os.fdopen(fd, 'wb') as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
 class ProgramStore:
     def __init__(self, base: Optional[Path] = None):
         self._base = Path(base) if base else data_dir()
@@ -335,7 +318,7 @@ class ProgramStore:
         if len(data) > MAX_JSON_BYTES:
             raise ProgramError(413, 'too_large', 'Program çok büyük')
         try:
-            _atomic_write(path, data)
+            write_bytes_atomic(path, data)
         except OSError:
             raise ProgramError(500, 'write_failed', 'Program yazılamadı') from None
         return slug

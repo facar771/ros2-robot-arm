@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from control_hub import paths
+from control_hub.hub_core.atomic import replace_dir, write_bytes_atomic
 from control_hub.hub_core.mesh_tools import (
     ImportedMesh,
     MeshToolError,
@@ -134,12 +135,9 @@ def validate_patch(patch: Any) -> Dict[str, Any]:
 # depo
 # ---------------------------------------------------------------------------------------------------
 def _atomic_write(path: Path, data: bytes) -> None:
-    tmp = path.with_name(path.name + '.tmp')
-    with open(tmp, 'wb') as f:
-        f.write(data)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    """Parça dosyası (eski davranış): SABİT ``<ad>.tmp`` (depo kilidi altında); dizin hazır; hata
+    olursa geçici dosya silinmez."""
+    write_bytes_atomic(path, data, tmp_name=path.name + '.tmp', make_parents=False, cleanup=False)
 
 
 def public_view(meta: Dict[str, Any]) -> Dict[str, Any]:
@@ -235,7 +233,7 @@ class PartsStore:
                 try:
                     _atomic_write(tmp / 'mesh.stl', mesh.stl)
                     self._write_meta(tmp, meta)
-                    os.replace(tmp, self.root / part_id)
+                    replace_dir(tmp, self.root / part_id)
                 except BaseException:
                     shutil.rmtree(tmp, ignore_errors=True)
                     raise
@@ -263,7 +261,7 @@ class PartsStore:
             d = self._dir(part_id)
             gone = self.root / f'.deleted-{part_id}'
             try:
-                os.replace(d, gone)                  # önce görünmez yap (atomik), sonra sil
+                replace_dir(d, gone)                 # önce görünmez yap (atomik), sonra sil
                 shutil.rmtree(gone, ignore_errors=True)
             except OSError as exc:
                 raise self._storage_error(exc) from None

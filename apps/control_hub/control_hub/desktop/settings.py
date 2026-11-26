@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlsplit
 
+from control_hub.hub_core.atomic import write_text_atomic
 from control_hub.paths import user_dir
 
 DEFAULT_ROBOT_URL = 'http://127.0.0.1:8080'
@@ -103,12 +102,10 @@ def load(path: Optional[Path] = None) -> Settings:
 
 def save(s: Settings, path: Optional[Path] = None) -> Path:
     path = path or settings_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = asdict(s)
     if not s.remember_pin:
         data['pin'] = ''
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix='settings.', suffix='.tmp')
-    with os.fdopen(fd, 'w', encoding='utf-8') as fh:
-        json.dump(data, fh, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)                       # yarım yazılmış dosya bırakma
+    # eski davranış korunur: fsync yok, hatada geçici dosya silinmez (hub_core/atomic.py, R4)
+    write_text_atomic(path, json.dumps(data, indent=2, ensure_ascii=False), prefix='settings.', suffix='.tmp',
+                      fsync=False, cleanup=False)           # yarım yazılmış dosya bırakma
     return path
