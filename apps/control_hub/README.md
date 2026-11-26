@@ -19,6 +19,56 @@ Terminalde adresler, **PIN** ve (aynı Wi-Fi'dan) telefon için **QR kod** çık
 `http://localhost:8765`, telefonda `http://<bilgisayarın IP'si>:8765`. Docker ile:
 `docker compose up --build hub-fake` (PIN'i loglarda yazar; sabitlemek için `HUB_PIN=123456 docker compose up hub-fake`).
 
+## SİM'i çalıştır / kabul turu / klavye tuşları
+
+**SİM** (`--sim`), gerçek kinematikli bir **yazılım** robottur: robot, ROS ve Docker olmadan Hub'ı baştan sona dener.
+Gerçek robot DEĞİLDİR; değerler "tahmini"dir (ayrıntı: `docs/SIM.md`). SİM `numpy` ister (`requirements-dev.txt` içinde).
+
+**1. SİM'i çalıştır**
+```bash
+# WSL'de
+cd ~/ros2-robot-arm/apps/control_hub
+pip install -r requirements-dev.txt                # bir kez (numpy dahil)
+python -m control_hub --sim --check-config         # SİM açılır, FK robot_core ile karşılaştırılır; "Yapılandırma geçerli" yazmalı
+python -m control_hub --sim --access-mode open     # tarayıcı: http://localhost:8765  (10 kat hızlı: --fake-speed 10)
+```
+```powershell
+# PowerShell'de (apps\control_hub içinde; Python ve requirements-dev.txt kuruluysa)
+python -m control_hub --sim --access-mode open
+```
+
+**2. Kabul turu** — tek komut SİM Hub'ı açar, headless Chrome ile arayüzü bir insan gibi sürer ve her adımda
+**GEÇTİ / KALDI + ölçülen değer + ekran görüntüsü** yazar (ölçüm arayüz metninden değil Hub'dan alınır; adımlar: `docs/KABUL.md`).
+```bash
+# WSL'de (apps/control_hub içinde)
+pip install playwright                             # bir kez; Chrome/Chromium da kurulu olmalı
+python -m tools.sim_acceptance --list              # adım kimlikleri ve ne sınadıkları
+python -m tools.sim_acceptance                     # hepsi, masaüstü 1280×800 (≈ 3 dk)
+python -m tools.sim_acceptance --viewport phone    # telefon 390×844
+python -m tools.sim_acceptance --only kontrol.klavye --out ./kabul    # tek adım; rapor ./kabul/rapor.html
+```
+```powershell
+# PowerShell'de (apps\control_hub içinde; Chrome yolunu kendi kurulumuna göre değiştir)
+python -m tools.sim_acceptance --chrome "C:\Program Files\Google\Chrome\Application\chrome.exe" --only kontrol.klavye
+```
+Çıkış kodu: `0` hiç KALDI yok · `1` en az bir KALDI (ya da hiç adım koşmadı) · `2` kurulum hatası (Playwright/Chrome yok).
+Rapor klasöründe `rapor.html`, `rapor.md`, `sonuc.json`, `shots/*.png`, `hub.log` olur.
+
+**3. Klavye tuşları** (Kontrol sayfası açıkken): sayfadaki **"Klavyeyi etkinleştir"** kutusu işaretli olmalı
+(SİM'de kendiliğinden açık, GERÇEK/TEZGÂH'ta kapalı). Basılı tut = hareket, bırak = DUR; aynı anda tek eksen, zıt
+tuşlar birlikte = DUR; metin kutusundayken tuşlar çalışmaz (**Esc hariç**). Tuşlar fiziksel konuma göre okunur
+(Türkçe Q klavyede de aynı yerdedir). Sürekli (basılı-tut) hareket yalnız Hub'ın çalıştığı bilgisayardan yapılır;
+telefonda tuş haritası kartı gizlidir.
+
+| Tuş | Ne yapar | Tuş | Ne yapar |
+|---|---|---|---|
+| `W` / `S` | X + / − | `1`–`6` | eklem seç (hareket sürerken seçim değişmez) |
+| `A` / `D` | Y + / − | `←` / `→` | seçili eklem − / + |
+| `Q` / `E` | Z + / − | `↑` / `↓` | genel hız %5 artır / azalt |
+| `I` / `K` | RX + / − | `Boşluk` | jog DUR |
+| `J` / `L` | RY + / − | `Esc` | **ACİL DUR** (üst çubuktaki düğmeyle aynı yol) |
+| `U` / `O` | RZ + / − | | |
+
 ## Gerçek robota bağlanmak (Robot API v1)
 
 `--fake` olmadan Hub robotun HTTP API'sine bağlanır (`docs/INTERFACES.md`, "Robot API v1"):
@@ -273,9 +323,10 @@ control_hub/
   paths.py    gömülü/kullanıcı yolları (PyInstaller _MEIPASS dahil)
 config/       scenarios.yaml (senaryolar; arayüzde düğme YOK, ajan/API kullanır), ui.config.json (tema + panel seçimi)
 hub.spec, exe_entry.py, assets/   PyInstaller tek dosya derlemesi
-tools/        geliştirme araçları (üretimde kullanılmaz): robot_stub.py, e2e_check.py, smoke_check.py
+tools/        geliştirme araçları (üretimde kullanılmaz): robot_stub.py, e2e_check.py, smoke_check.py, sim_acceptance.py (kabul turu)
 tests/
 ```
+Ağaç özettir; güncel modül haritası, ölçümler ve R1–R12 refaktör durumu: [`docs/MIMARI.md`](../../docs/MIMARI.md).
 
 ## Arayüzü değiştirmek = yeni dosya eklemek
 
