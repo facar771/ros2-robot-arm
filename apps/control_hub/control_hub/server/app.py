@@ -17,7 +17,7 @@ import logging
 import mimetypes
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, NamedTuple, Optional, Tuple
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, WebSocket
@@ -79,12 +79,16 @@ def _origin_ok(origin: Optional[str], host: Optional[str]) -> bool:
     return origin is None or (urlsplit(origin).netloc.lower() == (host or '').lower())
 
 
-def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
-               web_dir: Path = WEB_DIR) -> FastAPI:
-    extra = tuple(extra_allowed_hosts)
-    app = FastAPI(title='Robot Kontrol Merkezi', version=__version__, docs_url=None,
-                  redoc_url=None, openapi_url=None)
-    app.state.hub = hub
+class _Auth(NamedTuple):
+    """Oturum yardımcıları: rota kayıt işlevlerine tek paket olarak geçer."""
+    token_of: Callable[[Any], Optional[str]]
+    me: Callable[[Any], Dict[str, Any]]
+    need_view: Callable[[Request], None]
+    need_control: Callable[[Request], None]
+    state_for: Callable[[Any], Dict[str, Any]]
+
+
+def _make_auth(hub: Hub) -> _Auth:
     access = hub.access
 
     def token_of(conn) -> Optional[str]:
@@ -105,7 +109,14 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
         if d is Decision.NEED_LOGIN:
             raise ApiError(401, 'login_required', 'PIN ile giriş gerekli')
 
-    # --- hatalar ve ara katman -----------------------------------------------------------------
+    def state_for(conn) -> Dict[str, Any]:
+        return {**hub.snapshot(), 'me': me(conn)}
+
+    return _Auth(token_of, me, need_view, need_control, state_for)
+
+
+def _wire_errors_and_guard(app: FastAPI, extra: Tuple[str, ...]) -> None:
+    """Hata işleyicileri + güvenlik ara katmanı (Host / Origin / içerik türü / başlıklar)."""
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError):
         return api_error_response(exc)
@@ -137,7 +148,12 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
             else 'no-cache'
         return resp
 
-    # --- açık uç noktalar ----------------------------------------------------------------------
+
+def _wire_public(app: FastAPI, hub: Hub, auth: _Auth) -> None:
+    """Oturumsuz uçlar: health, session, login, logout, estop."""
+    access = hub.access
+    token_of, me = auth.token_of, auth.me
+
     @app.get('/health')
     async def health():
         return {'ok': True, 'version': __version__, 'backend': hub.backend.name}
@@ -180,9 +196,11 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
         return {'ok': True, 'estop': True, 'interrupts_motion': hub.backend.can_interrupt,
                 'verification': 'pending'}
 
-    # --- oturum gerektirenler ------------------------------------------------------------------
-    def state_for(conn) -> Dict[str, Any]:
-        return {**hub.snapshot(), 'me': me(conn)}
+
+def _wire_session_routes(app: FastAPI, hub: Hub, auth: _Auth) -> None:
+    """Oturum gerektirenler: ui, state, events, senaryo çalıştır/iptal, ACİL DUR sıfırla."""
+    need_view, need_control, state_for = auth.need_view, auth.need_control, auth.state_for
+
 
     @app.get('/api/ui')
     async def ui(request: Request):
@@ -232,10 +250,11 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
             raise ApiError(409, 'reset_refused', f'Robot kilidi açmayı reddetti: {exc}') from None
         return {'ok': True, 'estop': False}
 
-    # Rota modülleri otomatik yüklenir: server/<ad>_routes.py içindeki install(app, ctx) (registry.py).
-    ctx = RouteContext(hub=hub, need_view=need_view, need_control=need_control, token_of=token_of,
-                       api_error=lambda status, code, message: ApiError(status, code, message))
-    app.state.route_modules = install_routes(app, ctx)
+
+
+def _wire_pages(app: FastAPI, auth: _Auth, web_dir: Path) -> None:
+    need_view = auth.need_view
+
 
     @app.get('/api/pages')
     async def pages(request: Request):
@@ -243,7 +262,12 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
         need_view(request)
         return {'ok': True, 'pages': [{'id': n[:-3], 'script': f'/pages/{n}'} for n in page_files(web_dir)]}
 
-    # --- canlı akış ----------------------------------------------------------------------------
+
+def _wire_ws(app: FastAPI, hub: Hub, auth: _Auth, extra: Tuple[str, ...]) -> None:
+    """Canlı akış: durum/olay/tick mesajları; Host+Origin ve oturum denetimi."""
+    access = hub.access
+    token_of, state_for = auth.token_of, auth.state_for
+
     @app.websocket('/ws')
     async def ws(sock: WebSocket):
         if not host_allowed(sock.headers.get('host'), extra) or \
@@ -283,6 +307,25 @@ def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
         except (WebSocketDisconnect, RuntimeError):
             return
 
+
+def create_app(hub: Hub, *, extra_allowed_hosts: Iterable[str] = (),
+               web_dir: Path = WEB_DIR) -> FastAPI:
+    """Uygulamayı kurar. Kayıt SIRASI güvenlik ve rota listesi için önemlidir (test_route_contract)."""
+    extra = tuple(extra_allowed_hosts)
+    app = FastAPI(title='Robot Kontrol Merkezi', version=__version__, docs_url=None,
+                  redoc_url=None, openapi_url=None)
+    app.state.hub = hub
+    auth = _make_auth(hub)
+    _wire_errors_and_guard(app, extra)
+    _wire_public(app, hub, auth)
+    _wire_session_routes(app, hub, auth)
+    # Rota modülleri otomatik yüklenir: server/<ad>_routes.py içindeki install(app, ctx) (registry.py).
+    ctx = RouteContext(hub=hub, need_view=auth.need_view, need_control=auth.need_control,
+                       token_of=auth.token_of,
+                       api_error=lambda status, code, message: ApiError(status, code, message))
+    app.state.route_modules = install_routes(app, ctx)
+    _wire_pages(app, auth, web_dir)
+    _wire_ws(app, hub, auth, extra)
     if web_dir.is_dir():
         app.mount('/', StaticFiles(directory=str(web_dir), html=True), name='web')
     return app

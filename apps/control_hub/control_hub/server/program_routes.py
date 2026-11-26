@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -48,14 +48,23 @@ def _no_const(token: str) -> Any:
     raise ValueError(token)                                  # NaN / Infinity
 
 
-def install(app: FastAPI, ctx: Any) -> None:
-    hub = ctx.hub
-    store, mover = ProgramStore(user_dir=user_dir), make_move_client(hub)   # paths bağı BURADAN (R7)
-    runner = ProgramRunner(mover, hub.events, is_estopped=lambda: hub.estopped)
-    hub.add_estop_listener(runner.on_estop)
-    app.state.program_runner = runner
-    app.state.program_mover = mover                          # Algoritmalar sayfası aynı istemciyle denetler
+class _Parts(NamedTuple):
+    """Rota gruplarının paylaştığı nesneler ve yardımcılar (install bunları bir kez kurar)."""
+    ctx: Any
+    hub: Any
+    store: ProgramStore
+    mover: Any
+    runner: ProgramRunner
+    body_of: Callable[..., Any]
+    speed_of: Callable[..., Any]
+    program_of: Callable[..., Any]
+    single: Callable[..., Any]
+    store_call: Callable[..., Any]
+    locked: Callable[..., Any]
 
+
+def _make_helpers(hub: Any) -> Tuple[Callable[..., Any], ...]:
+    """Gövde okuma/doğrulama yardımcıları: (body_of, speed_of, program_of, single, store_call, locked)."""
     async def body_of(request: Request) -> Tuple[Optional[Body], Optional[JSONResponse]]:
         raw = await request.body()
         if len(raw) > MAX_JSON_BYTES + 65536:
@@ -103,6 +112,14 @@ def install(app: FastAPI, ctx: Any) -> None:
 
     def locked(request: Request) -> Optional[JSONResponse]:
         return guard_motion(hub, request)
+
+    return body_of, speed_of, program_of, single, store_call, locked
+
+
+def _wire_library(app: FastAPI, p: _Parts) -> None:
+    """Durum, liste, oku/dışa aktar, kaydet, sil, içe aktar."""
+    ctx, hub, store, mover, runner = p.ctx, p.hub, p.store, p.mover, p.runner
+    body_of, program_of, store_call = p.body_of, p.program_of, p.store_call
 
     @app.get('/api/program/state')
     async def state(request: Request):
@@ -159,6 +176,12 @@ def install(app: FastAPI, ctx: Any) -> None:
         res = store_call(lambda: parse_text(body['text']))
         return res if isinstance(res, JSONResponse) else {'ok': True, 'program': res}
 
+
+def _wire_preview(app: FastAPI, p: _Parts) -> None:
+    """Önizleme: tüm programı (check) ya da tek hedefi (check_move) robota sormadan denetler."""
+    ctx, mover = p.ctx, p.mover
+    body_of, program_of, single, speed_of = p.body_of, p.program_of, p.single, p.speed_of
+
     @app.post('/api/program/check')
     async def check(request: Request):
         ctx.need_control(request)
@@ -177,6 +200,12 @@ def install(app: FastAPI, ctx: Any) -> None:
         if bad is not None:
             return bad
         return {'ok': True, **await asyncio.to_thread(mover.check, mv)}
+
+
+def _wire_run(app: FastAPI, p: _Parts) -> None:
+    """Çalıştırma: tek hedefe git (goto) ve programı çalıştır (run); ikisi de ACİL DUR kilidine bağlı."""
+    ctx, hub, mover, runner = p.ctx, p.hub, p.mover, p.runner
+    body_of, program_of, single, speed_of, locked = p.body_of, p.program_of, p.single, p.speed_of, p.locked
 
     @app.post('/api/program/goto', status_code=202)
     async def goto(request: Request):
@@ -222,6 +251,10 @@ def install(app: FastAPI, ctx: Any) -> None:
             return fail(409, 'busy', 'Başka bir program çalışıyor')
         return {'ok': True, 'run_id': run_id, 'runner': runner.status()}
 
+def _wire_control(app: FastAPI, p: _Parts) -> None:
+    """Çalışan programı yönet: adım/devam/duraklat/kalp atışı ve durdur."""
+    ctx, mover, runner = p.ctx, p.mover, p.runner
+
     def control(op: Callable[[], Any]) -> Dict[str, Any] | JSONResponse:
         try:
             op()
@@ -247,3 +280,16 @@ def install(app: FastAPI, ctx: Any) -> None:
         cancelled = runner.cancel('kullanıcı durdurdu')
         await asyncio.to_thread(mover.stop)                  # tek tek git (goto) işi de dursun
         return {'ok': True, 'cancelled': cancelled, 'runner': runner.status()}
+
+def install(app: FastAPI, ctx: Any) -> None:
+    hub = ctx.hub
+    store, mover = ProgramStore(user_dir=user_dir), make_move_client(hub)   # paths bağı BURADAN (R7)
+    runner = ProgramRunner(mover, hub.events, is_estopped=lambda: hub.estopped)
+    hub.add_estop_listener(runner.on_estop)
+    app.state.program_runner = runner
+    app.state.program_mover = mover                          # Algoritmalar sayfası aynı istemciyle denetler
+    parts = _Parts(ctx, hub, store, mover, runner, *_make_helpers(hub))
+    _wire_library(app, parts)
+    _wire_preview(app, parts)
+    _wire_run(app, parts)
+    _wire_control(app, parts)
