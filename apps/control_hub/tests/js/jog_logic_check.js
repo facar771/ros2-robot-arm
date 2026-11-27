@@ -56,6 +56,9 @@ const L = require(path.join(WEB, 'jog_logic.js'));
   // hız: ↑/↓ ±5; tekrar yok sayılır
   r = run(L.keyInit(), d('ArrowUp')); assert.deepStrictEqual(r.actions, [{ t: 'speed', delta: 5 }]);
   assert.deepStrictEqual(run(L.keyInit(), d('ArrowDown')).actions, [{ t: 'speed', delta: -5 }]);
+  // P1d: Shift + ↑/↓ = ±1 (Shift'siz ±5); Shift tek başına "mod" sayılmaz
+  assert.deepStrictEqual(run(L.keyInit(), { ...d('ArrowUp'), shift: true }).actions, [{ t: 'speed', delta: 1 }]);
+  assert.deepStrictEqual(run(L.keyInit(), { ...d('ArrowDown'), shift: true }).actions, [{ t: 'speed', delta: -1 }]);
   // kapalı klavye (GERÇEK varsayılan), ACİL DUR kilidi, sürekli kip kapalı: hareket başlamaz, neden yazılır
   r = run(L.keyInit(), d('KeyW'), { ...ctx, enabled: false }); assert.deepStrictEqual(kinds(r), ['say']); assert.strictEqual(r.state.driver, null);
   r = run(L.keyInit(), d('KeyW'), { ...ctx, disabled: 'ACİL DUR kilidinde (423)' }); assert.ok(!kinds(r).includes('start')); assert.ok(r.actions.some((a) => a.text.includes('423')));
@@ -212,5 +215,27 @@ const flush = () => new Promise((r) => setImmediate(r));
   calls.length = 0; next = () => ({ ok: true }); byId['jp-release'].fire('click'); await flush(); await flush();
   assert.deepStrictEqual(calls.map((c) => c.url), ['/api/jog', '/api/jog/joint']);
   assert.ok(calls.every((c) => c.body.ttl_ms === 0));
+  // P1d: hassas hız — 0,1 hassasiyet, kıstırma, düğme adımları, tavan ölçeği doğrulaması, tablo biçimi (hesap sunucuda)
+  assert.strictEqual(L.clampPct(49.96), 50); assert.strictEqual(L.clampPct(12.34), 12.3); assert.strictEqual(L.clampPct(0), 1);
+  assert.strictEqual(L.clampPct(250), 100); assert.strictEqual(L.clampPct('abc'), 50);
+  assert.strictEqual(L.speedNudge(50.1, 1), 51.1); assert.strictEqual(L.speedNudge(99, 5), 100); assert.strictEqual(L.speedNudge(2, -5), 1);
+  assert.strictEqual(L.speedNudge(0.1 + 49.9, -0.1), 49.9);
+  assert.strictEqual(L.speedLimitsUrl(33.33), '/api/speed/limits?speed_pct=33.3');
+  assert.deepStrictEqual(L.holdTwist(0, 1, 12.5), [0.0025, 0, 0, 0, 0, 0]);                  // kesirli % jog'a da geçer
+  assert.strictEqual(L.moveBody([1], 12.5).speed_pct, 12.5);
+  for (const ok of [0.05, '0,3', 1, ' 0.5 ']) assert.strictEqual(L.scaleCheck(ok).ok, true, String(ok));
+  assert.strictEqual(L.scaleCheck('0,3').value, 0.3);
+  for (const bad of [1.01, 0.04, 0, -1, '', 'x', null, undefined, NaN]) assert.strictEqual(L.scaleCheck(bad).ok, false, String(bad));
+  const doc = { scale_locked: false, scale: 0.3, limiting_joint: 'joint_2', example_move: { joint: 'joint_2', deg: 6, duration_s: 2.36 },
+    joints: [{ name: 'joint_1', limit_rad_s: 0.3, limit_deg_s: 17.19, effective_rad_s: 0.045, effective_deg_s: 2.58 },
+             { name: 'joint_2', limit_rad_s: 0.08, limit_deg_s: 4.58, effective_rad_s: 0.012, effective_deg_s: 0.69 }] };
+  let v = L.speedView(doc);
+  assert.deepStrictEqual(v.rows.map((r) => [r.name, r.limiting]), [['J1', false], ['J2', true]]);          // yalnız sınırlayıcı vurgulu
+  assert.deepStrictEqual(v.rows[1].limit, ['0,080', '4,6']); assert.deepStrictEqual(v.rows[1].eff, ['0,012', '0,7']);
+  assert.strictEqual(v.note, 'Eklem hareketlerinde en yavaş eklem belirleyici');
+  assert.strictEqual(v.example, '6° J2 hareketi tahmini 2,4 sn'); assert.strictEqual(v.locked, false); assert.strictEqual(v.scale, 0.3);
+  v = L.speedView({ scale_locked: true, scale: null, locked_reason: 'neden', joints: [] });
+  assert.strictEqual(v.locked, true); assert.strictEqual(v.rows.length, 0); assert.strictEqual(v.note, ''); assert.strictEqual(v.reason, 'neden');
+  assert.strictEqual(L.speedView(null).rows.length, 0);
   console.log('JOG_LOGIC_JS_OK');
 })().catch((e) => { console.error(e); process.exit(1); });

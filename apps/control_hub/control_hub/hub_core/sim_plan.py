@@ -3,7 +3,8 @@
 * Eklem hareketi: ``q0 -> q1`` doğrusu, **senkron trapez** zaman profili (her eklem aynı skaler ``s(t)``).
 * Doğrusal hareket: TCP konumu doğru, yönelim slerp; her örnek için sayısal ters kinematik (DLS).
 * Doğrulama ``robot_core`` kurallarıyla: eklem limiti, güvenli kutu (``safezone``), yol (``pathcheck``).
-  Hub robotun kurallarını gevşetmez: hız tavanı (``max_velocity_scale``) burada zorlanır (UI_CONTRACT §9-B).
+  Hız tavanı (``max_velocity_scale``) burada zorlanır (UI_CONTRACT §9-B); gerçek modda Hub onu gevşetmez,
+yalnız SİM tavanı ``check_scale`` aralığında (0,05–1,0) ayarlayabilir (P1d).
 
 Hata türleri (``Violation.kind`` = ``PlanError.kind``): ``outside_safe_zone | joint_limit | path_blocked |
 unreachable | bad_request``. ``at_pct``: hareketin kaçta kaçında (0-100) sorun görüldü.
@@ -26,6 +27,8 @@ from robot_core.se3 import (
     rotvec_from_matrix,
 )
 
+SCALE_MIN, SCALE_MAX = 0.05, 1.0   # "hız tavanı ölçeği" aralığı (yalnız SİM ayarlar; P1d)
+EXAMPLE_MOVE_DEG = 6.0           # hız tablosundaki örnek: en yavaş eklem bu kadar döner, süre tahmini yazılır
 RAMP = 0.25                      # trapezin ivmelenme/yavaşlama payı (toplam sürenin her ucunda)
 MIN_DURATION_S = 0.2
 LINEAR_SPEED_M_S = 0.10          # %100 hızda TCP çizgisel hızı (JogConfig.max_linear_speed ile aynı)
@@ -104,7 +107,7 @@ class SimModel:
     upper: np.ndarray
     vmax: np.ndarray
     amax: np.ndarray
-    velocity_cap: float          # profil `max_velocity_scale`: %100 hız = bu oran (Hub gevşetemez)
+    velocity_cap: float          # profil `max_velocity_scale`: %100 hız = bu oran (SİM'de ayarlanabilir, P1d)
 
     @classmethod
     def from_profile(cls, profile: Profile) -> 'SimModel':
@@ -130,6 +133,36 @@ class SimModel:
         q = np.asarray(q, float)
         margin = NEAR_LIMIT_FRACTION * span
         return [bool(a) for a in ((q - self.lower) <= margin) | ((self.upper - q) <= margin)]
+
+
+def check_scale(value: object) -> Optional[str]:
+    """Hız tavanı ölçeği geçerli mi? Geçersizse Türkçe neden, geçerliyse ``None`` (sessizce kırpılmaz)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return 'scale sayı olmalı'
+    if not SCALE_MIN <= value <= SCALE_MAX:
+        return f'scale {SCALE_MIN:g} ile {SCALE_MAX:g} arasında olmalı (profil hız limitini aşamaz)'
+    return None
+
+
+def speed_limits_doc(model: SimModel, speed_pct: float, *, default_scale: float) -> dict:
+    """GET /api/speed/limits gövdesinin hesaplanan kısmı (arayüz hesap yapmaz, yalnız gösterir).
+
+    Etkin üst hız = profil limiti × tavan ölçeği × hız %. Eklem hareketinde (senkron profil) tüm eklemler
+    AYNI anda varır; süreyi en yavaş eklem belirler. ``example_move``: en yavaş eklem 6° dönerken
+    ``duration_for`` süresi (ivme sınırı dahil), kabul ölçümü bununla karşılaştırılır."""
+    k = model.scale_for(speed_pct)
+    names = list(model.profile.joint_names)
+    eff = model.vmax * k
+    rows = [{'name': n, 'limit_rad_s': round(float(v), 4), 'limit_deg_s': round(math.degrees(v), 2),
+             'effective_rad_s': round(float(e), 4), 'effective_deg_s': round(math.degrees(e), 2)}
+            for n, v, e in zip(names, model.vmax, eff)]
+    slow = int(np.argmin(eff))
+    delta = np.zeros(model.dof)
+    delta[slow] = math.radians(EXAMPLE_MOVE_DEG)
+    return {'scale': model.velocity_cap, 'scale_default': float(default_scale), 'scale_min': SCALE_MIN,
+            'scale_max': SCALE_MAX, 'speed_pct': speed_pct, 'joints': rows, 'limiting_joint': names[slow],
+            'example_move': {'joint': names[slow], 'deg': EXAMPLE_MOVE_DEG,
+                             'duration_s': round(duration_for(delta, model.vmax, model.amax, k), 2)}}
 
 
 def _finite(vec: Sequence[float], n: int, what: str) -> np.ndarray:

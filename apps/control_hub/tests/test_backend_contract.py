@@ -30,7 +30,8 @@ MOVE = {
     'move_submit': '(body)', 'move_check': '(body)', 'move_get': '(job_id)',
     'move_stop': '()', 'move_pause': '()', 'move_resume': '()',
 }
-SIM = {'sim_reset': '()', 'set_speed': '(pct)'}
+SIM = {'sim_reset': '()', 'set_speed': '(pct)', 'speed_limits': '(pct=None)',
+       'set_speed_scale': '(pct, scale)'}
 
 
 # --- karşılaştırıcı (testlerin kendisi; ürün kodu DEĞİL) --------------------------------------------------

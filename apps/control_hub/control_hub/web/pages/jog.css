@@ -76,3 +76,18 @@
 .kb-row { display: flex; gap: 8px; align-items: center; font-size: .85rem; color: var(--muted); }
 .kb-row kbd { min-width: 4.2em; text-align: center; padding: 2px 6px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text); font-variant-numeric: tabular-nums; }
 @media (max-width: 800px) { #p-keys { display: none; } }
+
+/* ---- hassas hız kartı (P1d): eski kaydırıcı (JogPanel) durum tutucu olarak kalır, görünmez ---- */
+.jp-f.jp-speed { display: none; }
+.jp-sp { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.jp-sp #jp-sp-range { flex: 1 1 8em; min-width: 6em; height: 28px; touch-action: pan-y; }
+.jp-sp .jp-nb, #jp-sc-apply { min-height: 44px; min-width: 44px; }
+#jp-sp-num, #jp-sc-num { width: 5.2em; min-height: 44px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; }
+.jp-tablewrap { overflow-x: auto; margin: 10px 0 4px; }                       /* telefonda yatay kaydırılır, kart taşmaz */
+.jp-sp-table { border-collapse: collapse; width: 100%; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.jp-sp-table th, .jp-sp-table td { padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.jp-sp-table thead th { color: var(--muted); font-weight: 600; }
+.jp-sp-table tbody th { text-align: left; }
+.jp-sp-table tr.lim { background: rgba(227, 179, 65, .18); box-shadow: inset 3px 0 0 var(--warn); font-weight: 700; }
+#jp-sc-msg.bad { color: #ff9b97; }
+@media (max-width: 800px) { .jp-sp-table { font-size: .72rem; } .jp-sp-table th, .jp-sp-table td { padding: 3px 5px; } }

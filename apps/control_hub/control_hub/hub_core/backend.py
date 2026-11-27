@@ -131,6 +131,12 @@ class SimControl(Protocol):
     def set_speed(self, pct: Any) -> Reply:
         """Genel hız yüzdesi (``robot.speed_pct``)."""
 
+    def speed_limits(self, pct: Any = None) -> Reply:
+        """GET /api/speed/limits: eklem hız limitleri, etkin üst hızlar, tavan ölçeği (sunucu hesaplar)."""
+
+    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
+        """Hız tavanı ölçeği (+ isteğe bağlı ``pct``). Yalnız SİM; gerçek/tezgâhta 409 ``sim_only``."""
+
 
 # --- Varsayılanlar: "bu aileyi bilmiyorum" cevabı, eski rota cevabıyla BAYT BAYT aynı ---------------------
 # Gövde ``server.errors.error_body`` ile aynı anahtar sırasını taşır (hub_core ``server``'ı içe aktarmaz).
@@ -197,6 +203,18 @@ class NoSim:
 
     def set_speed(self, pct: Any) -> Reply:
         return self.sim_reset()
+
+    def speed_limits(self, pct: Any = None) -> Reply:
+        """Gerçek/tezgâh/sahte: tavan robottadır, Hub değiştirmez (``scale_locked``). Eklem tablosu bu arka
+        uçlarda yok (Robot API hız limitini sunmuyor): ``joints`` boş."""
+        snap = self.snapshot() or {}                    # type: ignore[attr-defined]
+        return 200, {'ok': True, 'robot': snap.get('name'), 'mode': snap.get('mode'), 'scale': None,
+                     'scale_locked': True, 'speed_pct': snap.get('speed_pct'),
+                     'locked_reason': 'Tavan robotun profilinden gelir; yalnız SİM kipinde ayarlanır',
+                     'joints': [], 'limiting_joint': None}
+
+    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
+        return _refusal(409, 'sim_only', 'Hız tavanı ölçeği yalnız SİM kipinde ayarlanır')
 
 
 def supports_move(backend: Any) -> bool:
