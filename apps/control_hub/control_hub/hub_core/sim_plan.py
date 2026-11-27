@@ -28,9 +28,8 @@ from robot_core.se3 import (
     rotvec_from_matrix,
 )
 
-SCALE_MAX = 1000.0               # SİM "hız/ivme tavanı ölçeği" üst sınırı (alt sınır: > 0); gerçek mod <= 1,0
-PCT_MAX = 100000.0               # SİM hız % üst sınırı (alt sınır: > 0)
-REAL_SCALE_MAX = 1.0             # gerçek/tezgâh: tavan ölçeği profil limitini aşamaz (sunucu 409 sim_only)
+from control_hub.hub_core.backend import PCT_MAX, SCALE_MAX, check_pct, check_scale  # noqa: F401  (yeniden dışa)
+
 EXAMPLE_MOVES_DEG = (6.0, 15.0)   # hız tablosundaki örnekler (ilki kartta yazılı; 15° kabul ölçümü)
 EXAMPLE_MOVE_DEG = 6.0           # hız tablosundaki örnek: en yavaş eklem bu kadar döner, süre tahmini yazılır
 RAMP = 0.25                      # trapezin ivmelenme/yavaşlama payı (toplam sürenin her ucunda)
@@ -149,25 +148,6 @@ class SimModel:
         q = np.asarray(q, float)
         margin = NEAR_LIMIT_FRACTION * span
         return [bool(a) for a in ((q - self.lower) <= margin) | ((self.upper - q) <= margin)]
-
-
-def _check_positive(value: object, name: str, top: float) -> Optional[str]:
-    """TEK sınır (P1e): sayı (bool değil), sonlu, > 0, <= ``top``; sessizce kırpılmaz."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return f'{name} sonlu bir sayı olmalı'
-    if not 0 < value <= top:
-        return f'{name} 0 ile {top:g} arasında olmalı (0 hariç)'
-    return None
-
-
-def check_scale(value: object, top: float = SCALE_MAX) -> Optional[str]:
-    """Hız/ivme tavanı ölçeği geçerli mi? Geçersizse Türkçe neden, geçerliyse ``None``."""
-    return _check_positive(value, 'scale', top)
-
-
-def check_pct(value: object, top: float = PCT_MAX) -> Optional[str]:
-    """Hız % geçerli mi (SİM: <= ``PCT_MAX``; gerçek mod 100)?"""
-    return _check_positive(value, 'speed_pct', top)
 
 
 def speed_limits_doc(model: SimModel, speed_pct: float, *, default_scale: float) -> dict:

@@ -421,3 +421,16 @@ def test_j2_15_degrees_at_scale_1_and_400_percent_matches_the_card_estimate_with
     assert est2 < est and abs(duration_for(
         np.array([0, math.radians(15), 0, 0, 0, 0]), sim.sm.vmax, sim.sm.amax, 4.0,
         accel_scale=16.0) - est2) < 0.01
+
+
+# --- Docker/gerçek mod: rotalar robot_core OLMADAN içe aktarılabilmeli (CI Docker testi yakaladı) -----------
+def test_routes_import_without_robot_core():
+    import subprocess
+    import sys
+    code = ("import sys; sys.modules['robot_core'] = None\n"
+            "import control_hub.server.jog_routes, control_hub.server.sim_routes, control_hub.server\n"
+            "from control_hub.hub_core.backend import check_pct\n"
+            "assert check_pct(400) is None and check_pct(0) and check_pct(float('nan'))\n")
+    root = Path(__file__).parent.parent
+    r = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, cwd=root)
+    assert r.returncode == 0, r.stderr

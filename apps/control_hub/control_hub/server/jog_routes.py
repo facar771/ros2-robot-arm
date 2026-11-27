@@ -25,10 +25,9 @@ from typing import Any, Callable, Tuple
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from control_hub.hub_core.backend import supports_move
+from control_hub.hub_core.backend import check_pct, supports_move
 from control_hub.hub_core.joint_hold import JointHold
 from control_hub.hub_core.robot_api_backend import RobotApiError
-from control_hub.hub_core.sim_plan import check_pct
 from control_hub.server.errors import fail, read_json
 from control_hub.server.guards import guard_motion, is_release
 from control_hub.server.netcheck import is_local_request
