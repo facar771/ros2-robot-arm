@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -33,7 +34,17 @@ from control_hub.hub_core.backend import BackendResult, ResetResult, StopReport
 from control_hub.hub_core.commands import CommandError, parse_robot_command
 from control_hub.hub_core.sim_assets import SimAssetsError, resolve
 from control_hub.hub_core.sim_jobs import Job, SimClock, parse_move
-from control_hub.hub_core.sim_plan import PlanError, SimModel, plan_joint, plan_linear, violations_for
+from control_hub.hub_core.sim_plan import (
+    SCALE_MAX,
+    SCALE_MIN,
+    PlanError,
+    SimModel,
+    check_scale,
+    plan_joint,
+    plan_linear,
+    speed_limits_doc,
+    violations_for,
+)
 from control_hub.hub_core.sim_profile import OVERRIDE_NOTE, ProfileOverrideMixin, build_jog
 
 log = logging.getLogger('control_hub.sim')
@@ -238,6 +249,29 @@ class SimBackend(ProfileOverrideMixin):
             return self._err(400, 'bad_request', 'speed_pct 1-100 arasında bir sayı olmalı')
         self.speed_pct = int(pct)
         return 200, {'ok': True, 'speed_pct': self.speed_pct}
+
+    def speed_limits(self, pct: Any = None) -> Reply:
+        """``pct`` verilmezse robotun genel hızı; kart kendi gösterdiği % ile sorar (hesap yine sunucuda)."""
+        with self._lock:
+            sm, pct = self.sm, self.speed_pct if pct is None else pct
+        doc = speed_limits_doc(sm, pct, default_scale=self.profile.safety.max_velocity_scale)
+        return 200, {'ok': True, 'robot': self.profile.robot, 'mode': 'sim', 'scale_locked': False, **doc}
+
+    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
+        """Hız tavanı ölçeği (+ isteğe bağlı ``pct``); biri geçersizse hiçbiri uygulanmaz. Bir SONRAKİ
+        komutta geçerli: çalışan iş eski planıyla biter, jog tavanı her tikte canlı okur."""
+        why = check_scale(scale)
+        if why is not None:
+            return self._err(400, 'bad_request', why, min=SCALE_MIN, max=SCALE_MAX)
+        bad_pct = isinstance(pct, bool) or not isinstance(pct, (int, float)) or not 1 <= pct <= 100
+        if pct is not None and bad_pct:
+            return self._err(400, 'bad_request', 'speed_pct 1-100 arasında bir sayı olmalı')
+        with self._lock:
+            self.sm = replace(self.sm, velocity_cap=float(scale))
+            self.jog.engine.safety = replace(self.jog.engine.safety, max_velocity_scale=float(scale))
+            if pct is not None:
+                self.speed_pct = int(pct)
+        return 200, {'ok': True, 'speed_pct': self.speed_pct, 'scale': float(scale)}
 
     # --- RobotBackend --------------------------------------------------------------------------------
     def execute(self, command: str, cancel: threading.Event) -> BackendResult:

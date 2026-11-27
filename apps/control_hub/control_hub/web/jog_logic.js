@@ -14,7 +14,7 @@
 
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
   const finite = (v) => typeof v === 'number' && Number.isFinite(v);
-  const clampPct = (v) => (finite(Number(v)) ? clamp(Math.round(Number(v)), SPEED_MIN, SPEED_MAX) : 50);
+  const clampPct = (v) => (finite(Number(v)) ? clamp(Math.round(Number(v) * 10) / 10, SPEED_MIN, SPEED_MAX) : 50);   // 0,1 hassasiyet (P1d)
 
   /* Kaydırıcı: hedef limit içinde mi, aralığın %5'ine yakın mı, çubuk konumu (0..1). */
   function sliderState(deg, min, max) {
@@ -117,12 +117,33 @@
   /* Tıkla-git kapalı nedeni: genel kapanma nedenleri + güvenli kutu bilinmiyor. */
   const targetDisabledReason = (s) => disabledReason(s) || (zoneOf(s && s.robot) ? null : 'Güvenli kutu bilinmiyor: 3B hedef seçimi kapalı.');
 
+  /* ---- P1d: hassas hız kartı. Hesap SUNUCUDA (GET /api/speed/limits); burada yalnız doğrulama ve biçim. ---- */
+  const SCALE_MIN = 0.05, SCALE_MAX = 1;
+  const speedNudge = (cur, delta) => clampPct(Number(cur) + delta);                // 0,1 adıma yuvarlar: 50.1+1 → 51.1
+  const speedLimitsUrl = (pct) => `/api/speed/limits?speed_pct=${clampPct(pct)}`;
+  function scaleCheck(raw) {                                                        // sunucu aynı kuralı uygular; burada erken ve açık ret
+    const s = String(raw === undefined || raw === null ? '' : raw).trim().replace(',', '.'), v = s === '' ? NaN : Number(s);
+    if (!finite(v)) return { ok: false, text: 'Ölçek sayı olmalı (0,05–1,00).' };
+    if (v < SCALE_MIN || v > SCALE_MAX) return { ok: false, text: `Ölçek ${SCALE_MIN}–${SCALE_MAX} aralığında olmalı: profil hız limiti aşılamaz.` };
+    return { ok: true, value: Math.round(v * 100) / 100, text: '' };
+  }
+  const fix = (v, n) => (finite(v) ? v.toFixed(n).replace('.', ',') : '—');
+  function speedView(doc) {                                                         // tablo satırları: rad/s VE °/s, sınırlayıcı eklem vurgulu
+    const d = doc || {}, joints = Array.isArray(d.joints) ? d.joints : [];
+    const ex = d.example_move;
+    return { locked: d.scale_locked === true, scale: finite(d.scale) ? d.scale : null, reason: d.locked_reason || '',
+      rows: joints.map((j) => ({ name: j.name.replace('joint_', 'J'), limiting: j.name === d.limiting_joint,
+        limit: [fix(j.limit_rad_s, 3), fix(j.limit_deg_s, 1)], eff: [fix(j.effective_rad_s, 3), fix(j.effective_deg_s, 1)] })),
+      note: joints.length ? 'Eklem hareketlerinde en yavaş eklem belirleyici' : '',
+      example: ex ? `${ex.deg}° ${String(ex.joint).replace('joint_', 'J')} hareketi tahmini ${fix(ex.duration_s, 1)} sn` : '' };
+  }
+
   /* ---- P1c: klavye jog. Saf durum makinesi: olay girer, eylem listesi çıkar (DOM/saat yok; node ile test edilir). ----
    * Kodlar event.code (fiziksel tuş): Türkçe Q klavyede I tuşu "ı" üretir, harf değil konum güvenilirdir.
    * Sıra kuralı: ikilinin ilki "+" (W=X+, S=X−). Ok tuşlarında doğal yön (→ +). Tek eksen: ilk basılan sürer. */
   const KEY_CART = { KeyW: [0, 1], KeyS: [0, -1], KeyA: [1, 1], KeyD: [1, -1], KeyQ: [2, 1], KeyE: [2, -1],
                      KeyI: [3, 1], KeyK: [3, -1], KeyJ: [4, 1], KeyL: [4, -1], KeyU: [5, 1], KeyO: [5, -1] };
-  const KEY_ARROW = { ArrowRight: 1, ArrowLeft: -1 }, KEY_SPEED = { ArrowUp: 1, ArrowDown: -1 }, SPEED_KEY_STEP = 5;
+  const KEY_ARROW = { ArrowRight: 1, ArrowLeft: -1 }, KEY_SPEED = { ArrowUp: 1, ArrowDown: -1 }, SPEED_KEY_STEP = 5, SPEED_KEY_FINE = 1;   // Shift = ince ±1
   const NO_TEXT_INPUT = ['button', 'checkbox', 'radio', 'submit', 'reset'];      // bunlar odaktayken tuşlar çalışır
   const keyJoint = (code) => { const m = /^(?:Digit|Numpad)([1-6])$/.exec(code || ''); return m ? Number(m[1]) - 1 : null; };
   const isEditable = (t) => !!t && (t.isContentEditable === true || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' ||
@@ -130,7 +151,7 @@
   const keyInit = () => ({ held: [], driver: null, joint: null, blocked: false });
   const connLost = (wsState) => wsState !== 'live';
   const keyHelp = () => [['W / S', 'X +/−'], ['A / D', 'Y +/−'], ['Q / E', 'Z +/−'], ['I / K', 'RX +/−'], ['J / L', 'RY +/−'],
-    ['U / O', 'RZ +/−'], ['1–6', 'eklem seç'], ['← / →', 'seçili eklem −/+'], ['↑ / ↓', `hız %±${SPEED_KEY_STEP}`],
+    ['U / O', 'RZ +/−'], ['1–6', 'eklem seç'], ['← / →', 'seçili eklem −/+'], ['↑ / ↓', `hız %±${SPEED_KEY_STEP}`], ['Shift + ↑ / ↓', `hız %±${SPEED_KEY_FINE}`],
     ['Boşluk', 'jog DUR'], ['Esc', 'ACİL DUR']];
   function keyMotion(code, st) {                         // tuş → hareket tanımı (kartezyen eksen ya da seçili eklem)
     if (KEY_CART[code]) return { kind: 'cart', id: KEY_CART[code][0], sign: KEY_CART[code][1], code };
@@ -166,7 +187,7 @@
     if (ev.repeat) return { state: st0, actions: [], handled: true };             // tekrar eden keydown yok sayılır
     if (!ctx.enabled) { act.push({ t: 'say', text: 'Klavye jog kapalı: “Klavyeyi etkinleştir”i işaretle.', bad: true }); return { state: st, actions: act, handled: true }; }
     if (ctx.disabled) { stop(); act.push({ t: 'say', text: ctx.disabled, bad: true }); return { state: st, actions: act, handled: true }; }
-    if (isSpeed) { act.push({ t: 'speed', delta: KEY_SPEED[ev.code] * SPEED_KEY_STEP }); return { state: st, actions: act, handled: true }; }
+    if (isSpeed) { act.push({ t: 'speed', delta: KEY_SPEED[ev.code] * (ev.shift ? SPEED_KEY_FINE : SPEED_KEY_STEP) }); return { state: st, actions: act, handled: true }; }
     if (jn !== null) {                                   // eklem seç (hareket sırasında seçim değişmez)
       if (!st.driver) { st.joint = jn; act.push({ t: 'say', text: `Eklem ${jn + 1} seçildi (←/→).`, bad: false }); }
       return { state: st, actions: act, handled: true };
@@ -182,6 +203,7 @@
     clampPct, sliderState, stepTarget, holdTwist, moveBody, checkVerdict, explain, disabledReason, badge, poseRows,
     gripperPct, homeDeg, jointsUsable,
     ID_PLANE, ID_TARGET, zoneOf, defaultZ, clampZ, planeSpec, markerSpec, pickToTarget, orientationFor, linearBody, targetDisabledReason,
+    SCALE_MIN, SCALE_MAX, speedNudge, speedLimitsUrl, scaleCheck, speedView, SPEED_KEY_FINE,
     KEY_CART, KEY_ARROW, SPEED_KEY_STEP, keyInit, keyStep, keyHelp, keyMotion, keyJoint, isEditable, connLost };
   if (typeof module !== 'undefined') module.exports = window.JogLogic;
 })();

@@ -265,7 +265,8 @@ ACİL DUR sonrası hiçbir iş kendiliğinden devam etmez.
 | `POST /api/move/stop` · `pause` · `resume` | `{}` → `{ok:true}`; çalışan iş yoksa **409** `not_running` | SİM |
 | `GET /api/move/{job_id}` | → `{ok, job:{id, type, state:'running\|paused\|done\|failed\|cancelled', progress_pct, error, message}}`; bilinmeyen **404** `unknown_job` | SİM |
 | `POST /api/jog/joint` | `{lease, joint, dir:±1, ttl_ms, speed_pct?}`: TEK eklemi basılı-tutla sürer (P1). Komut = heartbeat; `ttl_ms` ≤ 500 (varsayılan 250) içinde yenilenmezse **sunucu** durdurur; `ttl_ms:0` bırakır. 423 ACİL DUR · 403 `hold_local_only` (telefon) · 409 `joint_limit`/`busy` · 501 `jog_unsupported` (arka uç bilmiyor). Klavye jog (`Esc` = ACİL DUR dahil) bunu kullanır | VAR |
-| `POST /api/sim/speed` | `{speed_pct}` (1–100) → `{ok, speed_pct}`; robotun genel hızı. Yalnız SİM | SİM |
+| `POST /api/sim/speed` | `{speed_pct?}` (1–100) → `{ok, speed_pct}`; robotun genel hızı. Yalnız SİM. `{scale}` (0,05–1,00; hız tavanı ölçeği, varsayılan profil `max_velocity_scale`) → `{ok, speed_pct, scale}`; aralık dışı **400** (sessizce kırpılmaz), ACİL DUR **423**, gerçek/tezgâh/sahte **409** `sim_only`; bir SONRAKİ komutta geçerli (P1d) | SİM |
+| `GET /api/speed/limits` | `?speed_pct=` (1–100, yoksa robotun genel hızı) → `{ok, robot, mode, scale, scale_default, scale_min, scale_max, scale_locked, speed_pct, joints:[{name, limit_rad_s, limit_deg_s, effective_rad_s, effective_deg_s}], limiting_joint, example_move:{joint, deg, duration_s}}`. Etkin = limit × ölçek × %. SİM dışında `scale_locked:true`, `locked_reason`, `joints:[]`. Arayüz hesap yapmaz, yalnız gösterir (P1d) | VAR |
 | `POST /api/sim/reset` | `{}` → home'a döner. Yalnız SİM'de; başka modda **409** `not_sim`; ACİL DUR'da **423** | SİM |
 | `POST /api/jog`, `/api/jog` (GET), `/api/frames*`, `/api/model` | mevcut jog uçları | VAR (korunur) |
 

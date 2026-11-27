@@ -16,7 +16,8 @@ python -m control_hub --sim --check-config                            # SİM'i a
 | `POST /api/move/check` | Aynı doğrulama, **hareket etmez** → `{ok, violations:[{kind,at_pct,message}]}` |
 | `POST /api/move/stop` · `pause` · `resume` | Duraklat/devam; e-stop kilitliyse 423 |
 | `GET /api/move/{job_id}` | İş durumu |
-| `POST /api/sim/speed` | `{speed_pct}` 1–100 |
+| `POST /api/sim/speed` | `{speed_pct?, scale?}`: % 1–100; `scale` = hız tavanı ölçeği 0,05–1,00 (varsayılan profilin `max_velocity_scale`, karma_robot 0,3). Aralık dışı **400** (kırpılmaz), ACİL DUR **423**, SİM dışı **409 `sim_only`** (P1d) |
+| `GET /api/speed/limits[?speed_pct=]` | `{robot, mode, scale, scale_locked, speed_pct, joints:[{name, limit_rad_s, limit_deg_s, effective_rad_s, effective_deg_s}], limiting_joint, example_move}` — SUNUCU hesaplar (P1d) |
 | `POST /api/sim/reset` | Başlangıç duruşu; e-stop kilitliyse 423 |
 
 Hata gövdesi `{ok:false,error,message,at_pct?}`. Kodlar: `joint_limit`, `outside_safe_zone`, `path_blocked`,
@@ -40,5 +41,11 @@ Gerçek eklem açıları (`rad/deg/min_deg/max_deg/near_limit` — aralığın %
   TCP'sinden yana ±90 mm, plaka üstü z = 90 mm, kutu içi): Sabit → `unreachable`, Serbest → geçer ve TCP hedefe varır
   (robot yönelimi kendi seçer, alet yüzeye dik olmayabilir). Görüntüler: `docs/screenshots/orient_*.png`.
 * Yolda eklem sıçraması (> 0,35 rad) **409 `path_blocked`**; eklem-uzayı hareketine OTOMATİK düşülmez.
-* Hız: `speed_pct` x profil `max_velocity_scale` (karma_robot 0,3) x eklem hız sınırı; yüzde TEK kez uygulanır.
+* Hız: `speed_pct` x tavan ölçeği (`max_velocity_scale`, karma_robot 0,3) x eklem hız sınırı; yüzde TEK kez uygulanır.
+  Etkin üst hız = **profil limiti × tavan ölçeği × hız %** (rad/s ve °/s). Tavan ölçeği YALNIZ SİM'de, 0,05–1,00
+  aralığında ayarlanır (`POST /api/sim/speed {scale}`); profil limiti hiçbir koşulda aşılmaz. Değişiklik bir SONRAKİ
+  komutta geçerli, çalışan iş eski planıyla biter; jog tavanı her tikte canlı okunur. Eklem hareketinde (senkron profil)
+  tüm eklemler AYNI anda varır: **T = max(|Δq|/(v·ölçek·%)) / (1−rampa)**, kısa hareketlerde ivme sınırı uzatır
+  (`duration_for`); jog'da adım en kısıtlı eklemin limitine göre ORANTILI küçülür (yön korunur).
+  Ölçüm (J2, 6°, %100; gerçek SİM): ölçek 1,0 → tablo tahmini 2,36 sn / ölçülen 2,41 sn; ölçek 0,3 → 5,82 / 5,90 sn.
   En yavaş eklem J2 (profilde 0,08 rad/s, tahmini) süreyi belirler: 11,2° ~ 10,8 s (%100), ~18 s (%60).
