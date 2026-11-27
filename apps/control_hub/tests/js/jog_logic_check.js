@@ -86,7 +86,7 @@ assert.strictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [0.5, 0, 0.1
 assert.strictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [NaN, 0, 0.1] }, Z, 0.1), null);
 assert.strictEqual(L.pickToTarget({ objectId: 'jog:plane', point_m: [0.1, 0, 0.1] }, null, 0.1), null);
 assert.strictEqual(L.orientationFor('sim'), 'free'); assert.strictEqual(L.orientationFor('real'), 'fixed'); assert.strictEqual(L.orientationFor('bench'), 'fixed');
-assert.deepStrictEqual(L.linearBody([0.1, 0, 0.1], 500, 'sim'), { type: 'linear', pos_m: [0.1, 0, 0.1], orientation: 'free', speed_pct: 100 });
+assert.deepStrictEqual(L.linearBody([0.1, 0, 0.1], 500, 'sim'), { type: 'linear', pos_m: [0.1, 0, 0.1], orientation: 'free', speed_pct: 500 });
 assert.strictEqual(L.linearBody([0, 0, 0], 50, 'real').orientation, 'fixed'); assert.ok(!('rpy_deg' in L.linearBody([0, 0, 0], 50, 'sim')));
 const okS = { me: { can_control: true }, estop: { latched: false }, robot: { safe_zone: Z } };
 assert.strictEqual(L.targetDisabledReason(okS), null);
@@ -103,8 +103,8 @@ assert.strictEqual(L.sliderState(0, 5, 5).out, true);                       // m
 assert.strictEqual(L.stepTarget(10, -1, 0.1), 9.9);
 assert.deepStrictEqual(L.holdTwist(2, -1, 100), [0, 0, -0.02, 0, 0, 0]);
 assert.deepStrictEqual(L.holdTwist(3, 1, 50), [0, 0, 0, 0.05, 0, 0]);
-assert.strictEqual(L.clampPct(0), 1); assert.strictEqual(L.clampPct(500), 100); assert.strictEqual(L.clampPct('x'), 50);
-assert.deepStrictEqual(L.moveBody([1.00049, 2], 200), { type: 'joint', joints_deg: [1, 2], speed_pct: 100 });
+assert.strictEqual(L.clampPct(0), 0.1); assert.strictEqual(L.clampPct(500), 500); assert.strictEqual(L.clampPct('x'), 50);
+assert.deepStrictEqual(L.moveBody([1.00049, 2], 200), { type: 'joint', joints_deg: [1, 2], speed_pct: 200 });
 assert.strictEqual(L.checkVerdict({ ok: true, violations: [] }).ok, true);
 const bad = L.checkVerdict({ ok: false, violations: [{ kind: 'joint_limit', at_pct: 40, message: 'sınır' }] });
 assert.ok(!bad.ok && bad.text.includes('sınır') && bad.text.includes('%40'));
@@ -216,16 +216,27 @@ const flush = () => new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(calls.map((c) => c.url), ['/api/jog', '/api/jog/joint']);
   assert.ok(calls.every((c) => c.body.ttl_ms === 0));
   // P1d: hassas hız — 0,1 hassasiyet, kıstırma, düğme adımları, tavan ölçeği doğrulaması, tablo biçimi (hesap sunucuda)
-  assert.strictEqual(L.clampPct(49.96), 50); assert.strictEqual(L.clampPct(12.34), 12.3); assert.strictEqual(L.clampPct(0), 1);
-  assert.strictEqual(L.clampPct(250), 100); assert.strictEqual(L.clampPct('abc'), 50);
-  assert.strictEqual(L.speedNudge(50.1, 1), 51.1); assert.strictEqual(L.speedNudge(99, 5), 100); assert.strictEqual(L.speedNudge(2, -5), 1);
+  assert.strictEqual(L.clampPct(49.96), 50); assert.strictEqual(L.clampPct(12.34), 12.3); assert.strictEqual(L.clampPct(0), 0.1);
+  assert.strictEqual(L.clampPct(250), 250); assert.strictEqual(L.clampPct(1e9), 100000); assert.strictEqual(L.clampPct('abc'), 50);
+  assert.strictEqual(L.speedNudge(50.1, 1), 51.1); assert.strictEqual(L.speedNudge(99, 5), 104); assert.strictEqual(L.speedNudge(2, -5), 0.1);
   assert.strictEqual(L.speedNudge(0.1 + 49.9, -0.1), 49.9);
   assert.strictEqual(L.speedLimitsUrl(33.33), '/api/speed/limits?speed_pct=33.3');
   assert.deepStrictEqual(L.holdTwist(0, 1, 12.5), [0.0025, 0, 0, 0, 0, 0]);                  // kesirli % jog'a da geçer
   assert.strictEqual(L.moveBody([1], 12.5).speed_pct, 12.5);
-  for (const ok of [0.05, '0,3', 1, ' 0.5 ']) assert.strictEqual(L.scaleCheck(ok).ok, true, String(ok));
-  assert.strictEqual(L.scaleCheck('0,3').value, 0.3);
-  for (const bad of [1.01, 0.04, 0, -1, '', 'x', null, undefined, NaN]) assert.strictEqual(L.scaleCheck(bad).ok, false, String(bad));
+  // P1e: SİM'de sınırsız — tek sınır sonlu, > 0, ölçek <= 1000, % <= 100000 (gerçek/tezgâh: % <= 100)
+  for (const ok of [0.05, '0,3', 1, ' 0.5 ', 1.01, 4, 1000, '0,0001']) assert.strictEqual(L.scaleCheck(ok).ok, true, String(ok));
+  assert.strictEqual(L.scaleCheck('0,3').value, 0.3); assert.strictEqual(L.scaleCheck(1000).value, 1000);
+  for (const bad of [1000.01, 0, -1, '', 'x', null, undefined, NaN, Infinity, 0.00001]) assert.strictEqual(L.scaleCheck(bad).ok, false, String(bad));
+  assert.ok(L.scaleCheck(0, 'İvme ölçeği').text.startsWith('İvme ölçeği'));
+  for (const ok of [400, '400', '1234,5', 0.1, 100000]) assert.strictEqual(L.pctCheck(ok, false).ok, true, String(ok));
+  assert.strictEqual(L.pctCheck('400', false).value, 400); assert.strictEqual(L.pctCheck('0,25', false).value, 0.3);
+  for (const bad of [0, -5, 100001, '', 'x', null, NaN, Infinity, 0.04]) assert.strictEqual(L.pctCheck(bad, false).ok, false, String(bad));
+  for (const bad of [100.1, 400]) assert.strictEqual(L.pctCheck(bad, true).ok, false, `kilitli ${bad}`);
+  assert.strictEqual(L.pctCheck(100, true).ok, true);
+  assert.deepStrictEqual(L.holdTwist(0, 1, 400), [0.08, 0, 0, 0, 0, 0]);                       // sınırsız: 4× jog hızı
+  assert.deepStrictEqual(L.holdTwist(0, 1, 100000), [1, 0, 0, 0, 0, 0]);                        // sunucu |bileşen| <= 1 ister: kıstırılır
+  assert.deepStrictEqual(L.holdTwist(3, -1, 100000), [0, 0, 0, -1, 0, 0]);
+  assert.deepStrictEqual(L.holdBody(1, -1, 400), { twist: [0, -0.08, 0, 0, 0, 0], speed_pct: 400 });
   const doc = { scale_locked: false, scale: 0.3, limiting_joint: 'joint_2', example_move: { joint: 'joint_2', deg: 6, duration_s: 2.36 },
     joints: [{ name: 'joint_1', limit_rad_s: 0.3, limit_deg_s: 17.19, effective_rad_s: 0.045, effective_deg_s: 2.58 },
              { name: 'joint_2', limit_rad_s: 0.08, limit_deg_s: 4.58, effective_rad_s: 0.012, effective_deg_s: 0.69 }] };
@@ -234,6 +245,18 @@ const flush = () => new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(v.rows[1].limit, ['0,080', '4,6']); assert.deepStrictEqual(v.rows[1].eff, ['0,012', '0,7']);
   assert.strictEqual(v.note, 'Eklem hareketlerinde en yavaş eklem belirleyici');
   assert.strictEqual(v.example, '6° J2 hareketi tahmini 2,4 sn'); assert.strictEqual(v.locked, false); assert.strictEqual(v.scale, 0.3);
+  assert.strictEqual(v.over, false); assert.ok(v.rows.every((r) => r.over === false)); assert.strictEqual(v.rows[1].acc, '—');
+  // P1e: ivme sütunu, aşan satır, iki örnek hareket
+  const doc2 = { scale_locked: false, scale: 1, accel_scale: 1, accel_linked: true, above_profile: true, over_speed: true, over_accel: true,
+    limiting_joint: 'joint_2', example_moves: [{ joint: 'joint_2', deg: 6, duration_s: 1.18 }, { joint: 'joint_2', deg: 15, duration_s: 1.87 }],
+    joints: [{ name: 'joint_2', limit_rad_s: 0.08, limit_deg_s: 4.58, effective_rad_s: 0.32, effective_deg_s: 18.33, accel_effective_rad_s2: 0.4,
+      over_speed: true, over_accel: true }] };
+  v = L.speedView(doc2);
+  assert.strictEqual(v.over, true); assert.strictEqual(v.overWhat, 'hız ve ivme'); assert.strictEqual(v.accelLinked, true); assert.strictEqual(v.accelScale, 1);
+  assert.strictEqual(v.rows[0].over, true); assert.strictEqual(v.rows[0].acc, '0,400');
+  assert.strictEqual(v.example, '6° J2 hareketi tahmini 1,2 sn · 15° J2 hareketi tahmini 1,9 sn');
+  assert.strictEqual(L.speedView({ ...doc2, over_accel: false, accel_linked: false }).overWhat, 'hız');
+  assert.strictEqual(L.OVER_TEXT, 'SİM: hız profil sınırının ÜSTÜNDE (varsayımsal)');
   v = L.speedView({ scale_locked: true, scale: null, locked_reason: 'neden', joints: [] });
   assert.strictEqual(v.locked, true); assert.strictEqual(v.rows.length, 0); assert.strictEqual(v.note, ''); assert.strictEqual(v.reason, 'neden');
   assert.strictEqual(L.speedView(null).rows.length, 0);

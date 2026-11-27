@@ -328,7 +328,7 @@ def test_profile_resolution_default_and_errors(monkeypatch, tmp_path):
 def test_parse_move_defaults_and_speed_validation():
     assert parse_move({'type': 'joint', 'joints_deg': [1]}, 40) == ('joint', ([1],), 40.0)
     assert parse_move({'type': 'linear', 'pos_m': [1, 2, 3]}, 40)[1] == ([1, 2, 3], None, 'fixed')
-    for bad in ({'type': 'tool', 'open_pct': -1}, {'type': 'joint', 'speed_pct': 101}):
+    for bad in ({'type': 'tool', 'open_pct': -1}, {'type': 'joint', 'speed_pct': 100001}):
         with pytest.raises(PlanError):
             parse_move(bad, 40)
 
@@ -394,7 +394,7 @@ def test_http_sim_reset_and_speed(api):
     assert joints_deg(sim) == [pytest.approx(math.degrees(v), abs=0.1) for v in sim.home_q]
     assert c.post('/api/sim/speed', json={'speed_pct': 80}).json() == {'ok': True, 'speed_pct': 80}
     assert c.get('/api/state').json()['robot']['speed_pct'] == 80
-    for bad in (0, 101, 'x', None, True):
+    for bad in (0, -5, 100001, 'x', None, True):
         assert c.post('/api/sim/speed', json={'speed_pct': bad}).status_code == 400
 
 

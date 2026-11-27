@@ -134,8 +134,9 @@ class SimControl(Protocol):
     def speed_limits(self, pct: Any = None) -> Reply:
         """GET /api/speed/limits: eklem hız limitleri, etkin üst hızlar, tavan ölçeği (sunucu hesaplar)."""
 
-    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
-        """Hız tavanı ölçeği (+ isteğe bağlı ``pct``). Yalnız SİM; gerçek/tezgâhta 409 ``sim_only``."""
+    def set_speed_scale(self, pct: Any, scale: Any, accel_scale: Any = None,
+                        accel_linked: Any = None) -> Reply:
+        """Hız/ivme tavanı ölçeği (+ isteğe bağlı ``pct``). Yalnız SİM; gerçek/tezgâhta 409 ``sim_only``."""
 
 
 # --- Varsayılanlar: "bu aileyi bilmiyorum" cevabı, eski rota cevabıyla BAYT BAYT aynı ---------------------
@@ -207,14 +208,17 @@ class NoSim:
     def speed_limits(self, pct: Any = None) -> Reply:
         """Gerçek/tezgâh/sahte: tavan robottadır, Hub değiştirmez (``scale_locked``). Eklem tablosu bu arka
         uçlarda yok (Robot API hız limitini sunmuyor): ``joints`` boş."""
+        if pct is not None and not (isinstance(pct, (int, float)) and 1 <= pct <= 100):
+            return _refusal(400, 'bad_request', 'speed_pct 1–100 olmalı')       # gerçek mod: eski sınır
         snap = self.snapshot() or {}                    # type: ignore[attr-defined]
         return 200, {'ok': True, 'robot': snap.get('name'), 'mode': snap.get('mode'), 'scale': None,
                      'scale_locked': True, 'speed_pct': snap.get('speed_pct'),
                      'locked_reason': 'Tavan robotun profilinden gelir; yalnız SİM kipinde ayarlanır',
                      'joints': [], 'limiting_joint': None}
 
-    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
-        return _refusal(409, 'sim_only', 'Hız tavanı ölçeği yalnız SİM kipinde ayarlanır')
+    def set_speed_scale(self, pct: Any, scale: Any, accel_scale: Any = None,
+                        accel_linked: Any = None) -> Reply:
+        return _refusal(409, 'sim_only', 'Hız/ivme tavanı ölçeği yalnız SİM kipinde ayarlanır')
 
 
 def supports_move(backend: Any) -> bool:

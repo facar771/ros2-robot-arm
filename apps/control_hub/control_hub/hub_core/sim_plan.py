@@ -3,8 +3,9 @@
 * Eklem hareketi: ``q0 -> q1`` doğrusu, **senkron trapez** zaman profili (her eklem aynı skaler ``s(t)``).
 * Doğrusal hareket: TCP konumu doğru, yönelim slerp; her örnek için sayısal ters kinematik (DLS).
 * Doğrulama ``robot_core`` kurallarıyla: eklem limiti, güvenli kutu (``safezone``), yol (``pathcheck``).
-  Hız tavanı (``max_velocity_scale``) burada zorlanır (UI_CONTRACT §9-B); gerçek modda Hub onu gevşetmez,
-yalnız SİM tavanı ``check_scale`` aralığında (0,05–1,0) ayarlayabilir (P1d).
+  Hız tavanı (``max_velocity_scale``) burada zorlanır (UI_CONTRACT §9-B); gerçek modda Hub onu gevşetmez.
+SİM'de (P1e) hız % ve hız/ivme ölçeği SINIRSIZDIR; tek sınır ``check_pct`` / ``check_scale``: sayı sonlu, > 0,
+hız % <= ``PCT_MAX``, ölçek <= ``SCALE_MAX``. Konum limitleri (eklem, güvenli kutu) yine zorlanır.
 
 Hata türleri (``Violation.kind`` = ``PlanError.kind``): ``outside_safe_zone | joint_limit | path_blocked |
 unreachable | bad_request``. ``at_pct``: hareketin kaçta kaçında (0-100) sorun görüldü.
@@ -27,7 +28,10 @@ from robot_core.se3 import (
     rotvec_from_matrix,
 )
 
-SCALE_MIN, SCALE_MAX = 0.05, 1.0   # "hız tavanı ölçeği" aralığı (yalnız SİM ayarlar; P1d)
+SCALE_MAX = 1000.0               # SİM "hız/ivme tavanı ölçeği" üst sınırı (alt sınır: > 0); gerçek mod <= 1,0
+PCT_MAX = 100000.0               # SİM hız % üst sınırı (alt sınır: > 0)
+REAL_SCALE_MAX = 1.0             # gerçek/tezgâh: tavan ölçeği profil limitini aşamaz (sunucu 409 sim_only)
+EXAMPLE_MOVES_DEG = (6.0, 15.0)   # hız tablosundaki örnekler (ilki kartta yazılı; 15° kabul ölçümü)
 EXAMPLE_MOVE_DEG = 6.0           # hız tablosundaki örnek: en yavaş eklem bu kadar döner, süre tahmini yazılır
 RAMP = 0.25                      # trapezin ivmelenme/yavaşlama payı (toplam sürenin her ucunda)
 MIN_DURATION_S = 0.2
@@ -88,12 +92,14 @@ def trapezoid(tau: float, ramp: float = RAMP) -> float:
 
 
 def duration_for(delta: np.ndarray, vmax: np.ndarray, amax: np.ndarray, scale: float,
-                 ramp: float = RAMP) -> float:
-    """Senkron trapez için en kısa süre: her eklem ``scale``·vmax hızını ve ``scale``·amax ivmesini aşmaz.
-    Tepe hız ``|d| / (T (1-ramp))``, tepe ivme ``|d| / (T² ramp (1-ramp))``."""
+                 ramp: float = RAMP, accel_scale: Optional[float] = None) -> float:
+    """Senkron trapez için en kısa süre: her eklem ``scale``·vmax hızını ve ``accel_scale``·amax ivmesini
+    aşmaz (``accel_scale`` yoksa ``scale``). Tepe hız ``|d| / (T (1-ramp))``, tepe ivme
+    ``|d| / (T² ramp (1-ramp))``."""
     d = np.abs(np.asarray(delta, float))
+    ka = scale if accel_scale is None else accel_scale
     t_v = float(np.max(d / (np.asarray(vmax) * scale))) / (1.0 - ramp)
-    t_a = math.sqrt(float(np.max(d / (np.asarray(amax) * scale))) / (ramp * (1.0 - ramp)))
+    t_a = math.sqrt(float(np.max(d / (np.asarray(amax) * ka))) / (ramp * (1.0 - ramp)))
     return max(MIN_DURATION_S, t_v, t_a)
 
 
@@ -108,6 +114,7 @@ class SimModel:
     vmax: np.ndarray
     amax: np.ndarray
     velocity_cap: float          # profil `max_velocity_scale`: %100 hız = bu oran (SİM'de ayarlanabilir, P1d)
+    accel_cap: Optional[float] = None   # ivme tavanı ölçeği (SİM, P1e); None = hız ölçeğiyle birlikte
 
     @classmethod
     def from_profile(cls, profile: Profile) -> 'SimModel':
@@ -121,9 +128,18 @@ class SimModel:
         return self.chain.dof
 
     def scale_for(self, speed_pct: float) -> float:
-        """%1-100 -> fiili ölçek. %100 = profilin izin verdiği en yüksek hız (``velocity_cap``)."""
-        pct = min(100.0, max(1.0, float(speed_pct)))
-        return pct / 100.0 * self.velocity_cap
+        """Hız % -> fiili ölçek = % / 100 × ``velocity_cap`` (%100 = profil limiti × tavan ölçeği).
+        Kıstırma YOK: sınır denetimi ``check_pct`` işidir (sunucu girişte 400 verir)."""
+        return float(speed_pct) / 100.0 * self.velocity_cap
+
+    @property
+    def accel_linked(self) -> bool:
+        return self.accel_cap is None
+
+    def accel_scale_for(self, speed_pct: float) -> float:
+        """Hız % -> ivme ölçeği = % / 100 × ivme tavanı (bağlıysa hız tavanı)."""
+        cap = self.velocity_cap if self.accel_cap is None else self.accel_cap
+        return float(speed_pct) / 100.0 * cap
 
     def tcp(self, q: Sequence[float]) -> np.ndarray:
         return self.chain.fk(q)
@@ -135,34 +151,56 @@ class SimModel:
         return [bool(a) for a in ((q - self.lower) <= margin) | ((self.upper - q) <= margin)]
 
 
-def check_scale(value: object) -> Optional[str]:
-    """Hız tavanı ölçeği geçerli mi? Geçersizse Türkçe neden, geçerliyse ``None`` (sessizce kırpılmaz)."""
+def _check_positive(value: object, name: str, top: float) -> Optional[str]:
+    """TEK sınır (P1e): sayı (bool değil), sonlu, > 0, <= ``top``; sessizce kırpılmaz."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return 'scale sayı olmalı'
-    if not SCALE_MIN <= value <= SCALE_MAX:
-        return f'scale {SCALE_MIN:g} ile {SCALE_MAX:g} arasında olmalı (profil hız limitini aşamaz)'
+        return f'{name} sonlu bir sayı olmalı'
+    if not 0 < value <= top:
+        return f'{name} 0 ile {top:g} arasında olmalı (0 hariç)'
     return None
+
+
+def check_scale(value: object, top: float = SCALE_MAX) -> Optional[str]:
+    """Hız/ivme tavanı ölçeği geçerli mi? Geçersizse Türkçe neden, geçerliyse ``None``."""
+    return _check_positive(value, 'scale', top)
+
+
+def check_pct(value: object, top: float = PCT_MAX) -> Optional[str]:
+    """Hız % geçerli mi (SİM: <= ``PCT_MAX``; gerçek mod 100)?"""
+    return _check_positive(value, 'speed_pct', top)
 
 
 def speed_limits_doc(model: SimModel, speed_pct: float, *, default_scale: float) -> dict:
     """GET /api/speed/limits gövdesinin hesaplanan kısmı (arayüz hesap yapmaz, yalnız gösterir).
 
-    Etkin üst hız = profil limiti × tavan ölçeği × hız %. Eklem hareketinde (senkron profil) tüm eklemler
-    AYNI anda varır; süreyi en yavaş eklem belirler. ``example_move``: en yavaş eklem 6° dönerken
-    ``duration_for`` süresi (ivme sınırı dahil), kabul ölçümü bununla karşılaştırılır."""
-    k = model.scale_for(speed_pct)
+    Etkin üst hız = profil limiti × tavan ölçeği × hız %; etkin ivme = profil ivmesi × ivme ölçeği × hız %.
+    Eklem hareketinde (senkron profil) tüm eklemler AYNI anda varır; süreyi en yavaş eklem
+    belirler. ``example_move``: en yavaş eklem 6° dönerken ``duration_for`` süresi (ivme dahil).
+    ``over_speed`` / ``over_accel``: etkin değer profil limitini AŞIYOR (varsayımsal; yalnız SİM);
+    ``above_profile``: ikisinden biri."""
+    k, ka = model.scale_for(speed_pct), model.accel_scale_for(speed_pct)
     names = list(model.profile.joint_names)
-    eff = model.vmax * k
+    eff, eff_a = model.vmax * k, model.amax * ka
+    over_v, over_a = k > 1.0 + 1e-9, ka > 1.0 + 1e-9
     rows = [{'name': n, 'limit_rad_s': round(float(v), 4), 'limit_deg_s': round(math.degrees(v), 2),
-             'effective_rad_s': round(float(e), 4), 'effective_deg_s': round(math.degrees(e), 2)}
-            for n, v, e in zip(names, model.vmax, eff)]
+             'effective_rad_s': round(float(e), 4), 'effective_deg_s': round(math.degrees(e), 2),
+             'accel_limit_rad_s2': round(float(a), 4), 'accel_effective_rad_s2': round(float(ea), 4),
+             'over_speed': over_v, 'over_accel': over_a}
+            for n, v, e, a, ea in zip(names, model.vmax, eff, model.amax, eff_a)]
     slow = int(np.argmin(eff))
-    delta = np.zeros(model.dof)
-    delta[slow] = math.radians(EXAMPLE_MOVE_DEG)
-    return {'scale': model.velocity_cap, 'scale_default': float(default_scale), 'scale_min': SCALE_MIN,
-            'scale_max': SCALE_MAX, 'speed_pct': speed_pct, 'joints': rows, 'limiting_joint': names[slow],
-            'example_move': {'joint': names[slow], 'deg': EXAMPLE_MOVE_DEG,
-                             'duration_s': round(duration_for(delta, model.vmax, model.amax, k), 2)}}
+    examples = []
+    for deg in EXAMPLE_MOVES_DEG:                    # en yavaş eklem ``deg`` döner: süre tahmini (ivme dahil)
+        delta = np.zeros(model.dof)
+        delta[slow] = math.radians(deg)
+        t = duration_for(delta, model.vmax, model.amax, k, accel_scale=ka)
+        examples.append({'joint': names[slow], 'deg': deg, 'duration_s': round(t, 2)})
+    cap_a = model.velocity_cap if model.accel_cap is None else model.accel_cap
+    return {'scale': model.velocity_cap, 'scale_default': float(default_scale), 'scale_min': 0.0,
+            'scale_max': SCALE_MAX, 'pct_max': PCT_MAX, 'accel_scale': cap_a,
+            'accel_linked': model.accel_linked, 'speed_pct': speed_pct,
+            'over_speed': over_v, 'over_accel': over_a, 'above_profile': over_v or over_a,
+            'joints': rows, 'limiting_joint': names[slow],
+            'example_move': examples[0], 'example_moves': examples}
 
 
 def _finite(vec: Sequence[float], n: int, what: str) -> np.ndarray:
@@ -207,7 +245,8 @@ def plan_joint(model: SimModel, q0: Sequence[float], joints_deg: Sequence[float]
     path = np.vstack([q0, q1])
     _check_path(model, path)
     scale = model.scale_for(speed_pct)
-    return Plan('joint', path, duration_for(q1 - q0, model.vmax, model.amax, scale), scale)
+    ka = model.accel_scale_for(speed_pct)
+    return Plan('joint', path, duration_for(q1 - q0, model.vmax, model.amax, scale, accel_scale=ka), scale)
 
 
 # ---- ters kinematik ----------------------------------------------------------------------------
@@ -310,7 +349,8 @@ def plan_linear(model: SimModel, q0: Sequence[float], pos_m: Sequence[float],
     lin = float(np.linalg.norm(pos - start[:3, 3]))
     ang = 0.0 if free else float(np.linalg.norm(rotvec_from_matrix(start[:3, :3].T @ rot)))
     variation = np.sum(np.abs(np.diff(path, axis=0)), axis=0)
-    t_joint = duration_for(variation, model.vmax, model.amax, scale)
+    t_joint = duration_for(variation, model.vmax, model.amax, scale,
+                           accel_scale=model.accel_scale_for(speed_pct))
     t_tcp = max(lin / (LINEAR_SPEED_M_S * scale), ang / (ANGULAR_SPEED_RAD_S * scale)) / (1.0 - RAMP)
     return Plan('linear', path, max(t_joint, t_tcp, MIN_DURATION_S), scale)
 

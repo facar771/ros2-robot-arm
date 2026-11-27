@@ -119,7 +119,7 @@ window.JogPanel = (() => {
   const axisBtn = (i, sign) => {
     const b = el('button', { class: 'jp-b', type: 'button', 'data-axis': String(i), 'data-sign': String(sign),
                              text: sign < 0 ? '−' : '+', 'aria-label': `${L.AXES[i][0]} ${sign < 0 ? 'eksi' : 'artı'}` });
-    bindHoldButton(b, () => cartStep(i, sign), () => startHold({ url: '/api/jog', body: { twist: L.holdTwist(i, sign, J.speed) } }));
+    bindHoldButton(b, () => cartStep(i, sign), () => startHold({ url: '/api/jog', body: L.holdBody(i, sign, J.speed) }));
     return b;
   };
   function jointButton(i, sign, text) {
@@ -225,8 +225,15 @@ window.JogPanel = (() => {
       (jg.messages && jg.messages.length ? ` · ${jg.messages.join('; ')}` : '') : (r.state ? `Robot: ${r.state}` : '');
     apply();
   }
+  /* Hız tek kaynağı (P1e): kaydırıcı 1–100'ü gösterir (uca yaslanır), değer ise 100'ün üstüne çıkabilir (SİM). */
+  function setSpeed(v) {
+    J.speed = L.clampPct(v);
+    const sl = q('jp-speed'), out = q('jp-speed-v');
+    if (sl) { sl.step = '0.1'; sl.value = String(Math.min(L.SPEED_MAX, J.speed)); }
+    if (out) out.textContent = `%${J.speed}`;
+  }
   function setFrame(name) { J.frame = name; const sel = q('jg-frame'); if (sel) sel.value = name; }
   const tcp = () => (J.snap && J.snap.robot && J.snap.robot.tcp) || null;
   return { mount, onState, explain: L.explain, release, refreshFrames, setFrame, tcp, frame: () => J.frame,
-           goJoints, setGripper, stopMotion, jointButton, say, speed: () => J.speed, stopHold };
+           goJoints, setGripper, stopMotion, jointButton, say, speed: () => J.speed, setSpeed, stopHold };
 })();

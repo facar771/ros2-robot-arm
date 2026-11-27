@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from control_hub.hub_core import AccessControl, FakeBackend, Hub, load_scenarios, load_ui_config
 from control_hub.hub_core.sim_backend import SimBackend, SimClock
-from control_hub.hub_core.sim_plan import RAMP, SCALE_MAX, SCALE_MIN, plan_joint
+from control_hub.hub_core.sim_plan import RAMP, SCALE_MAX, plan_joint
 from control_hub.server import create_app
 from tests.conftest import CONFIG
 
@@ -64,17 +64,17 @@ def test_effective_speed_tracks_pct_and_scale(sim_api):
     assert d['example_move']['joint'] == 'joint_2' and d['example_move']['deg'] == 6.0
 
 
-@pytest.mark.parametrize('scale', [SCALE_MIN, SCALE_MAX, 0.3, 0.5])
-def test_scale_ends_are_accepted_and_never_exceed_the_profile_limit(sim_api, scale):
+@pytest.mark.parametrize('scale', [0.001, 0.05, 0.3, 0.5, 1.0])
+def test_scale_up_to_one_is_accepted_and_stays_within_the_profile_limit(sim_api, scale):
     client, _, _ = sim_api
     r = client.post('/api/sim/speed', json={'speed_pct': 100, 'scale': scale})
     assert r.status_code == 200 and r.json()['scale'] == scale
     d = limits(client)
-    assert d['scale'] == scale
+    assert d['scale'] == scale and d['above_profile'] is False
     assert all(j['effective_rad_s'] <= j['limit_rad_s'] + 1e-9 for j in d['joints'])
 
 
-@pytest.mark.parametrize('scale', [1.01, 2, 0.049, 0, -0.3, 'x', None, True])
+@pytest.mark.parametrize('scale', [SCALE_MAX + 0.1, 0, -0.3, 'x', None, True])
 def test_out_of_range_scale_is_rejected_not_clipped(sim_api, scale):
     client, _, _ = sim_api
     r = client.post('/api/sim/speed', json={'speed_pct': 80, 'scale': scale})
@@ -85,14 +85,14 @@ def test_out_of_range_scale_is_rejected_not_clipped(sim_api, scale):
 
 def test_invalid_pct_with_valid_scale_changes_nothing(sim_api):
     client, _, _ = sim_api
-    assert client.post('/api/sim/speed', json={'speed_pct': 500, 'scale': 0.8}).status_code == 400
+    assert client.post('/api/sim/speed', json={'speed_pct': 100001, 'scale': 0.8}).status_code == 400
     assert limits(client)['scale'] == pytest.approx(0.3)
 
 
 def test_scale_alone_keeps_the_percent_and_pct_alone_keeps_the_old_behaviour(sim_api):
     client, _, _ = sim_api
     r = client.post('/api/sim/speed', json={'scale': 0.6})
-    assert r.json() == {'ok': True, 'speed_pct': 50, 'scale': 0.6}
+    assert r.json() == {'ok': True, 'speed_pct': 50, 'scale': 0.6, 'accel_scale': 0.6, 'accel_linked': True}
     assert client.post('/api/sim/speed', json={'speed_pct': 20}).json() == {'ok': True, 'speed_pct': 20}
     assert limits(client)['scale'] == 0.6
 
@@ -176,4 +176,4 @@ def test_card_asks_with_its_own_percent_and_bad_percent_is_400(sim_api):
     assert d['joints'][1]['effective_rad_s'] == pytest.approx(0.08 * 0.3 * 0.2, abs=1e-4)
     assert limits(client)['speed_pct'] == 50                           # robotun genel hızı değişmedi
     assert client.get('/api/speed/limits', params={'speed_pct': 0}).status_code == 400
-    assert client.get('/api/speed/limits', params={'speed_pct': 101}).status_code == 400
+    assert client.get('/api/speed/limits', params={'speed_pct': 100001}).status_code == 400

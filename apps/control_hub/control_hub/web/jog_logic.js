@@ -9,12 +9,13 @@
   const NEAR_FRACTION = 0.05;                 // sunucudaki near_limit ile aynı: aralığın %5'i
   const HOLD_LIN = 0.02, HOLD_ANG = 0.10;     // basılı-tut tavanı (m/s, rad/s); sunucu zaten kırpar
   const BEAT_MS = 100, TTL_MS = 250;          // heartbeat ve sunucu dead-man süresi (≤ 3 sn kuralı çok altında)
-  const SPEED_MIN = 1, SPEED_MAX = 100;
+  const SPEED_MIN = 1, SPEED_MAX = 100;          // kaydırıcı aralığı (gösterim); sayı kutusu bunu aşabilir (P1e)
+  const PCT_MIN = 0.1, PCT_MAX = 100000;         // SİM'de tek sınır: > 0 ve <= 100000 (sunucu aynı kuralı uygular)
   const MODES = { sim: 'SİM', bench: 'TEZGÂH', real: 'GERÇEK' };
 
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
   const finite = (v) => typeof v === 'number' && Number.isFinite(v);
-  const clampPct = (v) => (finite(Number(v)) ? clamp(Math.round(Number(v) * 10) / 10, SPEED_MIN, SPEED_MAX) : 50);   // 0,1 hassasiyet (P1d)
+  const clampPct = (v) => (finite(Number(v)) ? clamp(Math.round(Number(v) * 10) / 10, PCT_MIN, PCT_MAX) : 50);   // 0,1 hassasiyet (P1d), sınırsız (P1e)
 
   /* Kaydırıcı: hedef limit içinde mi, aralığın %5'ine yakın mı, çubuk konumu (0..1). */
   function sliderState(deg, min, max) {
@@ -30,9 +31,11 @@
   /* Basılı-tut: tek eksen için 6'lı twist (hız % ile ölçeklenir). */
   function holdTwist(axis, sign, speedPct) {
     const t = [0, 0, 0, 0, 0, 0];
-    t[axis] = sign * (axis < 3 ? HOLD_LIN : HOLD_ANG) * clampPct(speedPct) / 100;
+    t[axis] = sign * Math.min(1, (axis < 3 ? HOLD_LIN : HOLD_ANG) * clampPct(speedPct) / 100);   // sunucu |bileşen| <= 1 ister
     return t;
   }
+  /* Basılı-tut gövdesi: twist + kartın % ipucu (SİM jog tavanını o hıza göre kurar; gerçek robota gitmez). */
+  const holdBody = (axis, sign, speedPct) => ({ twist: holdTwist(axis, sign, speedPct), speed_pct: clampPct(speedPct) });
 
   const moveBody = (jointsDeg, speedPct) => ({ type: 'joint', joints_deg: jointsDeg.map((v) => Math.round(v * 1e3) / 1e3),
                                                speed_pct: clampPct(speedPct) });
@@ -117,26 +120,40 @@
   /* Tıkla-git kapalı nedeni: genel kapanma nedenleri + güvenli kutu bilinmiyor. */
   const targetDisabledReason = (s) => disabledReason(s) || (zoneOf(s && s.robot) ? null : 'Güvenli kutu bilinmiyor: 3B hedef seçimi kapalı.');
 
-  /* ---- P1d: hassas hız kartı. Hesap SUNUCUDA (GET /api/speed/limits); burada yalnız doğrulama ve biçim. ---- */
-  const SCALE_MIN = 0.05, SCALE_MAX = 1;
+  /* ---- P1d/P1e: hassas hız kartı. Hesap SUNUCUDA (GET /api/speed/limits); burada yalnız doğrulama ve biçim. ----
+   * SİM'de hız % ve ölçekler sınırsız: tek sınır sonlu, > 0, % <= 100000, ölçek <= 1000. Gerçek/tezgâhta (kilitli) % <= 100. */
+  const SCALE_MAX = 1000, LOCKED_PCT_MAX = 100;
   const speedNudge = (cur, delta) => clampPct(Number(cur) + delta);                // 0,1 adıma yuvarlar: 50.1+1 → 51.1
   const speedLimitsUrl = (pct) => `/api/speed/limits?speed_pct=${clampPct(pct)}`;
-  function scaleCheck(raw) {                                                        // sunucu aynı kuralı uygular; burada erken ve açık ret
-    const s = String(raw === undefined || raw === null ? '' : raw).trim().replace(',', '.'), v = s === '' ? NaN : Number(s);
-    if (!finite(v)) return { ok: false, text: 'Ölçek sayı olmalı (0,05–1,00).' };
-    if (v < SCALE_MIN || v > SCALE_MAX) return { ok: false, text: `Ölçek ${SCALE_MIN}–${SCALE_MAX} aralığında olmalı: profil hız limiti aşılamaz.` };
-    return { ok: true, value: Math.round(v * 100) / 100, text: '' };
+  const num = (raw) => { const s = String(raw === undefined || raw === null ? '' : raw).trim().replace(',', '.'); return s === '' ? NaN : Number(s); };
+  function scaleCheck(raw, label) {                                                 // sunucu aynı kuralı uygular; burada erken ve açık ret
+    const v = num(raw), name = label || 'Ölçek';
+    if (!finite(v)) return { ok: false, text: `${name} sayı olmalı.` };
+    if (v <= 0 || v > SCALE_MAX) return { ok: false, text: `${name} 0'dan büyük ve en çok ${SCALE_MAX} olmalı.` };
+    const r = Math.round(v * 1e4) / 1e4;
+    return r > 0 ? { ok: true, value: r, text: '' } : { ok: false, text: `${name} çok küçük (en az 0,0001).` };
+  }
+  function pctCheck(raw, locked) {                                                  // sayı kutusu: sessizce 50'ye düşmez, nedeni söyler
+    const v = num(raw), top = locked ? LOCKED_PCT_MAX : PCT_MAX;
+    if (!finite(v)) return { ok: false, text: 'Hız yüzdesi sayı olmalı.' };
+    if (v < PCT_MIN || v > top) return { ok: false, text: `Hız % ${String(PCT_MIN).replace('.', ',')} ile ${top} arasında olmalı${locked ? ' (gerçek/tezgâh: profil sınırı aşılamaz)' : ''}.` };
+    return { ok: true, value: clampPct(v), text: '' };
   }
   const fix = (v, n) => (finite(v) ? v.toFixed(n).replace('.', ',') : '—');
-  function speedView(doc) {                                                         // tablo satırları: rad/s VE °/s, sınırlayıcı eklem vurgulu
+  function speedView(doc) {                                                         // tablo satırları: rad/s, °/s ve rad/s²; sınırlayıcı eklem vurgulu
     const d = doc || {}, joints = Array.isArray(d.joints) ? d.joints : [];
-    const ex = d.example_move;
+    const ex = (Array.isArray(d.example_moves) && d.example_moves.length ? d.example_moves : (d.example_move ? [d.example_move] : []));
+    const over = d.above_profile === true;
     return { locked: d.scale_locked === true, scale: finite(d.scale) ? d.scale : null, reason: d.locked_reason || '',
-      rows: joints.map((j) => ({ name: j.name.replace('joint_', 'J'), limiting: j.name === d.limiting_joint,
-        limit: [fix(j.limit_rad_s, 3), fix(j.limit_deg_s, 1)], eff: [fix(j.effective_rad_s, 3), fix(j.effective_deg_s, 1)] })),
+      accelScale: finite(d.accel_scale) ? d.accel_scale : null, accelLinked: d.accel_linked !== false, over,
+      overWhat: [d.over_speed ? 'hız' : '', d.over_accel ? 'ivme' : ''].filter(Boolean).join(' ve '),
+      rows: joints.map((j) => ({ name: j.name.replace('joint_', 'J'), limiting: j.name === d.limiting_joint, over: !!(j.over_speed || j.over_accel),
+        limit: [fix(j.limit_rad_s, 3), fix(j.limit_deg_s, 1)], eff: [fix(j.effective_rad_s, 3), fix(j.effective_deg_s, 1)],
+        acc: fix(j.accel_effective_rad_s2, 3) })),
       note: joints.length ? 'Eklem hareketlerinde en yavaş eklem belirleyici' : '',
-      example: ex ? `${ex.deg}° ${String(ex.joint).replace('joint_', 'J')} hareketi tahmini ${fix(ex.duration_s, 1)} sn` : '' };
+      example: ex.map((e) => `${e.deg}° ${String(e.joint).replace('joint_', 'J')} hareketi tahmini ${fix(e.duration_s, 1)} sn`).join(' · ') };
   }
+  const OVER_TEXT = 'SİM: hız profil sınırının ÜSTÜNDE (varsayımsal)';
 
   /* ---- P1c: klavye jog. Saf durum makinesi: olay girer, eylem listesi çıkar (DOM/saat yok; node ile test edilir). ----
    * Kodlar event.code (fiziksel tuş): Türkçe Q klavyede I tuşu "ı" üretir, harf değil konum güvenilirdir.
@@ -199,11 +216,11 @@
     return { state: st, actions: act, handled: true };
   }
 
-  window.JogLogic = { AXES, STEPS, NEAR_FRACTION, HOLD_LIN, HOLD_ANG, BEAT_MS, TTL_MS, SPEED_MIN, SPEED_MAX,
-    clampPct, sliderState, stepTarget, holdTwist, moveBody, checkVerdict, explain, disabledReason, badge, poseRows,
+  window.JogLogic = { AXES, STEPS, NEAR_FRACTION, HOLD_LIN, HOLD_ANG, BEAT_MS, TTL_MS, SPEED_MIN, SPEED_MAX, PCT_MIN, PCT_MAX,
+    clampPct, sliderState, stepTarget, holdTwist, holdBody, moveBody, checkVerdict, explain, disabledReason, badge, poseRows,
     gripperPct, homeDeg, jointsUsable,
     ID_PLANE, ID_TARGET, zoneOf, defaultZ, clampZ, planeSpec, markerSpec, pickToTarget, orientationFor, linearBody, targetDisabledReason,
-    SCALE_MIN, SCALE_MAX, speedNudge, speedLimitsUrl, scaleCheck, speedView, SPEED_KEY_FINE,
+    SCALE_MAX, LOCKED_PCT_MAX, OVER_TEXT, speedNudge, speedLimitsUrl, scaleCheck, pctCheck, speedView, SPEED_KEY_FINE,
     KEY_CART, KEY_ARROW, SPEED_KEY_STEP, keyInit, keyStep, keyHelp, keyMotion, keyJoint, isEditable, connLost };
   if (typeof module !== 'undefined') module.exports = window.JogLogic;
 })();

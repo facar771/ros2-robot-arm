@@ -82,7 +82,8 @@ def test_card_table_percent_controls_keyboard_and_scale(server):
         assert 'lim' in (rows[1].get_attribute('class') or '')                      # J2 sınırlayıcı
         assert 'en yavaş eklem belirleyici' in page.inner_text('#jp-sp-note')
         head = page.inner_text('#jp-sp-table thead')
-        assert head.count('rad/s') == 2 and head.count('°/s') == 2
+        assert head.count('rad/s') == 3 and head.count('°/s') == 2           # P1e: + ivme sütunu
+        assert 'Etkin ivme rad/s²' in head
         # % kutusu 0,1; düğmeler ±1 ve ±5; tek kaynak JogPanel hızı
         page.fill('#jp-sp-num', '12.3')
         page.dispatch_event('#jp-sp-num', 'change')
@@ -101,14 +102,14 @@ def test_card_table_percent_controls_keyboard_and_scale(server):
         assert _speed(page) == 20.3
         page.keyboard.press('ArrowDown')
         assert _speed(page) == 15.3
-        # tavan ölçeği: SİM'de ayarlanır; 1,01 istemcide ve sunucuda reddedilir
-        page.fill('#jp-sc-num', '1.01')
+        # tavan ölçeği: SİM'de ayarlanır; P1e: 1,01 artık kabul, tek sınır 1000 (istemci ve sunucu reddeder)
+        page.fill('#jp-sc-num', '1001')
         page.click('#jp-sc-apply')
-        assert 'aralığında' in page.inner_text('#jp-sc-msg')
+        assert 'en çok 1000' in page.inner_text('#jp-sc-msg')
         assert hub.backend.sm.velocity_cap == pytest.approx(0.3)
         page.fill('#jp-sc-num', '1')
         page.click('#jp-sc-apply')
-        page.wait_for_function('() => /Tavan ölçeği 1/.test(document.getElementById("jp-sc-msg").innerText)')
+        page.wait_for_function('() => /Hız ölçeği 1,/.test(document.getElementById("jp-sc-msg").innerText)')
         assert hub.backend.sm.velocity_cap == 1.0
         page.fill('#jp-sp-num', '100')
         page.dispatch_event('#jp-sp-num', 'change')
