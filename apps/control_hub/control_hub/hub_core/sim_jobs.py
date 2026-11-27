@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
-from control_hub.hub_core.sim_plan import Plan, PlanError
+from control_hub.hub_core.sim_plan import Plan, PlanError, check_pct
 
 MOVE_KEYS = {'joint': {'type', 'joints_deg', 'speed_pct'},
              'linear': {'type', 'pos_m', 'rpy_deg', 'orientation', 'speed_pct'},
@@ -48,8 +48,9 @@ def parse_move(body: Any, default_speed_pct: float) -> Tuple[str, tuple, float]:
     if extra:
         raise PlanError('bad_request', f'bilinmeyen alan: {", ".join(sorted(extra))}')
     speed = body.get('speed_pct', default_speed_pct)
-    if isinstance(speed, bool) or not isinstance(speed, (int, float)) or not 1 <= speed <= 100:
-        raise PlanError('bad_request', 'speed_pct 1-100 arasında bir sayı olmalı')
+    why = check_pct(speed)                     # P1e: SİM'de tek sınır (sonlu, > 0, <= PCT_MAX)
+    if why is not None:
+        raise PlanError('bad_request', why)
     kind = body['type']
     if kind == 'joint':
         return kind, (body.get('joints_deg'),), float(speed)

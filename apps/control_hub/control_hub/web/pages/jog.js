@@ -166,59 +166,27 @@
     f.value = (L.defaultZ(z) * 1000).toFixed(0); f.min = (z.min[2] * 1000).toFixed(0); f.max = (z.max[2] * 1000).toFixed(0);   // varsayılan = güvenli kutu ortası
   }
 
-  /* ---- Hassas hız kartı (P1d): % kaydırıcı + sayı (0,1) + −/+ düğmeleri; tablo ve tavan ölçeği SUNUCUDAN (arayüz hesap yapmaz).
-   * Tek hız kaynağı JogPanel'in gizli #jp-speed kaydırıcısıdır (jog/Git/klavye hepsi onu okur); kart onu sürer. ---- */
-  const SP = { doc: null, seq: 0, timer: null, mode: null };
-  const smsg = (text, bad) => HubPages.say(q('jp-sc-msg'), text, bad);
-  function showSpeed() { const v = JogPanel.speed(); q('jp-sp-range').value = String(v); if (document.activeElement !== q('jp-sp-num')) q('jp-sp-num').value = v.toFixed(1); }
-  function setSpeed(v) {
-    const sl = q('jp-speed'); if (!sl) return;
-    sl.step = '0.1';                                                  // JogPanel kartı geç kurulur: adım 0,1 burada garanti
-    sl.value = String(L.clampPct(v)); sl.dispatchEvent(new Event('input')); showSpeed();
-    clearTimeout(SP.timer); SP.timer = setTimeout(refreshLimits, 200);
+  /* ---- Hassas hız kartı (P1d/P1e): /speed_card.js (K12: bu dosya 400 satırı aşmasın). Mount'ta kurulur. ---- */
+  let SC = null;
+  const showSpeed = () => SC && SC.show();
+  const setSpeed = (v) => SC && SC.setSpeed(v);
+  const refreshLimits = () => SC && SC.refresh();
+
+  /* Üst çubuk rozeti (P1e): "SİM: hız profil sınırının ÜSTÜNDE (varsayımsal)". Bu dosya uygulama açılışında yüklenir (params.js ile
+   * aynı yol): rozet HER sayfada görünür, anlık görüntüden (`robot.speed_over_profile`) beslenir, limit içine dönünce kalkar.
+   * İSTEK S1: ShellLogic.modeInfo bu alanı okursa bu blok kalkar. */
+  function syncOverBadge() {
+    const r = typeof S !== 'undefined' && S.snap && S.snap.robot, on = !!(r && r.speed_over_profile), bar = document.querySelector('.pills');
+    let pill = document.getElementById('pill-over');
+    if (!pill && on && bar) {
+      pill = el('span', { class: 'pill', id: 'pill-over', role: 'status', text: 'SİM: hız profil sınırının ÜSTÜNDE (varsayımsal)' });
+      pill.dataset.state = 'warn';
+      const mode = document.getElementById('pill-mode');
+      bar.insertBefore(pill, mode ? mode.nextSibling : null);
+    }
+    if (pill) pill.hidden = !on;
   }
-  async function refreshLimits() {
-    const my = ++SP.seq;
-    try { const d = await api(L.speedLimitsUrl(JogPanel.speed())); if (my === SP.seq) { SP.doc = d; renderLimits(); } }
-    catch (e) { if (my === SP.seq) { SP.doc = null; renderLimits(); smsg(L.explain(e), true); } }
-  }
-  function renderLimits() {
-    const v = L.speedView(SP.doc), host = q('jp-sp-table');
-    const th = (t) => el('th', { text: t });
-    host.replaceChildren(el('thead', {}, [el('tr', {}, [th('Eklem'), th('Limit rad/s'), th('Limit °/s'), th('Etkin rad/s'), th('Etkin °/s')])]),
-      el('tbody', {}, v.rows.map((r) => el('tr', { class: r.limiting ? 'lim' : '' },
-        [el('th', { text: r.name }), ...[...r.limit, ...r.eff].map((t) => el('td', { text: t }))]))));
-    q('jp-sp-note').textContent = v.note ? `${v.note}${v.example ? ` · ${v.example}` : ''}` : '';
-    const sc = q('jp-sc-num'); if (v.scale !== null && document.activeElement !== sc) sc.value = v.scale.toFixed(2);
-    q('jp-sc-why').textContent = v.locked ? `Kilitli: ${v.reason}` : 'Değişiklik bir SONRAKİ komutta geçerli; çalışan iş değişmez.';
-    applySpeed();
-  }
-  function applySpeed() {
-    const v = L.speedView(SP.doc), off = v.locked || !SP.doc || !!L.disabledReason(P.snap);
-    for (const id of ['jp-sc-num', 'jp-sc-apply']) { const n = q(id); if (n) n.disabled = off; }
-  }
-  async function onScale() {
-    const c = L.scaleCheck(q('jp-sc-num').value);
-    if (!c.ok) return smsg(c.text, true);
-    try { await api('/api/sim/speed', 'POST', { scale: c.value }); smsg(`Tavan ölçeği ${c.value.toFixed(2)}: bir sonraki komutta geçerli.`); await refreshLimits(); }
-    catch (e) { smsg(L.explain(e), true); }
-  }
-  function buildSpeed() {
-    const rng = el('input', { type: 'range', id: 'jp-sp-range', min: '1', max: '100', step: '0.1', 'aria-label': 'Hız yüzdesi' });
-    rng.addEventListener('input', () => setSpeed(rng.value));
-    const num = el('input', { type: 'number', id: 'jp-sp-num', min: '1', max: '100', step: '0.1', inputMode: 'decimal', 'aria-label': 'Hız yüzdesi (sayı)' });
-    num.addEventListener('change', () => setSpeed(num.value));
-    const nb = (d) => { const b = el('button', { class: 'small jp-nb', type: 'button', 'data-delta': String(d), text: `${d > 0 ? '+' : '−'}${Math.abs(d)}`,
-      'aria-label': `Hız ${d > 0 ? 'artır' : 'azalt'} ${Math.abs(d)}` }); b.addEventListener('click', () => setSpeed(L.speedNudge(JogPanel.speed(), d))); return b; };
-    const sc = el('input', { type: 'number', id: 'jp-sc-num', min: String(L.SCALE_MIN), max: String(L.SCALE_MAX), step: '0.05', inputMode: 'decimal', 'aria-label': 'Hız tavanı ölçeği' });
-    const ap = el('button', { class: 'small', id: 'jp-sc-apply', type: 'button', text: 'Uygula' }); ap.addEventListener('click', onScale);
-    return el('div', { class: 'card', id: 'p-speed' }, [el('h2', { text: 'Hız (hassas)' }),
-      el('div', { class: 'jp-sp' }, [nb(-5), nb(-1), rng, nb(1), nb(5), el('label', { class: 'jp-f' }, [num, el('span', { text: '%' })])]),
-      el('div', { class: 'jp-tablewrap' }, [el('table', { class: 'jp-sp-table', id: 'jp-sp-table' })]),
-      el('div', { class: 'say', id: 'jp-sp-note' }),
-      el('div', { class: 'row' }, [el('label', { class: 'jp-f' }, [el('span', { text: 'Hız tavanı ölçeği' }), sc]), ap]),
-      el('div', { class: 'say', id: 'jp-sc-why' }), el('div', { class: 'say jp-msg', id: 'jp-sc-msg', role: 'alert' })]);
-  }
+  setInterval(syncOverBadge, 700);
 
   /* ---- Klavye jog (P1c): kararlar L.keyStep'te (saf); burada yalnız olay bağlama + kalp atışı. Kalp atışı basılı-tut motoruyla
    * aynı: 100 ms, ttl_ms 250, aynı URL/gövde; asıl dead-man sunucuda. Motor (jog.js) dışa açmadığı için kendi kira (lease) kimliği
@@ -251,7 +219,7 @@
   }
   function kbStart(m) {
     JogPanel.stopHold(); kbStop(true);
-    const spec = m.kind === 'cart' ? { url: '/api/jog', body: { twist: L.holdTwist(m.id, m.sign, JogPanel.speed()) } }
+    const spec = m.kind === 'cart' ? { url: '/api/jog', body: L.holdBody(m.id, m.sign, JogPanel.speed()) }
       : { url: '/api/jog/joint', body: { joint: m.id, dir: m.sign, speed_pct: JogPanel.speed() } };
     K.held = { spec, inflight: false }; kbBeat(); K.beat = setInterval(kbBeat, L.BEAT_MS);
   }
@@ -320,7 +288,7 @@
       el('div', { class: 'card', id: 'p-joints' }, [el('h2', { text: 'Eklemler' }), el('div', { id: 'jp-joints', class: 'jp-joints' }),
         el('div', { class: 'row' }, [go, home, sync]), el('div', { class: 'say', id: 'jp-gwhy' }),
         el('div', { class: 'say jp-msg', id: 'jp-gmsg', role: 'alert' })]),
-      buildSpeed(), jogSlot, buildKeys(),
+      SC.build(), jogSlot, buildKeys(),
       el('div', { class: 'card', id: 'p-tool' }, [el('h2', { text: 'Alet (gripper)' }),
         el('div', { class: 'jp-grip' }, [gbtn(100, 'Aç'), grip, gbtn(0, 'Kapat')]),
         el('div', { class: 'jp-vals' }, [el('span', { text: 'Hedef ' }), out('jp-grip-t', '%0'), el('span', { text: ' · Gerçek ' }), out('jp-grip-a')])])];
@@ -338,7 +306,7 @@
   function onState(s) {
     P.snap = s;
     JogPanel.onState(s);
-    if (q('p-speed')) { if (SP.mode !== (s.robot || {}).mode) { SP.mode = (s.robot || {}).mode; refreshLimits(); } else applySpeed(); }
+    if (SC) SC.onState(s);
     kbSyncMode(s.robot); if (L.disabledReason(s) && K.held) kbEvent({ type: 'blur' });
     const r = s.robot || {};
     if (!q('p-pose')) return;
@@ -377,8 +345,9 @@
 
   HubPages.register({
     id: 'jog', title: 'Kontrol', icon: '🕹', order: 20, styles: ['/pages/jog.css'],
-    scripts: ['/sphere.js', '/frames.js', '/jog_logic.js', '/jog.js'],
+    scripts: ['/sphere.js', '/frames.js', '/jog_logic.js', '/jog.js', '/speed_card.js'],
     mount(root) {
+      SC = window.SpeedCard.create(P);
       P.view = el('div', { class: 'jog-view' });
       const side = el('div', { class: 'jog-side' }, buildPanels());
       root.append(el('div', { class: 'page-grid two jog-grid' }, [P.view, side]));

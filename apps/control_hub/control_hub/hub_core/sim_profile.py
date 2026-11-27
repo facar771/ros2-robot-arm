@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
@@ -17,11 +18,20 @@ import numpy as np
 from robot_core.jog import DlsJogEngine, JogConfig
 from robot_core.jogapi import JogApiConfig, JogController
 
-from control_hub.hub_core.sim_plan import SimModel
+from control_hub.hub_core.sim_plan import (
+    PCT_MAX,
+    SCALE_MAX,
+    SimModel,
+    check_pct,
+    check_scale,
+    speed_limits_doc,
+)
 
 Reply = Tuple[int, Dict[str, Any]]
 JOG_SPEED_SCALE = 0.2            # jog hız ölçeği (robot_viz varsayılanı); profil tavanıyla kıstırılır
 LIMIT_EPS = 1e-9
+JOG_STEP_RAD = 0.1               # jogda TEK tikte en büyük eklem adımı (sıçramayı önleyen iç sınır)
+JOG_DT_REF = 0.04                # bu sınır için varsayılan tik aralığı (nominal 0,02 s'nin iki katı)
 BADGE = 'TASLAK PROFİL (SİM)'
 OVERRIDE_NOTE = f'{BADGE}: limitler, güvenli kutu ve hızlar taslaktan; gerçek profil değil'
 
@@ -54,6 +64,7 @@ def build_jog(sim: Any) -> JogController:
     cfg = JogConfig(speed_scale=min(JOG_SPEED_SCALE, sim.sm.velocity_cap))
     engine = DlsJogEngine(sim.sm.chain, sim.profile.safety, cfg)
     api_cfg = JogApiConfig(hold_enabled=True, hold_remote_enabled=False)
+    sim.jog_gain = 1.0                           # yeni denetleyici varsayılan tavanlarla başlar
     return JogController(engine, sim.sm.chain, _Joints(sim), _Sink(sim), sim.estop, sim.frames,
                          spheres=sim.spheres, config=api_cfg, jog_config=cfg, busy=sim._job_running,
                          clock=sim._clock)
@@ -130,3 +141,100 @@ class ProfileOverrideMixin:
             self.override = None
         old.close()
         return 200, {'ok': True, 'override': None, 'rehomed': rehomed, 'noop': False}
+
+
+def jog_gain(sim: Any, pct: float) -> Tuple[float, float]:
+    """``(uygulanan, istenen)`` jog kazancı. İstenen = max(1, %/100) × max(1, tavan ölçeği); uygulanan,
+    tek tikte
+    en hızlı eklemin ``JOG_STEP_RAD``'ı aşmayacağı değerle kıstırılır (sınırsız sayı kabul edilir, ama jog
+    her tikte küçük adımla ilerler: çıldırma/sıçrama olmaz). Kazanç 1 = P1d'ye kadarki davranış."""
+    want = max(1.0, float(pct) / 100.0) * max(1.0, sim.sm.velocity_cap)
+    eng = sim.jog.engine
+    base = float(np.max(sim.sm.vmax)) * min(eng.config.speed_scale, 1.0)
+    room = JOG_STEP_RAD / (max(base, 1e-9) * JOG_DT_REF)
+    return min(want, max(1.0, room)), want
+
+
+def apply_jog_gain(sim: Any, gain: float) -> None:
+    """Jog hız tavanlarını ``gain`` katına çıkarır (robot_core'a dokunmadan: yapılandırma + denetleyici
+    tavanı).
+    Kilit: denetleyicinin kendi kilidi. Kazanç 1 = varsayılan."""
+    jog, eng = sim.jog, sim.jog.engine
+    base = JogConfig()                                   # varsayılan tavanlar (0,10 m/s, 0,5 rad/s)
+    with jog._lock:
+        eng.config = replace(eng.config, max_linear_speed=base.max_linear_speed * gain,
+                             max_angular_speed=base.max_angular_speed * gain)
+        eng.chain.velocity[:] = sim.sm.vmax * gain
+        v = np.array([eng.config.max_linear_speed] * 3 + [eng.config.max_angular_speed] * 3)
+        jog._vmax = v * eng.config.speed_scale
+        jog._vmax_sphere = np.array([jog._vmax[3], jog._vmax[3], jog._vmax[0], 0.0, 0.0, 0.0])
+        sim.jog_gain = gain
+
+
+class SpeedMixin:
+    """``SimBackend``'in hız/ivme ucu (P1d/P1e): ``set_speed``, ``speed_limits``, ``set_speed_scale``,
+    ``jog_speed_hint``. SİM'de hız %, hız ölçeği ve ivme ölçeği SINIRSIZDIR; tek sınır ``check_pct`` /
+    ``check_scale`` (sonlu, > 0, % <= PCT_MAX, ölçek <= SCALE_MAX). Hiçbiri diske yazılmaz (Hub yeniden
+    başlayınca varsayılan döner); konum limitleri (eklem, güvenli kutu) yine zorlanır."""
+
+    jog_gain: float = 1.0
+
+    def set_speed(self, pct: Any) -> Reply:
+        why = check_pct(pct)
+        if why is not None:
+            return self._err(400, 'bad_request', why, max=PCT_MAX)
+        self.speed_pct = float(pct) if float(pct) != int(pct) else int(pct)
+        return 200, {'ok': True, 'speed_pct': self.speed_pct}
+
+    def speed_limits(self, pct: Any = None) -> Reply:
+        """``pct`` verilmezse robotun genel hızı; kart kendi gösterdiği % ile sorar (hesap yine sunucuda)."""
+        why = None if pct is None else check_pct(pct)
+        if why is not None:
+            return self._err(400, 'bad_request', why, max=PCT_MAX)
+        with self._lock:
+            sm, pct = self.sm, self.speed_pct if pct is None else pct
+        doc = speed_limits_doc(sm, pct, default_scale=self.profile.safety.max_velocity_scale)
+        gain, want = jog_gain(self, pct)
+        doc['jog'] = {'gain': round(gain, 3), 'requested_gain': round(want, 3), 'capped': gain < want - 1e-9}
+        return 200, {'ok': True, 'robot': self.profile.robot, 'mode': 'sim', 'scale_locked': False, **doc}
+
+    def set_speed_scale(self, pct: Any, scale: Any, accel_scale: Any = None,
+                        accel_linked: Any = None) -> Reply:
+        """Hız ölçeği, ivme ölçeği (``accel_scale``; ``accel_linked`` doğruysa hız ölçeğiyle birlikte) ve
+        isteğe bağlı ``pct``; biri geçersizse HİÇBİRİ uygulanmaz. Bir SONRAKİ komutta geçerli."""
+        checks = [(pct, check_pct), (scale, check_scale), (accel_scale, check_scale)]
+        for value, check in checks:
+            why = None if value is None else check(value)
+            if why is not None:
+                return self._err(400, 'bad_request', why, max=PCT_MAX if check is check_pct else SCALE_MAX)
+        if accel_linked is not None and not isinstance(accel_linked, bool):
+            return self._err(400, 'bad_request', 'accel_linked doğru/yanlış olmalı')
+        if accel_linked and accel_scale is not None:
+            return self._err(400, 'bad_request', 'accel_linked açıkken accel_scale verilemez')
+        with self._lock:
+            vc = self.sm.velocity_cap if scale is None else float(scale)
+            linked = accel_linked
+            if linked is None:
+                linked = accel_scale is None and self.sm.accel_linked
+            cap_a = None if linked else float(accel_scale if accel_scale is not None else
+                                              (self.sm.accel_cap if self.sm.accel_cap is not None else vc))
+            self.sm = replace(self.sm, velocity_cap=vc, accel_cap=cap_a)
+            self.jog.engine.safety = replace(self.jog.engine.safety, max_velocity_scale=min(vc, 1.0))
+            if pct is not None:
+                self.speed_pct = float(pct) if float(pct) != int(pct) else int(pct)
+            apply_jog_gain(self, jog_gain(self, self.speed_pct)[0])
+        return 200, {'ok': True, 'speed_pct': self.speed_pct, 'scale': vc,
+                     'accel_scale': vc if cap_a is None else cap_a, 'accel_linked': cap_a is None}
+
+    def jog_speed_hint(self, pct: Any) -> None:
+        """Basılı-tut jog gövdesindeki ``speed_pct`` ipucu: o %'ye uygun kazancı kurar (komut başına)."""
+        gain = jog_gain(self, pct)[0]
+        if abs(gain - self.jog_gain) > 1e-9 and not self.jog.active:
+            apply_jog_gain(self, gain)
+
+    def jog_command(self, body: Any, *, remote: bool = False) -> Reply:
+        """``speed_pct`` ipucunu ayıkla (robot_core bilmez), kazancı kur, jog'u iletir."""
+        if isinstance(body, dict) and 'speed_pct' in body:
+            body = dict(body)
+            self.jog_speed_hint(body.pop('speed_pct'))
+        return self._jog_command(body, remote=remote)

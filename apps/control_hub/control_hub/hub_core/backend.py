@@ -14,6 +14,7 @@ karşılaştırır ve rotalarda ``getattr(hub.backend`` kalmadığını denetler
 """
 from __future__ import annotations
 
+import math
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
@@ -134,8 +135,34 @@ class SimControl(Protocol):
     def speed_limits(self, pct: Any = None) -> Reply:
         """GET /api/speed/limits: eklem hız limitleri, etkin üst hızlar, tavan ölçeği (sunucu hesaplar)."""
 
-    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
-        """Hız tavanı ölçeği (+ isteğe bağlı ``pct``). Yalnız SİM; gerçek/tezgâhta 409 ``sim_only``."""
+    def set_speed_scale(self, pct: Any, scale: Any, accel_scale: Any = None,
+                        accel_linked: Any = None) -> Reply:
+        """Hız/ivme tavanı ölçeği (+ isteğe bağlı ``pct``). Yalnız SİM; gerçek/tezgâhta 409 ``sim_only``."""
+
+
+# --- SİM hız/ivme girdi kuralı (P1e): TEK sınır. Ağır bağımlılık yok: rotalar (jog_routes, sim_routes) bunu
+# robot_core olmadan da (Docker/gerçek mod) içe aktarabilmeli.
+SCALE_MAX = 1000.0               # SİM "hız/ivme tavanı ölçeği" üst sınırı (alt sınır: > 0); gerçek mod <= 1,0
+PCT_MAX = 100000.0               # SİM hız % üst sınırı (alt sınır: > 0)
+
+
+def _check_positive(value: object, name: str, top: float) -> Optional[str]:
+    """TEK sınır (P1e): sayı (bool değil), sonlu, > 0, <= ``top``; sessizce kırpılmaz."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return f'{name} sonlu bir sayı olmalı'
+    if not 0 < value <= top:
+        return f'{name} 0 ile {top:g} arasında olmalı (0 hariç)'
+    return None
+
+
+def check_scale(value: object, top: float = SCALE_MAX) -> Optional[str]:
+    """Hız/ivme tavanı ölçeği geçerli mi? Geçersizse Türkçe neden, geçerliyse ``None``."""
+    return _check_positive(value, 'scale', top)
+
+
+def check_pct(value: object, top: float = PCT_MAX) -> Optional[str]:
+    """Hız % geçerli mi (SİM: <= ``PCT_MAX``; gerçek mod 100)?"""
+    return _check_positive(value, 'speed_pct', top)
 
 
 # --- Varsayılanlar: "bu aileyi bilmiyorum" cevabı, eski rota cevabıyla BAYT BAYT aynı ---------------------
@@ -207,14 +234,17 @@ class NoSim:
     def speed_limits(self, pct: Any = None) -> Reply:
         """Gerçek/tezgâh/sahte: tavan robottadır, Hub değiştirmez (``scale_locked``). Eklem tablosu bu arka
         uçlarda yok (Robot API hız limitini sunmuyor): ``joints`` boş."""
+        if pct is not None and not (isinstance(pct, (int, float)) and 1 <= pct <= 100):
+            return _refusal(400, 'bad_request', 'speed_pct 1–100 olmalı')       # gerçek mod: eski sınır
         snap = self.snapshot() or {}                    # type: ignore[attr-defined]
         return 200, {'ok': True, 'robot': snap.get('name'), 'mode': snap.get('mode'), 'scale': None,
                      'scale_locked': True, 'speed_pct': snap.get('speed_pct'),
                      'locked_reason': 'Tavan robotun profilinden gelir; yalnız SİM kipinde ayarlanır',
                      'joints': [], 'limiting_joint': None}
 
-    def set_speed_scale(self, pct: Any, scale: Any) -> Reply:
-        return _refusal(409, 'sim_only', 'Hız tavanı ölçeği yalnız SİM kipinde ayarlanır')
+    def set_speed_scale(self, pct: Any, scale: Any, accel_scale: Any = None,
+                        accel_linked: Any = None) -> Reply:
+        return _refusal(409, 'sim_only', 'Hız/ivme tavanı ölçeği yalnız SİM kipinde ayarlanır')
 
 
 def supports_move(backend: Any) -> bool:

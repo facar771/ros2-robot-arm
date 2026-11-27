@@ -9,6 +9,8 @@
   dosyayı robot (veri dizini) yazar.
 * ``POST /api/jog/joint`` (P1): TEK eklemi basılı-tutla sürer (``hub_core.joint_hold``; SİM). Aynı kurallar:
   ACİL DUR ``423``, yalnız bu bilgisayardan, ``ttl_ms`` içinde yenilenmezse sunucu durdurur.
+* P1e: ``/api/jog`` gövdesindeki isteğe bağlı ``speed_pct`` (kartın hız %'si) yalnız SİM'e gider
+  (jog tavanını o hıza göre kurar); gerçek/sahte arka uca İLETİLMEZ. Dışı 400.
 * Ağ hatası ``502``: komut ulaşmadıysa robot TTL'i dolunca kendiliğinden durur (sunucu tarafı dead-man).
 * Arka uç yöntemleri DOĞRUDAN çağrılır (``MotionBackend`` sözleşmesi, ``hub_core.backend``); jog'u
   bilmeyen arka uç ``NoJog`` varsayılanını devralmıştır ve 501 ``jog_unsupported`` döner.
@@ -23,7 +25,7 @@ from typing import Any, Callable, Tuple
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from control_hub.hub_core.backend import supports_move
+from control_hub.hub_core.backend import check_pct, supports_move
 from control_hub.hub_core.joint_hold import JointHold
 from control_hub.hub_core.robot_api_backend import RobotApiError
 from control_hub.server.errors import fail, read_json
@@ -72,6 +74,12 @@ def install_jog_routes(app: FastAPI, hub, *, need_view: Callable, need_control: 
         if isinstance(body, dict) and 'twist' in body and not local:
             return fail(403, 'hold_local_only', 'Basılı-tut jog yalnızca bu bilgisayardan yapılır; '
                         'telefondan artımlı jog kullan', state='hold_denied')
+        if isinstance(body, dict) and 'speed_pct' in body:       # P1e: kartın hız % ipucu, robota GİTMEZ
+            why = check_pct(body['speed_pct'])
+            if why is not None:
+                return fail(400, 'bad_request', why)
+            if not supports_move(hub.backend):                 # robota/sahteye giden gövdede bu anahtar yok
+                body = {k: v for k, v in body.items() if k != 'speed_pct'}
         return await call(hub.backend.jog_command, body, remote=not local)
 
     @app.post('/api/jog/joint')

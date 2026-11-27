@@ -31,7 +31,7 @@ MOVE = {
     'move_stop': '()', 'move_pause': '()', 'move_resume': '()',
 }
 SIM = {'sim_reset': '()', 'set_speed': '(pct)', 'speed_limits': '(pct=None)',
-       'set_speed_scale': '(pct, scale)'}
+       'set_speed_scale': '(pct, scale, accel_scale=None, accel_linked=None)'}
 
 
 # --- karşılaştırıcı (testlerin kendisi; ürün kodu DEĞİL) --------------------------------------------------
@@ -136,7 +136,8 @@ def test_backends_without_move_inherit_the_nomove_default_whole_and_override_non
 
 def test_sim_backend_owns_the_whole_move_and_sim_family_and_inherits_no_default():
     assert not issubclass(SimBackend, (contract.NoMove, contract.NoSim, contract.NoJog))
-    assert [n for n in (*MOVE, *SIM) if n not in vars(SimBackend)] == []
+    own = [k for k in SimBackend.__mro__ if k.__module__.startswith('control_hub.hub_core.sim_')]   # +Mixin
+    assert [n for n in (*MOVE, *SIM) if not any(n in vars(k) for k in own)] == []
     assert drift(SimBackend, contract.SimControl) == []
 
 
