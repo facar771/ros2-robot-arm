@@ -2,18 +2,21 @@
 
 * ``FakeBackend``: ROS'suz, donanımsız simülasyon (geliştirme, testler, telefondan ilk deneme).
 * ``RobotApiBackend``: robotun HTTP API v1'i (``/api/jobs``, ``/api/stop``, ``/api/reset``).
-* ``SimBackend``: SİM (``--sim``); ``MotionBackend`` + ``MoveBackend`` yüzeyinin tamamını bilir.
+* ``SimBackend``: SİM (``--sim``); ``MotionBackend`` + ``MoveBackend`` + ``SimControl`` yüzeyini bilir.
 
-Hareket sözleşmesi (``MotionBackend``/``MoveBackend``), rotaların ``getattr(hub.backend, ad)`` ile
-çağırdığı yöntemlerin imzasını SABİTLER (MIMARI.md §7 R6, T6). Yöntem hiç yoksa rotalar 501/409 verir;
-imza kayarsa ise yalnız çalışma anında 500 olur. ``tests/test_backend_contract.py`` üç arka ucun
-imzasını bu Protocol'lerle karşılaştırır.
+Hareket sözleşmesi (``MotionBackend``/``MoveBackend``/``SimControl``) rotaların ``hub.backend.<ad>(...)``
+diye DOĞRUDAN çağırdığı yöntemlerin imzasını SABİTLER (MIMARI.md §7 R6, T6). Rotalar ``getattr`` ile
+yoklamaz: bir arka uç bir aileyi bilmiyorsa varsayılanı DEVRALIR (``NoJog``, ``NoMove``, ``NoSim``) ve
+varsayılan eski rota yanıtının AYNISINI verir (501 ``jog_unsupported`` / 501 ``move_unsupported`` / 409
+``not_sim``). Yöntem hiç yoksa (varsayılan da devralınmamışsa) rota ``AttributeError`` ile 500 olur; imza
+kayarsa yine çalışma anında 500. ``tests/test_backend_contract.py`` üç arka ucun imzasını bu Protocol'lerle
+karşılaştırır ve rotalarda ``getattr(hub.backend`` kalmadığını denetler.
 """
 from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Protocol, Tuple, runtime_checkable
+from typing import Any, Callable, Dict, Optional, Protocol, Tuple, runtime_checkable
 
 Reply = Tuple[int, Dict[str, Any]]      # (HTTP durum kodu, JSON gövdesi): rotalar gövdeyi aynen döndürür
 
@@ -93,10 +96,11 @@ class MotionBackend(Protocol):
 
 @runtime_checkable
 class MoveBackend(MotionBackend, Protocol):
-    """``/api/move*`` ailesi: YALNIZ SİM bilir (``--fake`` ve gerçek Robot API bilmez; ``supports_move``).
+    """``/api/move*`` ailesi: YALNIZ SİM bilir (``--fake`` ve gerçek Robot API ``NoMove`` varsayılanını
+    devralır; ``supports_move`` ikisini ayırır).
 
-    Ya TÜM 6 yöntem vardır ya hiçbiri: ``program_move.supports_move`` hepsini arar; eksik biri sessizce
-    "desteklenmiyor" olur."""
+    Ya TÜM 6 yöntem gerçektir ya hiçbiri: ``supports_move`` yarım kümeyi (eksik yöntem) "desteklenmiyor"
+    sayar."""
 
     def move_submit(self, body: Any) -> Reply:
         """Hareket işi başlat (202 + ``job_id``)."""
@@ -115,3 +119,87 @@ class MoveBackend(MotionBackend, Protocol):
 
     def move_resume(self) -> Reply:
         """Duraklatılmış işe devam et."""
+
+
+@runtime_checkable
+class SimControl(Protocol):
+    """``/api/sim/*`` uçları: YALNIZ SİM bilir. Diğer arka uçlar ``NoSim`` varsayılanını devralır (409)."""
+
+    def sim_reset(self) -> Reply:
+        """Robotu home'a döndür (simülasyon sıfırlama)."""
+
+    def set_speed(self, pct: Any) -> Reply:
+        """Genel hız yüzdesi (``robot.speed_pct``)."""
+
+
+# --- Varsayılanlar: "bu aileyi bilmiyorum" cevabı, eski rota cevabıyla BAYT BAYT aynı ---------------------
+# Gövde ``server.errors.error_body`` ile aynı anahtar sırasını taşır (hub_core ``server``'ı içe aktarmaz).
+
+def _refusal(status: int, code: str, message: str) -> Reply:
+    return status, {'ok': False, 'error': code, 'message': message}
+
+
+class NoJog:
+    """Jog / çerçeve / model yüzeyini bilmeyen arka uç bunu devralır (501 ``jog_unsupported``).
+    Üç mevcut arka uç jog'u bilir; bu yalnız ileride ekleneceklerin (ör. ESP32) yolunu açık tutar."""
+
+    def jog_command(self, body: Any, *, remote: bool = False) -> Reply:
+        return _refusal(501, 'jog_unsupported', 'Bu robot arka ucu jog/çerçeve ucunu desteklemiyor')
+
+    def jog_status(self) -> Reply:
+        return self.jog_command(None)
+
+    def model(self) -> Reply:
+        return self.jog_command(None)
+
+    def frames_get(self) -> Reply:
+        return self.jog_command(None)
+
+    def frames_put(self, body: Any) -> Reply:
+        return self.jog_command(None)
+
+    def frames_reach(self, body: Any) -> Reply:
+        return self.jog_command(None)
+
+
+class NoMove:
+    """``/api/move*`` ailesini bilmeyen arka uç (``--fake``, gerçek Robot API) bunu devralır: 501
+    ``move_unsupported``. ``supports_move`` bu sınıfı tanır; ``clock``/``time_scale`` SİM'in bildirdiği
+    saat ve hız ölçeğinin "yok" karşılığıdır (``None`` = gerçek zaman, 1.0 = ölçek yok)."""
+
+    clock: Optional[Callable[[], float]] = None
+    time_scale: float = 1.0
+
+    def move_submit(self, body: Any) -> Reply:
+        return _refusal(501, 'move_unsupported', 'Bu robot arka ucu hareket uçlarını desteklemiyor')
+
+    def move_check(self, body: Any) -> Reply:
+        return self.move_submit(body)
+
+    def move_get(self, job_id: str) -> Reply:
+        return self.move_submit(job_id)
+
+    def move_stop(self) -> Reply:
+        return self.move_submit(None)
+
+    def move_pause(self) -> Reply:
+        return self.move_submit(None)
+
+    def move_resume(self) -> Reply:
+        return self.move_submit(None)
+
+
+class NoSim:
+    """``/api/sim/*`` uçlarını bilmeyen arka uç bunu devralır: 409 ``not_sim``."""
+
+    def sim_reset(self) -> Reply:
+        return _refusal(409, 'not_sim', 'Bu uç yalnız SİM modunda çalışır')
+
+    def set_speed(self, pct: Any) -> Reply:
+        return self.sim_reset()
+
+
+def supports_move(backend: Any) -> bool:
+    """Arka uç ``/api/move*`` ailesini GERÇEKTEN biliyor mu? Sözleşmenin 12 yöntemi var VE ``NoMove``
+    varsayılanı değil. Yarım yöntem kümesi (ör. yalnız ``move_submit``) "bilmiyor" sayılır."""
+    return isinstance(backend, MoveBackend) and not isinstance(backend, NoMove)

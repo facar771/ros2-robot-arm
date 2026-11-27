@@ -21,7 +21,7 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
-from control_hub.hub_core.backend import BackendResult, ResetResult, StopReport
+from control_hub.hub_core.backend import BackendResult, NoMove, NoSim, ResetResult, StopReport
 
 log = logging.getLogger('control_hub.robot_api')
 SUPPORTED_API_VERSION = 1
@@ -33,7 +33,7 @@ class RobotApiError(Exception):
     """Ağ/protokol hatası (HTTP durum kodları hata sayılmaz; çağıran bakar)."""
 
 
-class RobotApiBackend:
+class RobotApiBackend(NoMove, NoSim):
     name = 'robot-api'
 
     def __init__(self, base_url: str = DEFAULT_URL, *, poll_s: float = 0.5, job_poll_s: float = 0.25,

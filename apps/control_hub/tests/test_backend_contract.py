@@ -1,10 +1,12 @@
 """Arka uç hareket sözleşmesi (MIMARI.md §7 R6, T6): fake / sim / robot_api AYNI imza.
 
-Rotalar bu yöntemleri ``getattr(hub.backend, ad)`` ile çağırır; imza kayarsa bugün yalnız çalışma anında
-500 olur. Bu dosya: (1) Protocol'ün kendisini sabitler, (2) üç arka ucun imzasını Protocol'le karşılaştırır,
-(3) rotaların çağırdığı adların sözleşmede olduğunu doğrular, (4) karşılaştırıcının kaymayı GERÇEKTEN
-yakaladığını mutantlarla kanıtlar. Ürün davranışı değişmez; yalnız ``hub_core/backend.py``'ye tip eklendi.
+Rotalar bu yöntemleri ``hub.backend.<ad>(...)`` ile DOĞRUDAN çağırır (``getattr`` yoklaması kalmadı);
+imza kayarsa çalışma anında 500 olur. Bu dosya: (1) Protocol'ün kendisini sabitler, (2) üç arka ucun imzasını
+Protocol'le karşılaştırır, (3) rotaların çağırdığı adların sözleşmeyle BİRE BİR örtüştüğünü ve rotalarda
+``getattr(hub.backend`` kalmadığını doğrular, (4) karşılaştırıcının kaymayı GERÇEKTEN yakaladığını mutantlarla
+kanıtlar. Varsayılan sınıfların (``NoJog``/``NoMove``/``NoSim``) davranışı: ``test_backend_defaults.py``.
 """
+import ast
 import inspect
 import re
 from pathlib import Path
@@ -28,6 +30,7 @@ MOVE = {
     'move_submit': '(body)', 'move_check': '(body)', 'move_get': '(job_id)',
     'move_stop': '()', 'move_pause': '()', 'move_resume': '()',
 }
+SIM = {'sim_reset': '()', 'set_speed': '(pct)'}
 
 
 # --- karşılaştırıcı (testlerin kendisi; ürün kodu DEĞİL) --------------------------------------------------
@@ -94,8 +97,10 @@ def test_move_protocol_extends_motion_with_exactly_the_move_family():
     assert issubclass(contract.MoveBackend, contract.MotionBackend)
 
 
-def test_move_methods_tuple_used_by_supports_move_matches_the_protocol():
-    assert set(program_move.MOVE_METHODS) == set(MOVE) and len(program_move.MOVE_METHODS) == len(MOVE)
+def test_sim_protocol_is_pinned_and_program_move_uses_the_contract_supports_move():
+    assert {n: sig_text(f) for n, f in public_functions(contract.SimControl).items()} == SIM
+    assert program_move.supports_move is contract.supports_move       # tek tanım: kopya yok
+    assert not hasattr(program_move, 'MOVE_METHODS')                   # ad listesi yerine Protocol
 
 
 # --- 2) üç arka uç aynı imza --------------------------------------------------------------------------
@@ -118,16 +123,20 @@ def test_sim_backend_has_the_move_family_with_identical_signatures():
 
 
 @pytest.mark.parametrize('kind', ['fake', 'robot_api'])
-def test_backends_without_move_have_none_of_it_and_may_not_half_implement_it(kind):
-    """Ya TÜM move_* ya hiçbiri: ``supports_move`` hepsini arar; eksik biri sessizce "yok" sayılır."""
+def test_backends_without_move_inherit_the_nomove_default_whole_and_override_none_of_it(kind):
+    """Ya TÜM move_* gerçektir (SİM) ya hiçbiri: ``--fake`` ve Robot API ``NoMove`` varsayılanını DEVRALIR.
+    Yöntemlerin hiçbirini kendi gövdesinde tanımlamaz (yarım gerçek / yarım varsayılan olamaz)."""
     cls = BACKENDS[kind]
-    present = {n for n in MOVE if hasattr(cls, n)}
-    assert present in (set(), set(MOVE)), f'{kind}: yarım move_* ailesi: {sorted(present)}'
-    if present:
-        assert drift(cls, contract.MoveBackend) == []
-    else:
-        assert not issubclass(cls, contract.MoveBackend)
-    assert all(callable(getattr(cls, n, None)) for n in program_move.MOVE_METHODS) is bool(present)
+    assert issubclass(cls, contract.NoMove) and issubclass(cls, contract.NoSim)
+    assert [n for n in (*MOVE, *SIM) if n in vars(cls)] == [], f'{kind}: varsayılan ezildi'
+    assert drift(cls, contract.MoveBackend) == []                      # varsayılanın imzası da sözleşme
+    assert drift(cls, contract.SimControl) == []
+
+
+def test_sim_backend_owns_the_whole_move_and_sim_family_and_inherits_no_default():
+    assert not issubclass(SimBackend, (contract.NoMove, contract.NoSim, contract.NoJog))
+    assert [n for n in (*MOVE, *SIM) if n not in vars(SimBackend)] == []
+    assert drift(SimBackend, contract.SimControl) == []
 
 
 def test_instances_satisfy_the_protocols_at_runtime():
@@ -135,7 +144,9 @@ def test_instances_satisfy_the_protocols_at_runtime():
                 RobotApiBackend('http://127.0.0.1:9', poll_s=5, autostart=False)]
     try:
         assert all(isinstance(b, contract.MotionBackend) for b in backends)
-        assert [isinstance(b, contract.MoveBackend) for b in backends] == [False, True, False]
+        assert all(isinstance(b, contract.MoveBackend) for b in backends)     # yapısal: 12 yöntem var
+        assert [isinstance(b, contract.NoMove) for b in backends] == [True, False, True]
+        assert [contract.supports_move(b) for b in backends] == [False, True, False]    # GERÇEK mi?
         assert [program_move.supports_move(b) for b in backends] == [False, True, False]
     finally:
         for b in backends:
@@ -155,27 +166,51 @@ def test_motion_replies_are_status_and_json_body(kind):
 
 
 # --- 3) rotalar yalnız sözleşmedeki adları çağırır -----------------------------------------------------
-def called_names(route_file):
-    text = (PKG / 'server' / route_file).read_text(encoding='utf-8')
-    return set(re.findall(r"\bcall\(\s*'(\w+)'", text))
+def backend_names(path):
+    """Koddaki ``hub.backend.<ad>`` erişimlerinin adları (AST: docstring/yorum metni sayılmaz)."""
+    return {n.attr for n in ast.walk(ast.parse(path.read_text(encoding='utf-8')))
+            if isinstance(n, ast.Attribute) and ast.unparse(n.value) == 'hub.backend'}
 
 
-def test_jog_routes_call_only_motion_contract_names():
-    used = called_names('jog_routes.py')
-    assert used, 'tarama kırıldı: jog_routes.py içinde call(...) bulunamadı'
-    assert used <= set(MOTION), f'sözleşmede olmayan jog çağrısı: {sorted(used - set(MOTION))}'
+def probes_on_backend(path):
+    """``getattr/hasattr`` yoklamalarından ilk argümanı bir ``backend`` olanlar (yorum/docstring sayılmaz)."""
+    found = []
+    for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+        is_probe = isinstance(node, ast.Call) and getattr(node.func, 'id', None) in ('getattr', 'hasattr')
+        if is_probe and node.args and 'backend' in ast.unparse(node.args[0]).lower():
+            found.append(f'{path.name}:{node.lineno} {ast.unparse(node)}')
+    return found
 
 
-def test_move_routes_call_only_move_contract_names():
-    used = called_names('move_routes.py')
-    assert used, 'tarama kırıldı: move_routes.py içinde call(...) bulunamadı'
-    assert used <= set(MOVE), f'sözleşmede olmayan move çağrısı: {sorted(used - set(MOVE))}'
+def test_jog_routes_call_exactly_the_motion_contract_plus_clock():
+    used, want = backend_names(PKG / 'server' / 'jog_routes.py'), set(MOTION) | {'clock'}
+    assert used == want, f'jog_routes sözleşmeden sapıyor: {sorted(used ^ want)}'
+
+
+def test_move_routes_call_exactly_the_move_contract():
+    used = backend_names(PKG / 'server' / 'move_routes.py')
+    assert used == set(MOVE), f'move_routes sözleşmeden sapıyor: {sorted(used ^ set(MOVE))}'
+
+
+def test_sim_routes_call_exactly_the_sim_contract():
+    used = backend_names(PKG / 'server' / 'sim_routes.py')
+    assert used == set(SIM), f'sim_routes sözleşmeden sapıyor: {sorted(used ^ set(SIM))}'
+
+
+def test_program_move_reads_only_time_scale_from_the_hub_backend():
+    assert backend_names(PKG / 'hub_core' / 'program_move.py') == {'time_scale'}
+
+
+@pytest.mark.parametrize('where', ['server/move_routes.py', 'server/sim_routes.py', 'server/jog_routes.py',
+                                   'hub_core/program_move.py'])
+def test_no_getattr_probing_of_the_backend_is_left_in_the_converted_files(where):
+    assert probes_on_backend(PKG / where) == []
 
 
 def test_mesh_routes_ask_the_backend_for_model_only():
     text = (PKG / 'server' / 'mesh_routes.py').read_text(encoding='utf-8')
     asked = set(re.findall(r"getattr\(hub\.backend,\s*'(\w+)'", text))
-    assert asked == {'model'} and asked <= set(MOTION)
+    assert asked == {'model'} and asked <= set(MOTION)       # kapsam dışı: ayrı iş (PR'da işaretli)
 
 
 # --- 4) MUTASYON KANITI: karşılaştırıcı kaymayı gerçekten yakalar --------------------------------------
@@ -219,7 +254,7 @@ def test_half_implemented_move_family_is_caught_and_not_a_move_backend(missing):
     half = without(SimBackend, missing)
     assert drift(half, contract.MoveBackend) == [f'{missing}: yok']
     assert not issubclass(half, contract.MoveBackend)
-    assert program_move.supports_move(half) is False        # bugünkü davranış: sessizce "desteklenmiyor"
+    assert contract.supports_move(half()) is False          # yarım küme: sessizce "desteklenmiyor"
 
 
 def test_drift_message_names_the_method_and_both_signatures():

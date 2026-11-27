@@ -16,21 +16,16 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from control_hub.hub_core.backend import supports_move
 from control_hub.hub_core.program_runner import Body, MoveClient, MoveRefused
 from control_hub.hub_core.runner import EstopLatchedError
 
-MOVE_METHODS = ('move_submit', 'move_check', 'move_get', 'move_stop', 'move_pause', 'move_resume')
 # Arka ucun iş durumu -> koşucunun sözlüğü. 'paused': iş bitmedi, koşucu duraklattı.
 STATE_MAP = {'running': 'running', 'paused': 'running', 'done': 'done', 'failed': 'failed',
              'cancelled': 'stopped'}
 MODE_LABELS = {'sim': 'SİM', 'bench': 'TEZGÂH', 'real': 'GERÇEK'}
 NOT_RUNNING = 'not_running'              # duraklat/devam/durdur: çalışan iş yok (zaten bitmiş) = zararsız
 Reply = Tuple[int, Dict[str, Any]]
-
-
-def supports_move(backend: Any) -> bool:
-    """Arka uç ``/api/move*`` yöntemlerinin TÜMÜNÜ biliyor mu? (``--fake`` ve gerçek Robot API bilmez.)"""
-    return all(callable(getattr(backend, name, None)) for name in MOVE_METHODS)
 
 
 class ChainCheck:
@@ -136,7 +131,7 @@ def make_move_client(hub: Any) -> MoveClient:
     """Arka uç ``move_*`` biliyorsa GERÇEK adaptör; yoksa SAHTE mock (``--fake-speed`` ile aynı hızlanma)."""
     if supports_move(hub.backend):
         return BackendMoveClient(hub.backend)
-    scale = getattr(hub.backend, 'time_scale', 1.0) or 1.0
+    scale = hub.backend.time_scale or 1.0
     return SimMoveClient(speed_scale=1.0 / scale)
 
 
